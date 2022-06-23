@@ -2,11 +2,7 @@
 
 
 
-Authors:
-Ewan Whittaker-Walker 	| ewanww@berkeley.edu	| 05/19/2019
-Frederik Schulz		| fschulz@lbl.gov	| Since 2019
-Juan C. Villada 	| jvillada@lbl.gov 	| Since 2021
-Marianne Buscaglia	| mbuscaglia@lbl.gov 	| Since 2022
+
 
 
 
@@ -72,3 +68,13 @@ python3 sgtree_final.py <genomes directory> <models directory> <references direc
 MLCAFAEEEAKIAETVGKVATELKVKKLLSDFATKEGEEHISTYNKIAMTAKAEGYADIEAMLCAFAEEEAKLQKL
 ```
 where the first field before the pipe contains the genome identifier which matches the filename base, and the second field a unique protein identifier.
+
+
+## Authors
+
+|Authors		| Email			| Date		|
+|-----------------------|-----------------------|---------------|
+Ewan Whittaker-Walker 	| ewanww@berkeley.edu	| 05/19/2019	|
+Frederik Schulz		| fschulz@lbl.gov	| Since 2019	|
+Juan C. Villada 	| jvillada@lbl.gov 	| Since 2021	|
+Marianne Buscaglia	| mbuscaglia@lbl.gov 	| Since 2022	|
