@@ -1,11 +1,5 @@
 # Simple Genome Tree (SGTree)
 
-
-
-
-
-
-
 Simple Genome Tree (SGTree) is a computational pipeline for fast and easy construction of phylogenetic trees from a set of user provided genomes and a set of phylogenetic markers, in a taxonomic framework of de-replicated reference genomes. SGTree identifies conserved phylogenetic marker proteins and evaluates additional copies of markers derived from either duplications, horizontal gene transfer or contamination, to build a phylogenetic tree based on the concatenated alignment of selected marker proteins. 
 
 ## Setup
@@ -72,9 +66,9 @@ where the first field before the pipe contains the genome identifier which match
 
 ## Authors
 
-|Authors		| Email			| Date		|
-|-----------------------|-----------------------|---------------|
-Ewan Whittaker-Walker 	| ewanww@berkeley.edu	| 05/19/2019	|
-Frederik Schulz		| fschulz@lbl.gov	| Since 2019	|
-Juan C. Villada 	| jvillada@lbl.gov 	| Since 2021	|
-Marianne Buscaglia	| mbuscaglia@lbl.gov 	| Since 2022	|
+|Authors		            | Email			            | Date		    |
+|-----------------------|-----------------------|-------------|
+|Ewan Whittaker-Walker 	| ewanww@berkeley.edu	  | 05/19/2019	|
+|Frederik Schulz		    | fschulz@lbl.gov 	    | Since 2019	|
+|Juan C. Villada 	      | jvillada@lbl.gov 	    | Since 2021	|
+|Marianne Buscaglia	    | mbuscaglia@lbl.gov 	  | Since 2022	|
