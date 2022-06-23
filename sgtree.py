@@ -20,19 +20,25 @@ os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 
 
 parser = argparse.ArgumentParser()
+
 parser.add_argument("genomedir", help="run the script w genome dir provided (w/out duplicates in genomedir or modeldir!)," + 
                     "note: this folder contains fasta files or a concatenated fasta",
                     type=str)
+
 parser.add_argument("modeldir", help="run the script w model dir provided (w/out duplicates in genomedir or modeldir!)",
                     type=str)
+
 parser.add_argument("--ref_concat",
                     help="path to reference directory, path to place where previous reference runs with a combination of --ref and models are stored, default is working directory",
                     type=str)
+
 parser.add_argument("--num_cpus", default=8, help="run the scripts with user provided number of cpus",
                     type=int)
+
 parser.add_argument("--marker_selection", default="no",
                     help="recommended feature, run sgtree without marker selection if no",
                     type=str)
+
 parser.add_argument("--ref", help="folder containing previous 'reference' runs, " + 
                     "1) Running with previously used genomes and models: no need to " + 
                     "specify exact path, if you have run this reference directory of genomes " +  
@@ -43,19 +49,27 @@ parser.add_argument("--ref", help="folder containing previous 'reference' runs, 
                     "3) Running without reference database: basic fuctionality of sgtree, " + 
                     " create nwk file with top hits from HMMER. (no marker selection)",
                     type=str)
+
 parser.add_argument("--percent_models", default=10, help="eliminate genomes with less than 10 percent of models",
                     type=int)
+
 parser.add_argument("--save_dir", help="new directory name to save to",
                     type=str)
+
 parser.add_argument("--singles", default="no",
                     help="experimental feature with limited testing, remove single markers without number of neighbors",
                     type=str)
+
 # parser.add_argument("--cutoff", default=1, help="score cutoff for genomes",
 #                     type=int)
+
 parser.add_argument("--num_nei", default=15, help="number of neighbors to check",
                     type=int)
+
+
 parser.add_argument("--aln", default="hmmalign", help="run mafft, mafft-linsi, or hmmalign",
                     type=str)
+
 parser.add_argument("--is_ref", default = "no", help="not for your use")
 
 args = parser.parse_args()
@@ -190,7 +204,7 @@ if args.ref != None:
         ref = str(args.ref)
         if ref[-1] == "/": 
             ref = ref[:-1]
-        cmd_runprog = ["python", sys.argv[0], ref, uni56, "--num_cpus", str(10),
+        cmd_runprog = ["python", sys.argv[0], ref, uni56, "--num_cpus", str(num_cpus),
                        "--save_dir", ref_concat + "/"+  ref.split("/")[-1] + "_" + uni56.split("/")[-1], "--is_ref", "yes"]
         print("- ... Creating new reference directory", "\n", cmd_runprog)
         subprocess.run(cmd_runprog, stdout=subprocess.PIPE)
@@ -370,7 +384,7 @@ try:
     ## run HMMSEARCH and save output to hitsoutdir
     print("-... running hmmsearch v.3.0")
     hitsoutdir = currentdir + "/hits.hmmout"
-    cmd_search = ["hmmsearch", "--cut_ga", "--cpu", str(4), "--domtblout", hitsoutdir, "--noali", modelfam, genomesfaa]
+    cmd_search = ["hmmsearch", "--cut_ga", "--cpu", str(num_cpus), "--domtblout", hitsoutdir, "--noali", modelfam, genomesfaa]
     ran_hmmsearch_time = datetime.datetime.now()
     search_datetime = time.time()
     capture_search = subprocess.run(cmd_search, stdout=subprocess.PIPE)
