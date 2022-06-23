@@ -60,7 +60,7 @@ MLCAFAEEEAKIAETVGKVATELKVKKLLSDFATKEGEEHISTYNKIAMTAKAEGYADIEAMLCAFAEEEAKLQKL
 where the first field before the pipe contains the genome identifier which matches the filename base, and the second field a unique protein identifier.
 
 
-## Authors
+## Authors and contributors:
 
 |Authors		            | Email			            | Date		    |
 |-----------------------|-----------------------|-------------|
