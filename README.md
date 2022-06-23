@@ -19,18 +19,16 @@ git clone https://github.com/NeLLi-team/sgtree.git
 4. Next run (where `<spec-file>` is either `linux_env.txt` or `osx_env.txt`): 
 
 ```bash
+cd sgtree/
 conda create --name sgtree --file <spec-file>
 conda activate sgtree
-```  
-
+```
 
 5. Make `sgtree` executable:
 
 ```bash
-cd sgtree/
 chmod u+x sgtree.py
 ```
-
 
 ## 🚀 Run SGTree
 
