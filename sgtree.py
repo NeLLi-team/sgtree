@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-
 import glob
 import os
 import datetime
@@ -19,22 +18,6 @@ from Bio import AlignIO, SeqIO
 
 os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 
-"""
-TO RUN: 
-conda activate <sgtree_environment> 
-
-EXAMPLES
-Basic usage: 
-python sgtree.py <proteomes> <models> 
-
-With new ref directory: 
-python sgtree.py <proteomes> <models> --ref <proteomes>
-    - Note!: if you are in a directory where you have run these references with 
-    these models before sgtree with rememeber! No need to specify reference directory output. 
-    
-With existing reference directory: 
-python sgtree.py <proteomes> <models> --ref <proteomes> --ref_concat <reference directory>
-"""
 
 parser = argparse.ArgumentParser()
 parser.add_argument("genomedir", help="run the script w genome dir provided (w/out duplicates in genomedir or modeldir!)," + 
@@ -421,16 +404,38 @@ try:
             vs = vs.append(df[col].str.split('\s+'))
         tempdf = vs.groupby(vs.index).sum().to_frame()
         finaldf = pd.DataFrame(tempdf[0].values.tolist())
+
+        seen = []
         for row in finaldf.iterrows():
             name = row[1][0].split("|")[0]
             model = row[1][3]
-            if name in dict_counts.keys():
-                if model in dict_counts[name].keys():
-                    dict_counts[name][model] += 1
+            proteinid = row[1][0]
+           
+            if proteinid + "_" + model not in seen:
+                if name in dict_counts.keys():
+                    if model in dict_counts[name].keys():
+                        dict_counts[name][model] += 1
+                        seen.append(proteinid + "_" + model)
+                    else:
+                        dict_counts[name][model] = 1
+                        seen.append(proteinid + "_" + model)
+               
                 else:
+                    dict_counts[name] = {}
                     dict_counts[name][model] = 1
-            else:
-                dict_counts[name] = {}
+                    seen.append(proteinid + "_" + model)
+
+        # for row in finaldf.iterrows():
+        #     name = row[1][0].split("|")[0]
+        #     model = row[1][3]
+        #     if name in dict_counts.keys():
+        #         if model in dict_counts[name].keys():
+        #             dict_counts[name][model] += 1
+        #         else:
+        #             dict_counts[name][model] = 1
+        #     else:
+        #         dict_counts[name] = {} # with this, the first gvog in the hmmout file will not appear in dict the dictionary has the sum of all the hits for the same protein, needs to be dereplicated (use a seen list)
+
         ## make a list of incomplete genomes here then check if it reaches the 
         ## percentage we care about w len(dict_counts[each]).
         incomplete_genomes = []
