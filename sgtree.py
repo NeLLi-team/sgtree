@@ -60,6 +60,10 @@ parser.add_argument("--singles", default="no",
                     help="experimental feature with limited testing, remove single markers without number of neighbors",
                     type=str)
 
+parser.add_argument("--lflt", default=0,
+                    help="remove protein sequences shorter than $N percentage of the median length of the gene, e.g. for half of median length: --lflt 50",
+                    type=int)
+
 # parser.add_argument("--cutoff", default=1, help="score cutoff for genomes",
 #                     type=int)
 
@@ -121,6 +125,7 @@ if uni56[-1] == "/":
     
 num_cpus = args.num_cpus
 percent_models = args.percent_models
+perc_tofilt= float(args.lflt)/100
 
 if args.ref_concat != None:
     ref_concat = args.ref_concat
@@ -411,6 +416,19 @@ try:
         if the length of this list is less than the user specified flag this
         all the rows containing this genome is eliminated from the final_df. It also writes the count matrix
         and number different markers plots"""
+        # add cleaning step for length (ex. 0.5)
+        # overwrite original table with filtered tab
+        if perc_tofilt > 0:
+            df = pd.read_csv(df_dir, comment="#", delim_whitespace = True,  header=None)
+            # remove se with length perc_tofilt% under the median for model
+            filtered_out = df[df[2]<df.groupby(3)[2].transform('median')*perc_tofilt][0]
+            list_torm_path = str(df_dir + ".del.ls")
+            filtered_out.to_csv(list_torm_path, index=False, header=False)
+            out_lengthfilter = str(df_dir + ".lfilt")
+            with open(out_lengthfilter, "w") as l_out:
+                subprocess.run(["grep","-vwFf", list_torm_path, df_dir], stdout=l_out)
+            subprocess.run(["mv", out_lengthfilter, df_dir])
+        # after filt, reload table
         df = pd.read_csv(df_dir)
         df = df[~df[str(df.columns[0])].str.startswith('#')]
         vs = pd.Series(dtype=object)
