@@ -1381,13 +1381,19 @@ if args.marker_selection == "yes":
             return list(set(li1) - set(li2))
 
 
+        print("- ...starting marker selection (Noperm):", "\n")
+        rf_outfile = currentdir + "/marker_selection_rf_values.txt"
+        with open(rf_outfile, 'w') as f:
+            f.write("ProteinID MarkerGene RFdistance Status\n")
+
         def run_Noperm(file):
-            """does marker selection for a tree out file, first it makes lst ndoes which is all the nodes in the tree
+            """does marker selection for a tree out file, first it makes lst nodes which is all the nodes in the tree
             it makes a seen dict of all the nodes, checking if there are duplicates, then it makes dups which is a list of nodes
-            and thier scores, multiple values in this dict if there are duplicates, after that it compares RF distances generated from trees pruned for duplicates"""
+            and their scores, multiple values in this dict if there are duplicates, after that it compares RF distances generated from trees pruned for duplicates"""
             t = Tree(file)
             lst_nodes = [node.name for node in next(t.copy().traverse())]
             seen = {}
+            marker_name = file.split("/")[-1].split(".")[0]  # Extract marker name from file name
 
             ### NUMBER OF UNIQUE NODES IN LST NODES FROM SEEN
             for x in lst_nodes:
@@ -1411,14 +1417,16 @@ if args.marker_selection == "yes":
                 if len(value) == 1:
                     continue
                 rdist = 10000
+                best_rf = None
+                best_protein = None
                 
-                for each in value:
-                    bad_nodes.append(each)
+                rf_results = []  # Store results for writing later
+                
                 for each in value:
                     ## make list of nodes we're going to prune our marker tree with.
                     ls_nodes = []
                     ls_nodes.append(each)
-                    ## first we append the duplicate we're lookign at.
+                    ## first we append the duplicate we're looking at.
                     dcopy = removekey(dups, key)
                     ## remove the key in the dict for that duplicate^^, vv then append the best score for everything else in the tree.
                     for k, v in dcopy.items():
@@ -1428,27 +1436,41 @@ if args.marker_selection == "yes":
                     ls_nodes = [each for each in ls_nodes if each != None]
                     alt = list(map(lambda x: x.split(":")[0].replace("/", "|"), ls_nodes))
                     ## prune the species tree for the genomes we're considering for this protein marker.
-                    speciestree.prune([node.split("|")[0] for node in alt])
+                    speciestree_copy = speciestree.copy()
+                    speciestree_copy.prune([node.split("|")[0] for node in alt])
 
-                    ## prune the marker tree for the genmoes ""    ""    ""    ""
+                    ## prune the marker tree for the genomes ""    ""    ""    ""
                     t_prot = t.copy()
                     t_prot.prune(alt)
                     t_protcopy = t_prot.copy()
 
-                    ## change node names so we cna compare to species tree which does not have sequence identifiers (seq ids after "|")
+                    ## change node names so we can compare to species tree which does not have sequence identifiers (seq ids after "|")
                     for node in next(t_protcopy.traverse()):
                         node.name = node.name.split("|")[0]
 
-
-                    rf, maxrf, get, y, a, x, z = speciestree.robinson_foulds(t_protcopy, unrooted_trees=True)
+                    rf, maxrf, _, _, _, _, _ = speciestree_copy.robinson_foulds(t_protcopy, unrooted_trees=True)
                     maxrf = maxrf + .0001
-                    if rf / maxrf <= rdist:
-                        rdist = rf / maxrf
+                    rf_dist = rf / maxrf
+                    
+                    rf_results.append((each.split(':')[0], rf_dist))
+
+                    if rf_dist <= rdist:
+                        rdist = rf_dist
                         best_tree = t_prot
                         best_tree_file = file
                         best_each = each
+                        best_rf = rf_dist
+                        best_protein = each.split(':')[0]
+
+                # Write results to file
+                with open(rf_outfile, 'a') as f:
+                    for protein, rf_dist in rf_results:
+                        status = "Kept" if protein == best_protein else "Removed"
+                        f.write(f"{protein} {marker_name} {rf_dist:.6f} {status}\n")
+
                 ls_best_nodes.append(best_each)
-                bad_nodes.remove(best_each)
+                bad_nodes = [node.split(':')[0].replace("/", "|") for node in value if node != best_each]
+
             bad_nodes = list(map(lambda str: str.split(":")[0].replace("/", "|"), bad_nodes))
 
             with open(currentdir + "/removed/" + file.split("/")[-1].split(".")[0], 'w') as f:
@@ -1466,8 +1488,6 @@ if args.marker_selection == "yes":
             t_final.write(format=1, outfile=currentdir + "/protTrees/no_duplicates/out" + "/" + "_no_dups_" +
                                             file.split("/")[-1].split(".")[0] + "_" + ".nw")
             best_tree = t_final
-            #print("finished:", file)
-
 
         ## run noperm on everything in the tree
         ran_Fastree_time = datetime.datetime.now()
@@ -1893,6 +1913,8 @@ if args.marker_selection == "yes":
         if args.marker_selection == "yes":
             for file in glob.glob(currentdir + "/*", recursive=True):
                 if file.split("/")[-1].split(".")[-1] == "txt":
+                    if file.split("/")[-1] == "marker_selection_rf_values.txt":
+                        continue  # Skip this file, keep it in the base directory
                     #print("NO ZIP", file)
                     continue
                 if file.split("/")[-1].split(".")[-1] == "png":
@@ -1924,24 +1946,28 @@ if args.marker_selection == "yes":
                         with zipfile.ZipFile(file, 'w') as myzip:
                             myzip.write(file)
                             myzip.close()
+            
+            # Do not move marker_selection_rf_values.txt to temp directory
             tempdir = ["mkdir", "-p", currentdir + "/temp"]
             mk_dir = subprocess.run(tempdir, stdout=subprocess.PIPE)
             
             tempdir = ["mkdir", "-p", currentdir + "/temp/itol"]
             mk_dir = subprocess.run(tempdir, stdout=subprocess.PIPE)
             
-            
             for file in glob.glob(currentdir + "/*.zip", recursive=True):
                 shutil.move(file, currentdir + "/temp")
-                
-            shutil.move(currentdir + "/models", currentdir + "/temp")
-            shutil.move(currentdir + "/proteomes", currentdir + "/temp")
-            shutil.move(currentdir + "/table_elim_dups", currentdir + "/temp")
-            shutil.move(currentdir + "/tree.nwk", currentdir + "/temp")
-            shutil.move(currentdir + "/hits.hmmout", currentdir + "/temp")
-            shutil.move(currentdir + "/color.txt", currentdir + "/temp/itol")
-            shutil.move(currentdir + "/ref_and_query_proteomes", currentdir + "/temp")
-            shutil.move(currentdir + "/marker_counts.txt", currentdir + "/temp/itol")
+            
+            # List of files to move to temp directory
+            files_to_move = ["models", "proteomes", "table_elim_dups", "tree.nwk", "hits.hmmout", "ref_and_query_proteomes"]
+            for file in files_to_move:
+                if os.path.exists(currentdir + "/" + file):
+                    shutil.move(currentdir + "/" + file, currentdir + "/temp")
+            
+            # Move specific files to temp/itol
+            itol_files = ["color.txt", "marker_counts.txt"]
+            for file in itol_files:
+                if os.path.exists(currentdir + "/" + file):
+                    shutil.move(currentdir + "/" + file, currentdir + "/temp/itol")
             
     except Exception as e:
         print("ERROR FOR WRITING STDOUT OF SGTREE_PIPE gen.py", e.__doc__, "\n", str(e))
