@@ -20,6 +20,7 @@ Common options:
   --percent_models <n>   Minimum marker coverage threshold (default: 10)
   --max_sdup <n>         Max copies allowed for one marker in a genome (-1 disables)
   --max_dupl <f>         Max fraction of duplicated markers in a genome (-1 disables)
+  --num_nei <n>          Optional singleton-removal neighbor count (0=auto)
   --hmmsearch_cutoff     cut_ga | cut_tc | cut_nc | evalue (default: cut_ga)
   --hmmsearch_evalue <f> E-value used when --hmmsearch_cutoff evalue (default: 1e-5)
   --aln <method>         hmmalign | mafft | mafft-linsi (default: hmmalign)

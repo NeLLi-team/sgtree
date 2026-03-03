@@ -47,7 +47,11 @@ workflow SGTREE_MAIN {
         .map { file -> [ file.baseName, file ] }
 
     // Step 4: Extract sequences per marker
-    EXTRACT_SEQUENCES(marker_ch, PARSE_HMMSEARCH.out.combined_proteomes)
+    EXTRACT_SEQUENCES(
+        marker_ch,
+        PARSE_HMMSEARCH.out.combined_proteomes,
+        PARSE_HMMSEARCH.out.combined_proteomes_idx
+    )
 
     // Step 5: Alignment (method-dependent)
     if (aln_method == 'mafft') {
@@ -57,7 +61,7 @@ workflow SGTREE_MAIN {
         ALIGN_MAFFT_LINSI(EXTRACT_SEQUENCES.out.seqs)
         aligned = ALIGN_MAFFT_LINSI.out.aligned
     } else {
-        ALIGN_HMMALIGN(EXTRACT_SEQUENCES.out.seqs, CONCAT_INPUTS.out.models)
+        ALIGN_HMMALIGN(EXTRACT_SEQUENCES.out.seqs, CONCAT_INPUTS.out.models_split)
         aligned = ALIGN_HMMALIGN.out.aligned
     }
 
