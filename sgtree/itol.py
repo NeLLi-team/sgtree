@@ -3,8 +3,22 @@ import glob
 
 import pandas as pd
 from ete3 import Tree
+from Bio import SeqIO
 
 from sgtree.config import Config
+
+
+def _ids_from_input(path: str) -> list[str]:
+    if os.path.isdir(path):
+        return [os.path.basename(f).split(".")[0] for f in glob.glob(os.path.join(path, "*"))]
+
+    genome_ids = []
+    with open(path) as handle:
+        for rec in SeqIO.parse(handle, "fasta"):
+            gid = rec.id.split("|")[0]
+            if gid not in genome_ids:
+                genome_ids.append(gid)
+    return genome_ids
 
 
 def write_color_file(cfg: Config):
@@ -17,13 +31,11 @@ def write_color_file(cfg: Config):
         f.write("COLOR #ff0000\n")
         f.write("COLOR_BRANCHES 0\n")
         f.write("DATA\n")
-        for filename in glob.glob(os.path.join(cfg.genomedir, "*")):
-            name = os.path.basename(filename).split(".")[0]
-            f.write(f"{name} #FF0000\n")
+        for gid in _ids_from_input(cfg.genomedir):
+            f.write(f"{gid} #FF0000\n")
         if cfg.ref is not None:
-            for filename in glob.glob(os.path.join(cfg.ref, "*")):
-                name = os.path.basename(filename).split(".")[0]
-                f.write(f"{name} #C0C0C0\n")
+            for gid in _ids_from_input(cfg.ref):
+                f.write(f"{gid} #C0C0C0\n")
 
 
 def write_heatmap(cfg: Config, tree_path: str, outsuffix: str):

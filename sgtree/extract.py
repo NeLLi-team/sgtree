@@ -1,6 +1,5 @@
 import os
 import glob
-import multiprocessing as mp
 
 import pandas as pd
 from Bio import SeqIO
@@ -35,41 +34,6 @@ def extract_hits(cfg: Config, df: pd.DataFrame):
             f.write("\n".join(seqs) + "\n")
 
 
-def _write_seqs_worker(args):
-    """Worker: extract sequences for one model file (must be top-level for multiprocessing)."""
-    filepath, ref_proteomes_path, extracted_seqs_dir = args
-    try:
-        with open(filepath) as f:
-            ls_of_seq = f.read().strip().split("\n")
-
-        fasta_parser = SeqIO.parse(ref_proteomes_path, "fasta")
-        wanted = [rec for rec in fasta_parser if rec.id in ls_of_seq]
-
-        hmm_match = os.path.basename(filepath)
-        SeqIO.write(wanted, os.path.join(extracted_seqs_dir, hmm_match + ".faa"), "fasta")
-    except Exception:
-        import traceback
-        print("Error for writing extracted sequences", traceback.format_exc())
-        raise
-
-
-def _map_with_fallback(func, args, workers: int):
-    if not args:
-        return
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        for item in args:
-            func(item)
-        return
-    try:
-        with mp.Pool(n_workers) as pool:
-            pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        for item in args:
-            func(item)
-
-
 def write_extracted_sequences(cfg: Config):
     """Retrieve actual protein sequences from proteome FASTA files, write per-model FASTAs."""
     os.makedirs(cfg.extracted_seqs_dir, exist_ok=True)
@@ -86,11 +50,29 @@ def write_extracted_sequences(cfg: Config):
     with open(cfg.ref_proteomes_path, "w") as fp:
         fp.write(data)
 
-    # extract sequences for each model
+    # Build id->models mapping from extracted marker ID lists.
     ls_of_files = glob.glob(os.path.join(cfg.extracted_dir, "*"))
+    id_to_models: dict[str, list[str]] = {}
+    models: list[str] = []
+    for filepath in ls_of_files:
+        model = os.path.basename(filepath)
+        models.append(model)
+        with open(filepath) as f:
+            for line in f:
+                seq_id = line.strip()
+                if not seq_id:
+                    continue
+                id_to_models.setdefault(seq_id, []).append(model)
 
-    args = [
-        (f, cfg.ref_proteomes_path, cfg.extracted_seqs_dir)
-        for f in ls_of_files
-    ]
-    _map_with_fallback(_write_seqs_worker, args, cfg.num_cpus)
+    # Single-pass sequence extraction across the combined proteomes file.
+    handles = {
+        model: open(os.path.join(cfg.extracted_seqs_dir, model + ".faa"), "w")
+        for model in models
+    }
+    try:
+        for rec in SeqIO.parse(cfg.ref_proteomes_path, "fasta"):
+            for model in id_to_models.get(rec.id, []):
+                SeqIO.write(rec, handles[model], "fasta")
+    finally:
+        for handle in handles.values():
+            handle.close()

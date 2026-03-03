@@ -5,6 +5,7 @@ process CONCAT_INPUTS {
 
     output:
     path 'models.hmm'    , emit: models
+    path 'models_split'  , emit: models_split
     path 'proteomes.faa' , emit: proteomes
     env  MODEL_COUNT     , emit: model_count
 
@@ -20,6 +21,7 @@ process CONCAT_INPUTS {
     else
         cp ${genomedir} proteomes.faa
     fi
+    split_hmm_models.py --models models.hmm --outdir models_split
     MODEL_COUNT=\$(grep -c '^NAME' models.hmm)
     """
 }

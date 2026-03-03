@@ -18,6 +18,7 @@ process PARSE_HMMSEARCH {
     path 'extracted/*'       , emit: marker_id_lists
     path 'table_elim_dups'   , emit: table_elim_dups
     path 'combined_proteomes.faa', emit: combined_proteomes
+    path 'combined_proteomes.idx', emit: combined_proteomes_idx
     path 'marker_count_matrix.csv', emit: marker_count_matrix
     path 'log_genomes_removed.txt', emit: log_removed
 
