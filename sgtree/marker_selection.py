@@ -110,9 +110,9 @@ def _process_tree_worker(args):
 
         if best_each is not None:
             ls_best_nodes.append(best_each)
-        bad_nodes = [
-            n.split(":")[0].replace("/", "|") for n in value if n != best_each
-        ]
+        bad_nodes.extend(
+            [n.split(":")[0].replace("/", "|") for n in value if n != best_each]
+        )
 
     bad_nodes = [s.split(":")[0].replace("/", "|") for s in bad_nodes]
 
@@ -222,7 +222,7 @@ def _remove_singles_worker(args):
                 dict_neighbors[ori_leaf.name][leaf.name] = ori_leaf.get_distance(leaf.name)
         dict_neighbors[ori_leaf.name] = sorted(
             dict_neighbors[ori_leaf.name],
-            key=dict_neighbors[ori_leaf.name].get,
+            key=lambda leaf: (dict_neighbors[ori_leaf.name][leaf], leaf),
         )[:num_nei]
 
     # get neighbors from species tree
@@ -238,7 +238,7 @@ def _remove_singles_worker(args):
                 dict_neighborsi[ori_leafi.name][leaf.name] = ori_leafi.get_distance(leaf.name)
         dict_neighborsi[ori_leafi.name] = sorted(
             dict_neighborsi[ori_leafi.name],
-            key=dict_neighborsi[ori_leafi.name].get,
+            key=lambda leaf: (dict_neighborsi[ori_leafi.name][leaf], leaf),
         )[:num_nei]
 
     # score and filter

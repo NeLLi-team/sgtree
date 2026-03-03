@@ -61,7 +61,7 @@ def main():
                 dict_neighbors[ori_leaf.name][leaf.name] = ori_leaf.get_distance(leaf.name)
         dict_neighbors[ori_leaf.name] = sorted(
             dict_neighbors[ori_leaf.name],
-            key=dict_neighbors[ori_leaf.name].get,
+            key=lambda leaf: (dict_neighbors[ori_leaf.name][leaf], leaf),
         )[:num_nei]
 
     # get neighbors from species tree
@@ -77,7 +77,7 @@ def main():
                 dict_neighborsi[ori_leafi.name][leaf.name] = ori_leafi.get_distance(leaf.name)
         dict_neighborsi[ori_leafi.name] = sorted(
             dict_neighborsi[ori_leafi.name],
-            key=dict_neighborsi[ori_leafi.name].get,
+            key=lambda leaf: (dict_neighborsi[ori_leafi.name][leaf], leaf),
         )[:num_nei]
 
     # score and filter

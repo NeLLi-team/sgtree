@@ -42,7 +42,6 @@ process ALIGN_HMMALIGN {
 
     script:
     """
-    hmmfetch ${modelset} ${marker} | hmmalign --trim -o ${marker}.sto - ${seqs}
-    convert_sto_to_fasta.py --sto ${marker}.sto --out ${marker}.faa
+    run_hmmalign_pyhmmer.py --models ${modelset} --marker ${marker} --seqs ${seqs} --out ${marker}.faa --cpus ${task.cpus}
     """
 }
