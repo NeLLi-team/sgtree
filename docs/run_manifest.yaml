@@ -1,0 +1,231 @@
+run_id: small_stonebraker_20260303T113323
+workflow_summary: >-
+  SGTree Nextflow run on testgenomes/Chloroflexi using UNI56 marker HMMs with
+  pyhmmer-based search/alignment, trimAl trimming, and FastTree species-tree inference.
+workflow:
+  engine: nextflow
+  engine_version: "25.10.4"
+  pipeline:
+    name: sgtree
+    version: "2.0.0"
+    repo_url: https://github.com/fredlps/sgtree
+    commit_sha: fc038f5f8a6f54e6dd2c8ad3bbe6df71186ad20b
+    launch_command: >-
+      nextflow -log runs/docs_audit/nextflow.log run main.nf --genomedir
+      testgenomes/Chloroflexi --modeldir resources/models/UNI56.hmm --outdir
+      runs/docs_audit/out --hmmsearch_cpus 4 --align_cpus 4 --fasttree_cpus 1
+      -with-trace runs/docs_audit/trace.tsv -with-report runs/docs_audit/report.html
+      -with-timeline runs/docs_audit/timeline.html -with-dag runs/docs_audit/dag.html
+  execution:
+    start_time: "2026-03-03T11:33:23-08:00"
+    end_time: "2026-03-03T11:34:07-08:00"
+    workdir: runs/nextflow/work
+    profile: standard
+inputs:
+  - name: query_proteomes
+    uri: file://testgenomes/Chloroflexi
+    notes: Input query proteomes in FASTA (*.faa), one file per genome.
+  - name: marker_models
+    uri: file://resources/models/UNI56.hmm
+    notes: Combined marker-set HMM file (UNI56).
+software:
+  tools:
+    - name: nextflow
+      version: "25.10.4"
+      source: ./nextflow -version
+    - name: python
+      version: "3.12.12"
+      source: pixi default environment
+    - name: pyhmmer
+      version: "0.12.0"
+      source: pixi default environment
+    - name: mafft
+      version: "7.526"
+      source: pixi run mafft --version
+    - name: trimal
+      version: "1.5.rev1"
+      source: pixi run trimal --version
+    - name: FastTree
+      version: "2.2.0"
+      source: pixi run FastTree
+    - name: IQ-TREE
+      version: "3.0.1"
+      source: pixi run iqtree --version
+    - name: pandas
+      version: "2.2.3"
+      source: pixi default environment
+    - name: biopython
+      version: "1.86"
+      source: pixi default environment
+    - name: ete3
+      version: "3.1.3"
+      source: pixi default environment
+  conda:
+    lock_file: pixi.lock
+steps:
+  - step_id: "1"
+    name: SGTREE_MAIN:CONCAT_INPUTS
+    purpose: Concatenate marker HMMs and proteome FASTA files, then split marker models.
+    tool: split_hmm_models.py
+    tool_version: repository script
+    command: >-
+      cat <modeldir>/*.hmm > models.hmm ; cat <genomedir>/*.faa > proteomes.faa ;
+      split_hmm_models.py --models models.hmm --outdir models_split
+    status: COMPLETED
+    exit_code: 0
+    inputs:
+      - resources/models/UNI56.hmm
+      - testgenomes/Chloroflexi/*.faa
+    outputs:
+      - models.hmm
+      - models_split/
+      - proteomes.faa
+    parameters:
+      model_count_source: grep '^NAME' models.hmm
+  - step_id: "2"
+    name: SGTREE_MAIN:HMMSEARCH
+    purpose: Identify marker hits in input proteomes using pyhmmer in HMMER-compatible mode.
+    tool: run_hmmsearch_pyhmmer.py
+    tool_version: repository script
+    command: >-
+      run_hmmsearch_pyhmmer.py --models models.hmm --proteomes proteomes.faa --out hits.hmmout
+      --cpus 4 --hmmsearch_cutoff cut_ga --hmmsearch_evalue 1e-5
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - hits.hmmout
+    parameters:
+      hmmsearch_cutoff: cut_ga
+      hmmsearch_evalue: 1e-5
+      cpus: 4
+  - step_id: "3"
+    name: SGTREE_MAIN:PARSE_HMMSEARCH
+    purpose: Filter genomes/duplicates, build marker count matrix, and create per-marker ID lists.
+    tool: parse_hmmsearch.py
+    tool_version: repository script
+    command: >-
+      parse_hmmsearch.py --hmmout hits.hmmout --proteomes query_proteomes.faa --model_count 56
+      --percent_models 10 --lflt 0 --max_sdup -1 --max_dupl -1.0
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - extracted/*
+      - table_elim_dups
+      - combined_proteomes.faa
+      - combined_proteomes.idx
+      - marker_count_matrix.csv
+      - log_genomes_removed.txt
+    qc:
+      log_genomes_removed: empty file in this run
+  - step_id: "4"
+    name: SGTREE_MAIN:EXTRACT_SEQUENCES
+    purpose: Extract marker-specific protein FASTA sets from combined proteomes.
+    tool: extract_sequences.py
+    tool_version: repository script
+    command: >-
+      extract_sequences.py --id_list <marker_ids> --proteomes combined_proteomes.faa
+      --index_db combined_proteomes.idx --out <marker>.faa
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - <marker>.faa
+  - step_id: "5"
+    name: SGTREE_MAIN:ALIGN_HMMALIGN
+    purpose: Align each marker set against its marker HMM profile.
+    tool: run_hmmalign_pyhmmer.py
+    tool_version: repository script
+    command: >-
+      run_hmmalign_pyhmmer.py --model models_split/<marker>.hmm --seqs <marker>.faa
+      --out <marker>.faa --cpus 4
+    status: COMPLETED
+    exit_code: 0
+    parameters:
+      aln_method: hmmalign
+      cpus: 4
+  - step_id: "6"
+    name: SGTREE_MAIN:ELIMINATE_DUPLICATES
+    purpose: Remove duplicate copies per marker genome set using the scoring table.
+    tool: eliminate_duplicates.py
+    tool_version: repository script
+    command: >-
+      eliminate_duplicates.py --alignment <marker>.faa --table_elim_dups table_elim_dups
+      --out deduped_<marker>.faa
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - deduped_<marker>.faa
+  - step_id: "7"
+    name: SGTREE_MAIN:TRIMAL
+    purpose: Trim alignment columns with high gap content before concatenation.
+    tool: trimal
+    tool_version: "1.5.rev1"
+    command: trimal -in deduped_<marker>.faa -out trimmed_<marker>.faa -gt 0.1
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - trimmed_<marker>.faa
+  - step_id: "8"
+    name: SGTREE_MAIN:BUILD_SUPERMATRIX
+    purpose: Concatenate per-marker trimmed alignments into one supermatrix.
+    tool: build_supermatrix.py
+    tool_version: repository script
+    command: >-
+      build_supermatrix.py --trimmed_dir . --out concatenated.faa
+      --table table_df_concatenated_w_X
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - concatenated.faa
+      - table_df_concatenated_w_X
+  - step_id: "9"
+    name: SGTREE_MAIN:FASTTREE
+    purpose: Infer the species tree from the concatenated marker alignment.
+    tool: FastTree
+    tool_version: "2.2.0"
+    command: FastTree -quiet -out tree.nwk concatenated.faa
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - tree.nwk
+    parameters:
+      tree_method: fasttree
+      cpus: 1
+  - step_id: "10"
+    name: WRITE_HEATMAP
+    purpose: Produce iTOL marker-count annotation table for the inferred tree.
+    tool: write_itol_heatmap.py
+    tool_version: repository script
+    command: >-
+      write_itol_heatmap.py --tree tree.nwk --matrix marker_count_matrix.csv
+      --out marker_count.txt
+    status: COMPLETED
+    exit_code: 0
+    outputs:
+      - marker_count.txt
+qc_steps:
+  - Nextflow workflow completed with succeededCount=231 and failedCount=0.
+  - Marker-count matrix was written and the removed-genomes log was empty in this run.
+  - Core expected outputs (tree.nwk, marker_count_matrix.csv, marker_count.txt) were generated.
+outputs:
+  - runs/docs_audit/out/tree.nwk
+  - runs/docs_audit/out/marker_count_matrix.csv
+  - runs/docs_audit/out/marker_count.txt
+  - runs/docs_audit/out/log_genomes_removed.txt
+  - runs/docs_audit/out/color.txt
+limitations: >-
+  This evidence run exercised the default branch (marker_selection=false, singles=false,
+  no reference directory). Optional marker-selection/singleton-removal logic and IQ-TREE
+  execution were not executed in this run manifest.
+evidence:
+  - runs/docs_audit/nextflow.log
+  - runs/docs_audit/trace.tsv
+  - runs/docs_audit/report.html
+  - runs/docs_audit/timeline.html
+  - runs/docs_audit/dag.html
+  - nextflow.config
+  - main.nf
+  - workflows/sgtree_main.nf
+  - modules/search.nf
+  - modules/align.nf
+  - modules/trim.nf
+  - modules/phylogeny.nf
