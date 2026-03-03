@@ -19,7 +19,7 @@ def parse_args() -> Config:
     parser.add_argument("genomedir", type=str,
                         help="directory containing .faa proteome files (or a concatenated fasta)")
     parser.add_argument("modeldir", type=str,
-                        help="directory containing .hmm model files")
+                        help="path to marker-set .hmm file (legacy: directory of per-marker .hmm files)")
     parser.add_argument("--ref_concat", type=str, default=None,
                         help="path to store reference directory concat files")
     parser.add_argument("--num_cpus", type=int, default=8,

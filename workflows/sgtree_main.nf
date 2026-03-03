@@ -53,7 +53,7 @@ workflow SGTREE_MAIN {
         ALIGN_MAFFT_LINSI(EXTRACT_SEQUENCES.out.seqs)
         aligned = ALIGN_MAFFT_LINSI.out.aligned
     } else {
-        ALIGN_HMMALIGN(EXTRACT_SEQUENCES.out.seqs, modeldir)
+        ALIGN_HMMALIGN(EXTRACT_SEQUENCES.out.seqs, CONCAT_INPUTS.out.models)
         aligned = ALIGN_HMMALIGN.out.aligned
     }
 

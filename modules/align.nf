@@ -35,14 +35,14 @@ process ALIGN_HMMALIGN {
 
     input:
     tuple val(marker), path(seqs)
-    path modeldir
+    path modelset
 
     output:
     tuple val(marker), path("${marker}.faa"), emit: aligned
 
     script:
     """
-    hmmalign --trim -o ${marker}.sto ${modeldir}/${marker}.hmm ${seqs}
+    hmmfetch ${modelset} ${marker} | hmmalign --trim -o ${marker}.sto - ${seqs}
     convert_sto_to_fasta.py --sto ${marker}.sto --out ${marker}.faa
     """
 }

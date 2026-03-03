@@ -30,15 +30,33 @@ def _run_mafft_linsi(args):
 
 
 def _run_hmmalign(args):
-    extracted_seqs_dir, aligned_dir, modeldir, filename = args
+    extracted_seqs_dir, aligned_dir, modelset_path, filename = args
     filepath = os.path.join(extracted_seqs_dir, filename)
     model = filename.split(".")[0]
-    modfile = os.path.join(modeldir, model + ".hmm")
     sto_path = os.path.join(aligned_dir, model + ".sto")
     faa_path = os.path.join(aligned_dir, model + ".faa")
 
-    cmd = ["hmmalign", "--trim", "-o", sto_path, modfile, filepath]
-    subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    fetch_proc = subprocess.Popen(
+        ["hmmfetch", modelset_path, model],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        with fetch_proc.stdout as fetch_out:
+            cmd = ["hmmalign", "--trim", "-o", sto_path, "-", filepath]
+            result = subprocess.run(
+                cmd,
+                stdin=fetch_out,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+    finally:
+        fetch_rc = fetch_proc.wait()
+    if fetch_rc != 0:
+        fetch_err = fetch_proc.stderr.read().decode("utf-8", errors="replace")
+        raise subprocess.CalledProcessError(fetch_rc, ["hmmfetch", modelset_path, model], stderr=fetch_err)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, cmd, stderr=result.stderr)
 
     aln = AlignIO.read(sto_path, "stockholm")
     AlignIO.write(aln, faa_path, "fasta")
@@ -76,7 +94,7 @@ def run_alignment(cfg: Config):
         ])
     else:
         pool.map(_run_hmmalign, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, cfg.modeldir, f) for f in files
+            (cfg.extracted_seqs_dir, cfg.aligned_dir, cfg.models_path, f) for f in files
         ])
     pool.close()
     pool.join()

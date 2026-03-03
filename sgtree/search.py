@@ -3,28 +3,42 @@ import glob
 import shutil
 import subprocess
 import time
-import datetime
 
 import pandas as pd
+from pyhmmer import easel, hmmer, plan7
 
 from sgtree.config import Config
 
 
+def _count_models_in_hmm(models_path: str) -> int:
+    count = 0
+    with open(models_path, "rb") as handle:
+        for line in handle:
+            if line.startswith(b"NAME"):
+                count += 1
+    return count
+
+
 def concat_inputs(cfg: Config) -> int:
-    """Concatenate HMM models and genome FASTA files into single files.
+    """Stage HMM models and concatenate genome FASTA files into single files.
 
     Returns the number of models.
     """
-    model_count = 0
-    with open(cfg.models_path, "w") as dest:
-        for filename in glob.glob(os.path.join(cfg.modeldir, "*")):
-            model_count += 1
-            with open(filename) as src:
-                shutil.copyfileobj(src, dest)
+    if os.path.isdir(cfg.modeldir):
+        with open(cfg.models_path, "w") as dest:
+            for filename in sorted(glob.glob(os.path.join(cfg.modeldir, "*.hmm"))):
+                with open(filename) as src:
+                    shutil.copyfileobj(src, dest)
+    else:
+        shutil.copyfile(cfg.modeldir, cfg.models_path)
+
+    model_count = _count_models_in_hmm(cfg.models_path)
+    if model_count == 0:
+        raise ValueError(f"No HMM models found in marker set: {cfg.modeldir}")
 
     with open(cfg.proteomes_path, "w") as dest:
         if os.path.isdir(cfg.genomedir):
-            for filename in glob.glob(os.path.join(cfg.genomedir, "*.faa")):
+            for filename in sorted(glob.glob(os.path.join(cfg.genomedir, "*.faa"))):
                 with open(filename) as src:
                     shutil.copyfileobj(src, dest)
         else:
@@ -35,18 +49,27 @@ def concat_inputs(cfg: Config) -> int:
 
 
 def run_hmmsearch(cfg: Config):
-    """Run hmmsearch --cut_ga on concatenated models vs proteomes."""
+    """Run pyhmmer search with gathering cutoffs on models vs proteomes."""
     print("-... running hmmsearch")
     start = time.time()
-    cmd = [
-        "hmmsearch", "--cut_ga",
-        "--cpu", str(cfg.num_cpus),
-        "--domtblout", cfg.hitsoutdir,
-        "--noali",
-        cfg.models_path,
-        cfg.proteomes_path,
-    ]
-    subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+
+    with plan7.HMMFile(cfg.models_path) as hmm_file:
+        hmms = list(hmm_file)
+    if not hmms:
+        raise ValueError(f"Marker set does not contain valid HMM entries: {cfg.models_path}")
+
+    with easel.SequenceFile(cfg.proteomes_path, digital=True, alphabet=hmms[0].alphabet) as seq_file:
+        with open(cfg.hitsoutdir, "wb") as hits_out:
+            for i, hits in enumerate(
+                hmmer.hmmsearch(
+                    hmms,
+                    seq_file,
+                    cpus=max(1, cfg.num_cpus),
+                    bit_cutoffs="gathering",
+                )
+            ):
+                hits.write(hits_out, format="domains", header=(i == 0))
+
     elapsed = time.time() - start
     print(f"\nmarker protein detection done - runtime: {elapsed:.1f} seconds")
     print("=" * 80)
