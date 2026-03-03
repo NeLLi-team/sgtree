@@ -84,6 +84,14 @@ def prepare_reference(cfg: Config) -> list[str] | None:
         cmd = [
             sys.executable, "-m", "sgtree", ref, cfg.modeldir,
             "--num_cpus", str(cfg.num_cpus),
+            "--aln", cfg.aln_method,
+            "--tree_method", cfg.tree_method,
+            "--iqtree_fast", "yes" if cfg.iqtree_fast else "no",
+            "--iqtree_model", cfg.iqtree_model,
+            "--hmmsearch_cutoff", cfg.hmmsearch_cutoff,
+            "--hmmsearch_evalue", str(cfg.hmmsearch_evalue),
+            "--max_sdup", str(cfg.max_sdup),
+            "--max_dupl", str(cfg.max_dupl),
             "--save_dir", ref_dir,
             "--is_ref", "yes",
         ]

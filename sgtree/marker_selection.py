@@ -29,6 +29,23 @@ def _removekey(d, key):
     return {k: v for k, v in d.items() if k != key}
 
 
+def _map_with_fallback(func, args, workers: int):
+    if not args:
+        return
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        for item in args:
+            func(item)
+        return
+    try:
+        with mp.Pool(n_workers) as pool:
+            pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        for item in args:
+            func(item)
+
+
 def _process_tree_worker(args):
     """Worker: RF-distance based duplicate resolution for one marker tree."""
     filepath, table_path, species_tree_path, outdir, ls_refs, rf_outfile = args
@@ -163,10 +180,7 @@ def run_noperm(cfg: Config, ls_refs: list[str] | None):
         for f in ls_of_files
     ]
 
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_process_tree_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_process_tree_worker, args, cfg.num_cpus)
 
 
 def _score_func(ls_mod, ls_in):
@@ -278,10 +292,7 @@ def remove_singles(cfg: Config):
     species_tree_path = os.path.join(cfg.outdir, "tree.nwk")
     args = [(f, species_tree_path, cfg.outdir) for f in files]
 
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_remove_singles_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_remove_singles_worker, args, cfg.num_cpus)
 
 
 def _write_cleaned_worker(args):
@@ -320,7 +331,4 @@ def write_cleaned_alignments(cfg: Config):
     ls_of_files = glob.glob(newick_dir)
     args = [(f, aligned_dir, aligned_final_dir) for f in ls_of_files]
 
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_write_cleaned_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_write_cleaned_worker, args, cfg.num_cpus)

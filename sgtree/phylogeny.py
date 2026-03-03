@@ -1,6 +1,7 @@
 import os
 import subprocess
 import glob
+import shutil
 import multiprocessing as mp
 
 from sgtree.config import Config
@@ -12,16 +13,65 @@ def run_fasttree(input_fasta: str, output_tree: str):
     subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
 
 
+def _run_iqtree(input_fasta: str, output_tree: str, cpus: int, model: str, fast: bool):
+    """Run IQ-TREE and copy resulting treefile to output_tree."""
+    prefix = output_tree + ".iqtree"
+    cmd = [
+        "iqtree",
+        "--quiet",
+        "--prefix", prefix,
+        "-m", model,
+        "-T", str(max(1, cpus)),
+    ]
+    if fast:
+        cmd.append("-fast")
+    cmd.extend(["-s", input_fasta])
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+    treefile = prefix + ".treefile"
+    if not os.path.exists(treefile):
+        raise FileNotFoundError(f"IQ-TREE did not produce expected treefile: {treefile}")
+    shutil.copyfile(treefile, output_tree)
+
+
+def run_species_tree(cfg: Config, input_fasta: str, output_tree: str):
+    """Run selected tree method for the species tree."""
+    if cfg.tree_method == "iqtree":
+        _run_iqtree(input_fasta, output_tree, cfg.num_cpus, cfg.iqtree_model, cfg.iqtree_fast)
+    else:
+        run_fasttree(input_fasta, output_tree)
+
+
 def _build_tree_worker(args):
-    """Worker: build a single protein tree with FastTree."""
-    filepath, treeout_dir = args
+    """Worker: build a single protein tree with selected tree method."""
+    filepath, treeout_dir, tree_method, iqtree_model, iqtree_fast = args
     tree_out = os.path.join(
         treeout_dir,
         os.path.basename(filepath) + "_tree.out",
     )
-    cmd = ["FastTree", "-quiet", "-out", tree_out, filepath]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
-    print(result.stdout.decode("utf-8"))
+    if tree_method == "iqtree":
+        _run_iqtree(filepath, tree_out, 1, iqtree_model, iqtree_fast)
+    else:
+        cmd = ["FastTree", "-quiet", "-out", tree_out, filepath]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+        print(result.stdout.decode("utf-8"))
+
+
+def _map_with_fallback(func, args, workers: int):
+    if not args:
+        return
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        for item in args:
+            func(item)
+        return
+    try:
+        with mp.Pool(n_workers) as pool:
+            pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        for item in args:
+            func(item)
 
 
 def run_fasttree_per_marker(cfg: Config, trimmed_dir: str, treeout_dir: str):
@@ -29,9 +79,12 @@ def run_fasttree_per_marker(cfg: Config, trimmed_dir: str, treeout_dir: str):
     os.makedirs(treeout_dir, exist_ok=True)
 
     files = glob.glob(os.path.join(trimmed_dir, "*"))
-    args = [(f, treeout_dir) for f in files]
+    args = [
+        (f, treeout_dir, cfg.tree_method, cfg.iqtree_model, cfg.iqtree_fast)
+        for f in files
+    ]
+    if not args:
+        return
 
-    pool = mp.Pool(4)
-    pool.map(_build_tree_worker, args)
-    pool.close()
-    pool.join()
+    workers = max(1, min(cfg.num_cpus, len(args)))
+    _map_with_fallback(_build_tree_worker, args, workers)

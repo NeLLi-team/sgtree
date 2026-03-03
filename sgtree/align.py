@@ -78,6 +78,23 @@ def _normalize_fasta(fasta_path: str) -> None:
             f.write(f"{header}\n{seq}\n")
 
 
+def _map_with_fallback(func, args, workers: int):
+    if not args:
+        return
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        for item in args:
+            func(item)
+        return
+    try:
+        with mp.Pool(n_workers) as pool:
+            pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        for item in args:
+            func(item)
+
+
 def run_alignment(cfg: Config):
     """Run sequence alignment using the configured method (mafft, mafft-linsi, or hmmalign)."""
     os.makedirs(cfg.aligned_dir, exist_ok=True)
@@ -89,18 +106,15 @@ def run_alignment(cfg: Config):
 
     print(f"- ...running {cfg.aln_method}")
 
-    pool = mp.Pool(cfg.num_cpus)
     if cfg.aln_method == "mafft":
-        pool.map(_run_mafft, [
+        _map_with_fallback(_run_mafft, [
             (cfg.extracted_seqs_dir, cfg.aligned_dir, f) for f in files
-        ])
+        ], cfg.num_cpus)
     elif cfg.aln_method == "mafft-linsi":
-        pool.map(_run_mafft_linsi, [
+        _map_with_fallback(_run_mafft_linsi, [
             (cfg.extracted_seqs_dir, cfg.aligned_dir, f) for f in files
-        ])
+        ], cfg.num_cpus)
     else:
-        pool.map(_run_hmmalign, [
+        _map_with_fallback(_run_hmmalign, [
             (cfg.extracted_seqs_dir, cfg.aligned_dir, cfg.models_path, f) for f in files
-        ])
-    pool.close()
-    pool.join()
+        ], cfg.num_cpus)

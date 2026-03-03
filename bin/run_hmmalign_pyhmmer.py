@@ -31,12 +31,22 @@ def main() -> None:
 
     hmm_profile = _load_marker_hmm(args.models, args.marker)
     with easel.SequenceFile(args.seqs, digital=True, alphabet=hmm_profile.alphabet) as seq_file:
-        msa = hmmer.hmmalign(
-            hmm_profile,
-            seq_file,
-            cpus=max(1, args.cpus),
-            trim=True,
-        )
+        try:
+            msa = hmmer.hmmalign(
+                hmm_profile,
+                seq_file,
+                cpus=max(1, args.cpus),
+                trim=True,
+            )
+        except (PermissionError, OSError):
+            # Restricted runtimes can block pyhmmer multiprocessing primitives.
+            seq_file.rewind()
+            msa = hmmer.hmmalign(
+                hmm_profile,
+                seq_file,
+                cpus=1,
+                trim=True,
+            )
 
     with open(args.out, "wb") as out_handle:
         msa.write(out_handle, format="afa")

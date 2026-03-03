@@ -40,6 +40,22 @@ def parse_args() -> Config:
                         help="number of neighbors to check")
     parser.add_argument("--aln", type=str, default="hmmalign",
                         help="alignment method: mafft, mafft-linsi, or hmmalign")
+    parser.add_argument("--tree_method", type=str, default="fasttree",
+                        choices=["fasttree", "iqtree"],
+                        help="tree builder for species and marker trees: fasttree or iqtree")
+    parser.add_argument("--iqtree_fast", type=str, default="yes",
+                        help="when --tree_method iqtree, use IQ-TREE -fast (yes/no)")
+    parser.add_argument("--iqtree_model", type=str, default="LG+F+I+G4",
+                        help="IQ-TREE model string (used when --tree_method iqtree)")
+    parser.add_argument("--hmmsearch_cutoff", type=str, default="cut_ga",
+                        choices=["cut_ga", "cut_tc", "cut_nc", "evalue"],
+                        help="hmmsearch threshold mode")
+    parser.add_argument("--hmmsearch_evalue", type=float, default=1e-5,
+                        help="hmmsearch E-value threshold when --hmmsearch_cutoff evalue")
+    parser.add_argument("--max_sdup", type=int, default=-1,
+                        help="max copies allowed for any single marker per genome (-1 disables)")
+    parser.add_argument("--max_dupl", type=float, default=-1.0,
+                        help="max fraction of markers allowed in duplicate per genome (-1 disables)")
     parser.add_argument("--is_ref", type=str, default="no",
                         help="internal flag, not for user use")
 
@@ -64,6 +80,11 @@ def parse_args() -> Config:
         os.getcwd(), "runs", "reference_cache"
     )
     ref_concat = ref_concat.rstrip("/")
+    iqtree_fast = str(args.iqtree_fast).strip().lower() in {"yes", "true", "1"}
+    if args.max_dupl != -1.0 and not (0.0 <= args.max_dupl <= 1.0):
+        raise ValueError("--max_dupl must be between 0 and 1, or -1 to disable")
+    if args.hmmsearch_cutoff == "evalue" and args.hmmsearch_evalue <= 0:
+        raise ValueError("--hmmsearch_evalue must be > 0 when cutoff mode is evalue")
 
     return Config(
         genomedir=genomedir,
@@ -73,6 +94,13 @@ def parse_args() -> Config:
         percent_models=args.percent_models,
         lflt_fraction=float(args.lflt) / 100,
         aln_method=args.aln,
+        tree_method=args.tree_method,
+        iqtree_fast=iqtree_fast,
+        iqtree_model=args.iqtree_model,
+        hmmsearch_cutoff=args.hmmsearch_cutoff,
+        hmmsearch_evalue=args.hmmsearch_evalue,
+        max_sdup=args.max_sdup,
+        max_dupl=args.max_dupl,
         ref=args.ref.rstrip("/") if args.ref else None,
         ref_concat=ref_concat,
         marker_selection=args.marker_selection == "yes",
@@ -99,7 +127,14 @@ def main():
           f" models, hmm {cfg.modeldir}\n"
           f" working directory {cfg.outdir}\n"
           f" number of CPUs {cfg.num_cpus}\n"
+          f" tree method {cfg.tree_method}\n"
+          f" iqtree fast {'yes' if cfg.iqtree_fast else 'no'}\n"
+          f" iqtree model {cfg.iqtree_model}\n"
+          f" hmmsearch cutoff {cfg.hmmsearch_cutoff}\n"
+          f" hmmsearch evalue {cfg.hmmsearch_evalue}\n"
           f" minimum percentage of models {cfg.percent_models}\n"
+          f" max single-marker copies {cfg.max_sdup}\n"
+          f" max duplicated-marker fraction {cfg.max_dupl}\n"
           f" reference directory {cfg.ref}\n"
           f" --marker_selection {'yes' if cfg.marker_selection else 'no'}\n")
     if cfg.ref:
@@ -189,13 +224,13 @@ def main():
         # Step 9: Build species tree
         t0 = datetime.datetime.now()
         t_start = time.time()
-        print("- ...running FastTree")
+        print(f"- ...running {cfg.tree_method}")
         tree_path = os.path.join(cfg.outdir, "tree.nwk")
-        phylogeny.run_fasttree(concat_path, tree_path)
+        phylogeny.run_species_tree(cfg, concat_path, tree_path)
         tree_time = time.time() - t_start
-        print(f"\nFastTree done - total runtime: {tree_time:.1f} seconds")
+        print(f"\n{cfg.tree_method} done - total runtime: {tree_time:.1f} seconds")
         print("=" * 80 + "\n")
-        timings["running FastTree"] = (t0, tree_time)
+        timings[f"running {cfg.tree_method}"] = (t0, tree_time)
 
         # iTOL heatmap (for basic run)
         if not cfg.marker_selection:
@@ -234,11 +269,11 @@ def main():
             # Build per-marker protein trees
             t0 = datetime.datetime.now()
             t_start = time.time()
-            print("- ...running FastTree, making protein trees for marker selection:")
+            print(f"- ...running {cfg.tree_method}, making protein trees for marker selection:")
             treeout_dir = os.path.join(cfg.outdir, "treeouts_protTrees")
             phylogeny.run_fasttree_per_marker(cfg, trimmed_prot_dir, treeout_dir)
             tree_time = time.time() - t_start
-            print(f"\nFastTree done - total runtime: {tree_time:.1f} seconds")
+            print(f"\n{cfg.tree_method} done - total runtime: {tree_time:.1f} seconds")
             print("=" * 80 + "\n")
 
             # RF-distance marker selection
@@ -286,9 +321,9 @@ def main():
             print("=" * 80 + "\n")
 
             # Final tree
-            print("- ...running FastTree for tree_final.nwk")
+            print(f"- ...running {cfg.tree_method} for tree_final.nwk")
             tree_final_path = os.path.join(cfg.outdir, "tree_final.nwk")
-            phylogeny.run_fasttree(concat_final_path, tree_final_path)
+            phylogeny.run_species_tree(cfg, concat_final_path, tree_final_path)
 
             # Render tree
             color_file = os.path.join(cfg.outdir, "color.txt")

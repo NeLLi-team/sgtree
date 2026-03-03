@@ -13,6 +13,8 @@ workflow SGTREE_MAIN {
     modeldir
     percent_models
     lflt
+    max_sdup
+    max_dupl
     aln_method
     has_ref
     ref_merged_final   // path or NO_REF placeholder
@@ -32,6 +34,8 @@ workflow SGTREE_MAIN {
         CONCAT_INPUTS.out.model_count,
         percent_models,
         lflt,
+        max_sdup,
+        max_dupl,
         has_ref,
         ref_merged_final,
         ref_proteomes

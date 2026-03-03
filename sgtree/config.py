@@ -13,6 +13,13 @@ class Config:
     percent_models: int
     lflt_fraction: float
     aln_method: str
+    tree_method: str
+    iqtree_fast: bool
+    iqtree_model: str
+    hmmsearch_cutoff: str
+    hmmsearch_evalue: float
+    max_sdup: int
+    max_dupl: float
     ref: str | None
     ref_concat: str
     marker_selection: bool
