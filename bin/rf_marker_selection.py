@@ -27,9 +27,12 @@ def get_ascore(identifier: str, score_table: pd.DataFrame, score_col: str) -> st
 
 
 def best_score(scored_list):
-    scores = [float(s.split(":")[1]) for s in scored_list]
-    best_idx = scores.index(max(scores))
-    return scored_list[best_idx]
+    if not scored_list:
+        return None
+    return min(
+        scored_list,
+        key=lambda entry: (-float(entry.rsplit(":", 1)[1]), entry.rsplit(":", 1)[0]),
+    )
 
 
 def main():

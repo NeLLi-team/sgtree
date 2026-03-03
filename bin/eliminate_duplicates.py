@@ -18,6 +18,15 @@ def resolve_score_column(df_fordups: pd.DataFrame) -> str:
     return score_col
 
 
+def pick_best_scored_id(scored_ids: list[str]) -> str:
+    if not scored_ids:
+        raise ValueError("Expected at least one scored identifier")
+    return min(
+        scored_ids,
+        key=lambda entry: (-float(entry.rsplit(":", 1)[1]), entry.rsplit(":", 1)[0]),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--alignment", required=True)
@@ -54,11 +63,10 @@ def main():
     # for each set of duplicates, keep the best score
     ids_to_remove = set()
     for key, scored_ids in dups.items():
-        scores = [float(s.split(":")[1]) for s in scored_ids]
-        best_idx = scores.index(max(scores))
-        for i, scored_id in enumerate(scored_ids):
-            if i != best_idx:
-                raw_id = scored_id.split(":")[0].replace("/", "|")
+        best_scored_id = pick_best_scored_id(scored_ids)
+        for scored_id in scored_ids:
+            if scored_id != best_scored_id:
+                raw_id = scored_id.split(":", 1)[0].replace("/", "|")
                 ids_to_remove.add(raw_id)
 
     kept_ids = [k for k in all_ids if k not in ids_to_remove]
