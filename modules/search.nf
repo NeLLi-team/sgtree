@@ -16,11 +16,16 @@ process CONCAT_INPUTS {
     else
         cp ${modeldir} models.hmm
     fi
-    if [ -d "${genomedir}" ]; then
-        cat ${genomedir}/*.faa > proteomes.faa
-    else
-        cp ${genomedir} proteomes.faa
-    fi
+    map_stem=\$(basename "${genomedir}")
+    map_stem="\${map_stem%.*}"
+    map_file="proteomes_header_map_\${map_stem}.tsv"
+    python ${projectDir}/bin/normalize_concat_proteomes.py --input ${genomedir} --out proteomes.faa --map "\${map_file}"
+    case "${params.outdir}" in
+        /*) map_out_dir="${params.outdir}" ;;
+        *)  map_out_dir="${launchDir}/${params.outdir}" ;;
+    esac
+    mkdir -p "\${map_out_dir}"
+    cp "\${map_file}" "\${map_out_dir}/\${map_file}"
     split_hmm_models.py --models models.hmm --outdir models_split
     MODEL_COUNT=\$(grep -c '^NAME' models.hmm)
     """
