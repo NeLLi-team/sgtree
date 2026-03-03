@@ -6,6 +6,18 @@ import pandas as pd
 from Bio import SeqIO
 
 
+SCORE_COLUMNS = ("score_bits", "7")
+
+
+def resolve_score_column(df_fordups: pd.DataFrame) -> str:
+    score_col = next((col for col in SCORE_COLUMNS if col in df_fordups.columns), None)
+    if score_col is None:
+        raise ValueError(
+            f"Missing score column in duplicate table; expected one of: {', '.join(SCORE_COLUMNS)}"
+        )
+    return score_col
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--alignment", required=True)
@@ -14,6 +26,7 @@ def main():
     args = parser.parse_args()
 
     df_fordups = pd.read_csv(args.table_elim_dups).set_index("savedname")
+    score_col = resolve_score_column(df_fordups)
     record_dict = SeqIO.to_dict(SeqIO.parse(args.alignment, "fasta"))
     all_ids = list(record_dict.keys())
 
@@ -35,7 +48,7 @@ def main():
         for v in dups[key]:
             lookup = v.replace("|", "/")
             row = df_fordups.loc[lookup]
-            scored.append(f"{row.name}:{row.iloc[7]}")
+            scored.append(f"{row.name}:{float(row[score_col])}")
         dups[key] = scored
 
     # for each set of duplicates, keep the best score

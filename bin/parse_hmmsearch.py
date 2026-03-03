@@ -5,6 +5,22 @@ import os
 import shutil
 
 import pandas as pd
+from Bio import SeqIO
+
+
+def cap_namemodel_duplicates(df: pd.DataFrame, max_per_group: int = 5) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    if "namemodel" not in df.columns:
+        raise ValueError("Missing required column 'namemodel' for duplicate capping")
+    if "score_bits" not in df.columns:
+        raise ValueError("Missing required column 'score_bits' for duplicate capping")
+    return (
+        df.sort_values(["namemodel", "score_bits", "savedname"], ascending=[True, False, True])
+        .groupby("namemodel", group_keys=False)
+        .head(max_per_group)
+        .copy()
+    )
 
 
 def main():
@@ -107,13 +123,17 @@ def main():
     finaldf_copy = finaldf.copy()
     finaldf_copy["savedname"] = finaldf_copy[0].apply(lambda c: c.replace("|", "/"))
     df = finaldf_copy.map(lambda x: x.split("|")[0] if isinstance(x, str) else x)
+    score_col = 7 if 7 in df.columns else ("7" if "7" in df.columns else None)
+    if score_col is None:
+        raise ValueError("Expected HMMER bitscore column '7' in parsed domtblout table")
+    df["score_bits"] = pd.to_numeric(df[score_col], errors="coerce")
+    if df["score_bits"].isna().any():
+        raise ValueError("Failed to parse one or more HMMER bitscores from column '7'")
     df['namemodel'] = df[0] + "/" + df[3]
     df = df.drop_duplicates(subset='savedname', keep='first')
 
-    # keep max 5 duplicates per namemodel
-    helperdf = pd.concat(g for _, g in df.groupby("namemodel") if 5 >= len(g) >= 1)
-    newdf = df.drop_duplicates(subset='namemodel', keep=False)
-    df = pd.merge(helperdf, newdf, how='outer')
+    # cap duplicate copy count per genome+marker group (keep best-scoring copies)
+    df = cap_namemodel_duplicates(df, max_per_group=5)
 
     # merge with reference if available
     if args.ref_merged_final is not None:
@@ -148,6 +168,8 @@ def main():
             data += "\n" + fp.read()
     with open("combined_proteomes.faa", "w") as fp:
         fp.write(data)
+    idx = SeqIO.index_db("combined_proteomes.idx", ["combined_proteomes.faa"], "fasta")
+    idx.close()
 
 
 if __name__ == "__main__":

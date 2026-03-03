@@ -6,10 +6,24 @@ import pandas as pd
 from ete3 import Tree
 
 
-def get_ascore(identifier, table_path):
-    dfa = pd.read_csv(table_path).set_index("savedname")
-    row = dfa.loc[identifier.replace("|", "/")]
-    return row.name + ":" + str(row.iloc[8])
+SCORE_COLUMNS = ("score_bits", "7")
+
+
+def load_score_table(table_path: str) -> tuple[pd.DataFrame, str]:
+    dfa = pd.read_csv(table_path)
+    if "savedname" not in dfa.columns:
+        raise ValueError(f"Missing required column 'savedname' in {table_path}")
+    score_col = next((col for col in SCORE_COLUMNS if col in dfa.columns), None)
+    if score_col is None:
+        raise ValueError(
+            f"Missing score column in {table_path}; expected one of: {', '.join(SCORE_COLUMNS)}"
+        )
+    return dfa.set_index("savedname"), score_col
+
+
+def get_ascore(identifier: str, score_table: pd.DataFrame, score_col: str) -> str:
+    row = score_table.loc[identifier.replace("|", "/")]
+    return row.name + ":" + str(float(row[score_col]))
 
 
 def best_score(scored_list):
@@ -30,6 +44,7 @@ def main():
     args = parser.parse_args()
 
     ls_refs = args.ref_list.split(",") if args.ref_list else None
+    score_table, score_col = load_score_table(args.table_elim_dups)
 
     t = Tree(args.marker_tree)
     lst_nodes = [node.name for node in next(t.copy().traverse())]
@@ -46,7 +61,7 @@ def main():
 
     # score all entries
     for key in dups:
-        dups[key] = [get_ascore(v, args.table_elim_dups) for v in dups[key]]
+        dups[key] = [get_ascore(v, score_table, score_col) for v in dups[key]]
 
     speciestree = Tree(args.species_tree)
     bad_nodes = []

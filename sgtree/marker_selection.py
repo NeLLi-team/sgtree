@@ -9,12 +9,25 @@ from ete3 import Tree
 from sgtree.config import Config
 
 
-def _get_ascore(identifier, table_path):
-    """Get the score for a given sequence from the elim_dups table."""
+SCORE_COLUMNS = ("score_bits", "7")
+
+
+def _load_score_table(table_path: str) -> tuple[pd.DataFrame, str]:
     dfa = pd.read_csv(table_path)
-    dfa = dfa.set_index(dfa["savedname"])
-    row = dfa.loc[identifier.replace("|", "/")]
-    return row["savedname"] + ":" + str(row.iloc[8])
+    if "savedname" not in dfa.columns:
+        raise ValueError(f"Missing required column 'savedname' in {table_path}")
+    score_col = next((col for col in SCORE_COLUMNS if col in dfa.columns), None)
+    if score_col is None:
+        raise ValueError(
+            f"Missing score column in {table_path}; expected one of: {', '.join(SCORE_COLUMNS)}"
+        )
+    dfa = dfa.set_index("savedname")
+    return dfa, score_col
+
+
+def _get_ascore(identifier: str, score_table: pd.DataFrame, score_col: str) -> str:
+    row = score_table.loc[identifier.replace("|", "/")]
+    return row.name + ":" + str(float(row[score_col]))
 
 
 def _best_score(scored_list):
@@ -49,6 +62,7 @@ def _map_with_fallback(func, args, workers: int):
 def _process_tree_worker(args):
     """Worker: RF-distance based duplicate resolution for one marker tree."""
     filepath, table_path, species_tree_path, outdir, ls_refs, rf_outfile = args
+    score_table, score_col = _load_score_table(table_path)
     t = Tree(filepath)
     lst_nodes = [node.name for node in next(t.copy().traverse())]
     marker_name = os.path.basename(filepath).split(".")[0]
@@ -65,10 +79,9 @@ def _process_tree_worker(args):
 
     # score all entries
     for key in dups:
-        dups[key] = [_get_ascore(v, table_path) for v in dups[key]]
+        dups[key] = [_get_ascore(v, score_table, score_col) for v in dups[key]]
 
     speciestree = Tree(species_tree_path)
-    ls_best_nodes = []
     bad_nodes = []
 
     for key, value in dups.items():
@@ -125,8 +138,6 @@ def _process_tree_worker(args):
                 status = "Kept" if protein == best_protein else "Removed"
                 f.write(f"{protein} {marker_name} {rf_d:.6f} {status}\n")
 
-        if best_each is not None:
-            ls_best_nodes.append(best_each)
         bad_nodes.extend(
             [n.split(":")[0].replace("/", "|") for n in value if n != best_each]
         )
@@ -194,7 +205,7 @@ def _score_func(ls_mod, ls_in):
 
 def _remove_singles_worker(args):
     """Worker: remove singleton markers for one file."""
-    filepath, species_tree_path, outdir = args
+    filepath, species_tree_path, outdir, num_nei_override = args
     tf = Tree(filepath)
     td = Tree(filepath)
 
@@ -220,7 +231,11 @@ def _remove_singles_worker(args):
     rf, maxrf, *_ = ti.robinson_foulds(td, unrooted_trees=True)
     maxrf = maxrf + 0.0001
     rdist = rf / maxrf
-    num_nei = round(len(lst_nodes) * (1 - rdist))
+    max_neighbors = max(1, len(lst_nodes) - 1)
+    if num_nei_override > 0:
+        num_nei = min(num_nei_override, max_neighbors)
+    else:
+        num_nei = max(1, round(len(lst_nodes) * (1 - rdist)))
     total_score = num_nei ** 2
     cutoff = total_score / 15
 
@@ -290,7 +305,7 @@ def remove_singles(cfg: Config):
     """Remove singleton markers poorly placed by comparing neighbor topology."""
     files = glob.glob(os.path.join(cfg.outdir, "protTrees", "no_duplicates", "out", "*"))
     species_tree_path = os.path.join(cfg.outdir, "tree.nwk")
-    args = [(f, species_tree_path, cfg.outdir) for f in files]
+    args = [(f, species_tree_path, cfg.outdir, cfg.num_nei) for f in files]
 
     _map_with_fallback(_remove_singles_worker, args, cfg.num_cpus)
 
@@ -312,7 +327,7 @@ def _write_cleaned_worker(args):
             del record_dict[key]
 
     out_path = os.path.join(aligned_final_dir, marker + ".faa")
-    with open(out_path, "a") as out:
+    with open(out_path, "w") as out:
         for k in record_dict:
             SeqIO.write(record_dict[k], out, "fasta")
 

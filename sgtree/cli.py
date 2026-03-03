@@ -13,6 +13,17 @@ from sgtree import marker_selection, itol, render, sgtree_logging, cleanup, refe
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 
+def _parse_bool(value: str | bool, *, flag: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"yes", "true", "1"}:
+        return True
+    if normalized in {"no", "false", "0"}:
+        return False
+    raise ValueError(f"{flag} expects one of: yes/no, true/false, 1/0")
+
+
 def parse_args() -> Config:
     parser = argparse.ArgumentParser(description="SGTree - Species tree from marker gene phylogenies")
 
@@ -36,8 +47,8 @@ def parse_args() -> Config:
                         help="remove singleton markers (yes/no)")
     parser.add_argument("--lflt", type=int, default=0,
                         help="remove sequences shorter than N%% of median length")
-    parser.add_argument("--num_nei", type=int, default=15,
-                        help="number of neighbors to check")
+    parser.add_argument("--num_nei", type=int, default=0,
+                        help="number of neighbors to check (0=auto)")
     parser.add_argument("--aln", type=str, default="hmmalign",
                         help="alignment method: mafft, mafft-linsi, or hmmalign")
     parser.add_argument("--tree_method", type=str, default="fasttree",
@@ -80,11 +91,16 @@ def parse_args() -> Config:
         os.getcwd(), "runs", "reference_cache"
     )
     ref_concat = ref_concat.rstrip("/")
-    iqtree_fast = str(args.iqtree_fast).strip().lower() in {"yes", "true", "1"}
+    iqtree_fast = _parse_bool(args.iqtree_fast, flag="--iqtree_fast")
+    marker_selection = _parse_bool(args.marker_selection, flag="--marker_selection")
+    singles = _parse_bool(args.singles, flag="--singles")
+    is_ref = _parse_bool(args.is_ref, flag="--is_ref")
     if args.max_dupl != -1.0 and not (0.0 <= args.max_dupl <= 1.0):
         raise ValueError("--max_dupl must be between 0 and 1, or -1 to disable")
     if args.hmmsearch_cutoff == "evalue" and args.hmmsearch_evalue <= 0:
         raise ValueError("--hmmsearch_evalue must be > 0 when cutoff mode is evalue")
+    if args.num_nei < 0:
+        raise ValueError("--num_nei must be >= 0")
 
     return Config(
         genomedir=genomedir,
@@ -103,9 +119,10 @@ def parse_args() -> Config:
         max_dupl=args.max_dupl,
         ref=args.ref.rstrip("/") if args.ref else None,
         ref_concat=ref_concat,
-        marker_selection=args.marker_selection == "yes",
-        singles=args.singles == "yes",
-        is_ref=args.is_ref == "yes",
+        marker_selection=marker_selection,
+        singles=singles,
+        num_nei=args.num_nei,
+        is_ref=is_ref,
         start_time=start_time,
     )
 
@@ -135,6 +152,7 @@ def main():
           f" minimum percentage of models {cfg.percent_models}\n"
           f" max single-marker copies {cfg.max_sdup}\n"
           f" max duplicated-marker fraction {cfg.max_dupl}\n"
+          f" singleton-neighbor override {cfg.num_nei} (0=auto)\n"
           f" reference directory {cfg.ref}\n"
           f" --marker_selection {'yes' if cfg.marker_selection else 'no'}\n")
     if cfg.ref:

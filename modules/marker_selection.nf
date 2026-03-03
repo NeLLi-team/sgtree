@@ -37,7 +37,7 @@ process REMOVE_SINGLES {
 
     script:
     """
-    remove_singles.py --tree ${cleaned_tree} --species_tree ${species_tree} --out no_singles_${marker}.nw
+    remove_singles.py --tree ${cleaned_tree} --species_tree ${species_tree} --num_nei ${params.num_nei ?: 0} --out no_singles_${marker}.nw
     """
 }
 

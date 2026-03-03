@@ -2,6 +2,7 @@ import os
 import glob
 import subprocess
 import multiprocessing as mp
+import shutil
 
 from pyhmmer import easel, hmmer, plan7
 
@@ -9,41 +10,34 @@ from sgtree.config import Config
 
 
 def _run_mafft(args):
-    extracted_seqs_dir, aligned_dir, filename = args
+    extracted_seqs_dir, aligned_dir, filename, threads = args
     filepath = os.path.join(extracted_seqs_dir, filename)
     aligned_dest = os.path.join(aligned_dir, filename)
-    cmd = ["mafft", "--auto", "--thread", "4", "--quiet", filepath]
+    cmd = ["mafft", "--auto", "--thread", str(threads), "--quiet", filepath]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
     with open(aligned_dest, "w") as f:
         f.write(result.stdout.decode("utf-8") + "\n")
 
 
 def _run_mafft_linsi(args):
-    extracted_seqs_dir, aligned_dir, filename = args
+    extracted_seqs_dir, aligned_dir, filename, threads = args
     filepath = os.path.join(extracted_seqs_dir, filename)
     aligned_dest = os.path.join(aligned_dir, filename)
-    cmd = ["mafft-linsi", "--auto", "--thread", "4", "--quiet", filepath]
+    cmd = ["mafft-linsi", "--auto", "--thread", str(threads), "--quiet", filepath]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
     with open(aligned_dest, "w") as f:
         f.write(result.stdout.decode("utf-8") + "\n")
 
 
 def _run_hmmalign(args):
-    extracted_seqs_dir, aligned_dir, modelset_path, filename = args
+    extracted_seqs_dir, aligned_dir, model_hmm_path, filename = args
     filepath = os.path.join(extracted_seqs_dir, filename)
     model = filename.split(".")[0]
     faa_path = os.path.join(aligned_dir, model + ".faa")
-    hmm_profile = None
-    with plan7.HMMFile(modelset_path) as hmm_file:
-        for hmm_profile_candidate in hmm_file:
-            hmm_name = hmm_profile_candidate.name
-            if isinstance(hmm_name, bytes):
-                hmm_name = hmm_name.decode("utf-8", errors="replace")
-            if str(hmm_name) == model:
-                hmm_profile = hmm_profile_candidate
-                break
+    with plan7.HMMFile(model_hmm_path) as hmm_file:
+        hmm_profile = next(iter(hmm_file), None)
     if hmm_profile is None:
-        raise ValueError(f"Could not find marker '{model}' in marker-set HMM file: {modelset_path}")
+        raise ValueError(f"Could not read HMM profile from {model_hmm_path}")
 
     with easel.SequenceFile(filepath, digital=True, alphabet=hmm_profile.alphabet) as seq_file:
         msa = hmmer.hmmalign(hmm_profile, seq_file, cpus=1, trim=True)
@@ -95,6 +89,20 @@ def _map_with_fallback(func, args, workers: int):
             func(item)
 
 
+def _split_models(models_path: str, split_dir: str) -> None:
+    if os.path.isdir(split_dir):
+        shutil.rmtree(split_dir)
+    os.makedirs(split_dir, exist_ok=True)
+    with plan7.HMMFile(models_path) as hmm_file:
+        for hmm_profile in hmm_file:
+            marker = hmm_profile.name
+            if isinstance(marker, bytes):
+                marker = marker.decode("utf-8", errors="replace")
+            out_path = os.path.join(split_dir, f"{marker}.hmm")
+            with open(out_path, "wb") as out_handle:
+                hmm_profile.write(out_handle)
+
+
 def run_alignment(cfg: Config):
     """Run sequence alignment using the configured method (mafft, mafft-linsi, or hmmalign)."""
     os.makedirs(cfg.aligned_dir, exist_ok=True)
@@ -105,16 +113,21 @@ def run_alignment(cfg: Config):
     ]
 
     print(f"- ...running {cfg.aln_method}")
+    n_jobs = max(1, min(cfg.num_cpus, len(files) if files else 1))
+    threads_per_job = max(1, cfg.num_cpus // n_jobs)
 
     if cfg.aln_method == "mafft":
         _map_with_fallback(_run_mafft, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, f) for f in files
-        ], cfg.num_cpus)
+            (cfg.extracted_seqs_dir, cfg.aligned_dir, f, threads_per_job) for f in files
+        ], n_jobs)
     elif cfg.aln_method == "mafft-linsi":
         _map_with_fallback(_run_mafft_linsi, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, f) for f in files
-        ], cfg.num_cpus)
+            (cfg.extracted_seqs_dir, cfg.aligned_dir, f, threads_per_job) for f in files
+        ], n_jobs)
     else:
+        split_dir = os.path.join(cfg.outdir, "models_split")
+        _split_models(cfg.models_path, split_dir)
         _map_with_fallback(_run_hmmalign, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, cfg.models_path, f) for f in files
-        ], cfg.num_cpus)
+            (cfg.extracted_seqs_dir, cfg.aligned_dir, os.path.join(split_dir, f"{f.split('.')[0]}.hmm"), f)
+            for f in files
+        ], n_jobs)

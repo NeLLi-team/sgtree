@@ -95,6 +95,7 @@ Genome inclusion/exclusion criteria:
 - `--max_sdup` (default `-1`): maximum allowed copies of any single marker in one genome; `-1` disables.
 - `--max_dupl` (default `-1`): maximum allowed fraction of markers present in multiple copies; `-1` disables.
 - `--lflt` (default `0`): optional per-marker length filter (% of median hit length).
+- `--num_nei` (default `0`): optional singleton-removal neighbor count override (`0` keeps auto mode).
 
 nsgtree-style mapping:
 

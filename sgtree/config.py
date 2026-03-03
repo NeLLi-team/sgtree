@@ -24,6 +24,7 @@ class Config:
     ref_concat: str
     marker_selection: bool
     singles: bool
+    num_nei: int
     is_ref: bool
     start_time: str
     model_count: int = 0
