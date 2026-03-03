@@ -11,17 +11,18 @@ pandas = ">=2.2.3,<2.3"
 biopython = ">=1.86,<1.87"
 numpy = ">=1.26,<2"
 ete3 = ">=3.1.3,<3.2"
-hmmer = ">=3.4,<3.5"
 mafft = ">=7.520,<8"
 trimal = ">=1.5.0,<1.6"
 fasttree = ">=2.2.0,<2.3"
+
+[pypi-dependencies]
 pyhmmer = ">=0.12.0,<0.13"
 
 [tasks]
 sgtree = "bash ./bin/sgtree-nextflow.sh"
 sgtree-python = "python -m sgtree"
-test-basic = "python -m sgtree testgenomes/Chloroflexi models/UNI56.hmm --num_cpus 8"
-test-full = "python -m sgtree testgenomes/Chloroflexi models/UNI56.hmm --num_cpus 8 --marker_selection yes --ref testgenomes/chlorref"
+test-basic = "python -m sgtree testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8"
+test-full = "python -m sgtree testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8 --marker_selection yes --ref testgenomes/chlorref"
 clean-runtime = "bash -lc 'set -euo pipefail; shopt -s nullglob dotglob; rm -rf .nextflow work sgtree_out; rm -f .nextflow.log*; for d in results_*; do rm -rf -- \"$d\"; done; mkdir -p runs; for p in runs/*; do [ \"$p\" = \"runs/.gitkeep\" ] && continue; rm -rf -- \"$p\"; done; touch runs/.gitkeep'"
 test-regression = "python tests/regression_parity.py"
 test-regression-clean = "pixi run clean-runtime && python tests/regression_parity.py"
