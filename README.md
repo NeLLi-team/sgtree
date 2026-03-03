@@ -121,14 +121,21 @@ Practical selection guide:
 
 ## Input Requirements
 
-Proteomes must be FASTA (`*.faa`) with headers like:
+Proteomes must be FASTA (`*.faa`). SGTree now normalizes all inputs internally to:
 
 ```text
 >IMG2684622718|2685462912
 MLCAFAEEEAKIAETVGKVATELKVKKLLSDFATKEGEEHISTYNKIAMTAKAEGYADIEAMLCAFAEEEAKLQKL
 ```
 
-The text before `|` must match the genome filename stem.
+Normalization behavior:
+
+- Directory input (`--genomedir <dir>`): one proteome per `*.faa`; genome id is derived from filename stem.
+- Single FASTA input (`--genomedir <file>`): if headers already contain `genome|protein`, the genome part is preserved.
+- Headers and IDs are sanitized to avoid delimiter collisions.
+- Malformed header joins (for example `...*>next_header`) are repaired before parsing.
+- Invalid amino-acid characters are replaced with `X`; `*` is removed.
+- Header mapping is written as `proteomes_header_map_<input>.tsv` in `--outdir`.
 
 ## Output Structure
 
@@ -145,6 +152,7 @@ Nextflow output (`--outdir`):
   marker_selection_rf_values.txt # marker-selection mode
   color.txt
   log_genomes_removed.txt
+  proteomes_header_map_<input>.tsv
 ```
 
 Python output (`--save_dir`):

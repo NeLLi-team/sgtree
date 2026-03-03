@@ -8,6 +8,7 @@ import pandas as pd
 from pyhmmer import easel, hmmer, plan7
 
 from sgtree.config import Config
+from sgtree.fasta_normalize import normalize_and_concat_proteomes
 
 
 def _cap_namemodel_duplicates(df: pd.DataFrame, max_per_group: int = 5) -> pd.DataFrame:
@@ -51,14 +52,14 @@ def concat_inputs(cfg: Config) -> int:
     if model_count == 0:
         raise ValueError(f"No HMM models found in marker set: {cfg.modeldir}")
 
-    with open(cfg.proteomes_path, "w") as dest:
-        if os.path.isdir(cfg.genomedir):
-            for filename in sorted(glob.glob(os.path.join(cfg.genomedir, "*.faa"))):
-                with open(filename) as src:
-                    shutil.copyfileobj(src, dest)
-        else:
-            with open(cfg.genomedir) as src:
-                shutil.copyfileobj(src, dest)
+    os.makedirs(cfg.outdir, exist_ok=True)
+    map_path = os.path.join(cfg.outdir, "proteomes_header_map.tsv")
+    stats = normalize_and_concat_proteomes(cfg.genomedir, cfg.proteomes_path, map_path)
+    print(
+        "-... normalized proteomes "
+        f"(genomes={stats['genomes']}, records={stats['records']}, "
+        f"invalid_chars_replaced={stats['invalid_chars_replaced']})"
+    )
 
     return model_count
 
