@@ -10,7 +10,7 @@ Usage:
 
 Required arguments:
   --genomedir <dir>      Directory with input proteomes (*.faa)
-  --modeldir <file>      Combined marker-set HMM file (for example, models/UNI56.hmm)
+  --modeldir <file>      Combined marker-set HMM file (for example, resources/models/UNI56.hmm)
 
 Common options:
   --outdir <dir>         Output directory (default: runs/nextflow/default)
@@ -24,11 +24,11 @@ Common options:
   --fasttree_cpus <n>    CPUs for FastTree steps (default: 1)
 
 Examples:
-  pixi run sgtree --genomedir testgenomes/Chloroflexi --modeldir models/UNI56.hmm
+  pixi run sgtree --genomedir testgenomes/Chloroflexi --modeldir resources/models/UNI56.hmm
 
   pixi run sgtree \
     --genomedir testgenomes/Chloroflexi \
-    --modeldir models/UNI56.hmm \
+    --modeldir resources/models/UNI56.hmm \
     --outdir runs/nextflow/manual_full \
     --marker_selection true \
     --ref testgenomes/chlorref \
