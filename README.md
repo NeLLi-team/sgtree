@@ -22,7 +22,7 @@ Basic run:
 ```bash
 pixi run sgtree \
   --genomedir <path to dir with protein faa files, one faa file per genome> \
-  --modeldir <path to models>
+  --modeldir <path to marker set .hmm>
 ```
 
 Example run:
@@ -30,7 +30,7 @@ Example run:
 ```bash
 pixi run sgtree \
   --genomedir testgenomes/Chloroflexi \
-  --modeldir hmms/UNI56
+  --modeldir models/UNI56.hmm
 ```
 
 Marker-selection run with references and singleton filtering:
@@ -38,7 +38,7 @@ Marker-selection run with references and singleton filtering:
 ```bash
 pixi run sgtree \
   --genomedir testgenomes/Chloroflexi \
-  --modeldir hmms/UNI56 \
+  --modeldir models/UNI56.hmm \
   --outdir runs/nextflow/manual_full \
   --marker_selection true \
   --ref testgenomes/chlorref \
@@ -46,17 +46,18 @@ pixi run sgtree \
 ```
 
 `pixi run sgtree` writes logs automatically to `runs/nextflow/logs/`.
+Marker searches are run with `pyhmmer` (HMMER-compatible domain search output).
 
 Second choice (Python implementation without nextflow):
 
 ```bash
-pixi run sgtree-python testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
+pixi run sgtree-python testgenomes/Chloroflexi models/UNI56.hmm --num_cpus 8
 ```
 
 Backward-compatible wrapper:
 
 ```bash
-pixi run ./sgtree.py testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
+pixi run ./sgtree.py testgenomes/Chloroflexi models/UNI56.hmm --num_cpus 8
 ```
 
 ## Input Requirements
@@ -114,7 +115,7 @@ sgtree/
   bin/                    # helper scripts and launch wrappers
   tests/
     regression_parity.py  # cross-engine parity checks
-  hmms/                   # marker model sets
+  models/                 # combined marker-set HMM files
   testgenomes/            # example query/reference data
   runs/                   # runtime outputs/work/logs (.gitkeep tracked)
   pixi.toml               # reproducible environment + tasks

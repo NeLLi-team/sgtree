@@ -66,13 +66,13 @@ def main():
 
     run([
         "python", "-m", "sgtree",
-        "testgenomes/Chloroflexi", "hmms/UNI56",
+        "testgenomes/Chloroflexi", "models/UNI56.hmm",
         "--num_cpus", "8",
         "--save_dir", str(py_basic),
     ])
     run([
         "python", "-m", "sgtree",
-        "testgenomes/Chloroflexi", "hmms/UNI56",
+        "testgenomes/Chloroflexi", "models/UNI56.hmm",
         "--num_cpus", "8",
         "--marker_selection", "yes",
         "--ref", "testgenomes/chlorref",
@@ -80,7 +80,7 @@ def main():
     ])
     run([
         "python", "-m", "sgtree",
-        "testgenomes/Chloroflexi", "hmms/UNI56",
+        "testgenomes/Chloroflexi", "models/UNI56.hmm",
         "--num_cpus", "8",
         "--marker_selection", "yes",
         "--singles", "yes",
@@ -91,14 +91,14 @@ def main():
         "./nextflow", "-log", str(logs_dir / "nf_basic.log"), "run", "main.nf",
         "-work-dir", str(OUT / "work_basic"),
         "--genomedir", "testgenomes/Chloroflexi",
-        "--modeldir", "hmms/UNI56",
+        "--modeldir", "models/UNI56.hmm",
         "--outdir", str(nf_basic),
     ])
     run([
         "./nextflow", "-log", str(logs_dir / "nf_full.log"), "run", "main.nf",
         "-work-dir", str(OUT / "work_full"),
         "--genomedir", "testgenomes/Chloroflexi",
-        "--modeldir", "hmms/UNI56",
+        "--modeldir", "models/UNI56.hmm",
         "--outdir", str(nf_full),
         "--marker_selection", "true",
         "--ref", "testgenomes/chlorref",
@@ -107,7 +107,7 @@ def main():
         "./nextflow", "-log", str(logs_dir / "nf_full_singles.log"), "run", "main.nf",
         "-work-dir", str(OUT / "work_full_singles"),
         "--genomedir", "testgenomes/Chloroflexi",
-        "--modeldir", "hmms/UNI56",
+        "--modeldir", "models/UNI56.hmm",
         "--outdir", str(nf_full_singles),
         "--marker_selection", "true",
         "--singles", "yes",
