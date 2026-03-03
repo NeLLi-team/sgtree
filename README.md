@@ -10,6 +10,8 @@ Install the Pixi environment:
 pixi install
 ```
 
+The environment is managed through `pixi.toml` only.
+
 ## Run
 
 Primary interface (Nextflow):
@@ -48,6 +50,17 @@ pixi run sgtree \
 `pixi run sgtree` writes logs automatically to `runs/nextflow/logs/`.
 Marker searches and `--aln hmmalign` are run with `pyhmmer` (HMMER-compatible search output).
 
+Example with IQ-TREE and explicit HMM threshold mode:
+
+```bash
+pixi run sgtree \
+  --genomedir testgenomes/Chloroflexi \
+  --modeldir resources/models/UNI56.hmm \
+  --tree_method iqtree \
+  --iqtree_fast true \
+  --hmmsearch_cutoff cut_ga
+```
+
 Second choice (Python implementation without nextflow):
 
 ```bash
@@ -59,6 +72,51 @@ Backward-compatible wrapper:
 ```bash
 pixi run ./sgtree.py testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8
 ```
+
+## Settings
+
+Core method controls:
+
+- `--aln`: `hmmalign`, `mafft`, or `mafft-linsi` (default `hmmalign`).
+- `--tree_method`: `fasttree` or `iqtree` (default `fasttree`) for both species tree and per-marker trees.
+- `--iqtree_fast`: apply `-fast` when `--tree_method iqtree` (default `true`).
+- `--iqtree_model`: IQ-TREE model string (default `LG+F+I+G4`).
+
+HMM search thresholds:
+
+- `--hmmsearch_cutoff cut_ga`: use model gathering cutoffs (recommended for curated marker sets such as UNI56).
+- `--hmmsearch_cutoff cut_tc`: use model trusted cutoffs.
+- `--hmmsearch_cutoff cut_nc`: use model noise cutoffs.
+- `--hmmsearch_cutoff evalue --hmmsearch_evalue <float>`: use a plain E-value threshold.
+
+Genome inclusion/exclusion criteria:
+
+- `--percent_models` (default `10`): minimum fraction of markers detected per genome.
+- `--max_sdup` (default `-1`): maximum allowed copies of any single marker in one genome; `-1` disables.
+- `--max_dupl` (default `-1`): maximum allowed fraction of markers present in multiple copies; `-1` disables.
+- `--lflt` (default `0`): optional per-marker length filter (% of median hit length).
+
+nsgtree-style mapping:
+
+- `minmarker` -> `--percent_models` (fraction mapped to percent).
+- `maxsdup` -> `--max_sdup`.
+- `maxdupl` -> `--max_dupl`.
+- `hmmsearch_cutoff` -> `--hmmsearch_cutoff` and `--hmmsearch_evalue`.
+- `tmethod` -> `--tree_method`.
+- `iq_*` model controls -> `--iqtree_model` (and `--iqtree_fast`).
+- `mafftv`/`mafft` -> `--aln mafft` or `--aln mafft-linsi` (or `--aln hmmalign`).
+
+Practical selection guide:
+
+- Curated marker sets (for example UNI56): start with `--hmmsearch_cutoff cut_ga`.
+- Less curated/custom marker sets: start with `--hmmsearch_cutoff evalue --hmmsearch_evalue 1e-5`, then tighten if false positives appear.
+- `--aln hmmalign` is the fastest stable default and keeps alignment behavior tied to each profile HMM.
+- `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
+- `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
+- Typical inclusion presets:
+- Balanced: `--percent_models 10 --max_sdup 2 --max_dupl 0.25`
+- Strict: `--percent_models 30 --max_sdup 1 --max_dupl 0.10`
+- Relaxed: `--percent_models 5 --max_sdup -1 --max_dupl -1`
 
 ## Input Requirements
 
@@ -170,7 +228,7 @@ sgtree/
                                       |
                                       v
                              +--------+--------+
-                             |   FASTTREE      |
+                             |  TREE_BUILDER   |
                              |   tree.nwk      |
                              +--------+--------+
                                       |
@@ -181,7 +239,7 @@ sgtree/
                         v                 v
                   +-----+-----+   +-------+--------+
                   | iTOL TXT  |   | per-marker     |
-                  | marker_*  |   | TRIMAL+FASTTREE|
+                  | marker_*  |   | TRIMAL+TREEBLD |
                   +-----------+   +-------+--------+
                                          |
                                          v
@@ -212,7 +270,7 @@ sgtree/
                                   |
                                   v
                              +----+-----+
-                             |FASTTREE   |
+                             |TREE_BUILDER|
                              |tree_final |
                              +----+-----+
                                   |

@@ -10,6 +10,23 @@ from Bio import SeqIO
 from sgtree.config import Config
 
 
+def _map_with_fallback(func, args, workers: int):
+    if not args:
+        return
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        for item in args:
+            func(item)
+        return
+    try:
+        with mp.Pool(n_workers) as pool:
+            pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        for item in args:
+            func(item)
+
+
 def _run_trimal_worker(args):
     """Run trimal on a single alignment file."""
     input_file, output_file = args
@@ -36,10 +53,7 @@ def run_trimal(cfg: Config, input_dir: str, output_dir: str):
         for f in files
     ]
 
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_run_trimal_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_run_trimal_worker, args, cfg.num_cpus)
 
 
 def _trimal_simple_worker(args):
@@ -56,10 +70,7 @@ def run_trimal_simple(cfg: Config, input_dir: str, output_dir: str):
     files = sorted(glob.glob(os.path.join(input_dir, "*.faa")))
     args = [(f, os.path.join(output_dir, os.path.basename(f))) for f in files]
 
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_trimal_simple_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_trimal_simple_worker, args, cfg.num_cpus)
 
 
 def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat_path: str):

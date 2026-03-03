@@ -14,6 +14,8 @@ def main():
     parser.add_argument("--model_count", required=True, type=int)
     parser.add_argument("--percent_models", required=True, type=int)
     parser.add_argument("--lflt", required=True, type=int)
+    parser.add_argument("--max_sdup", type=int, default=-1)
+    parser.add_argument("--max_dupl", type=float, default=-1.0)
     parser.add_argument("--ref_merged_final", default=None)
     parser.add_argument("--ref_proteomes", default=None)
     args = parser.parse_args()
@@ -56,19 +58,46 @@ def main():
                 dict_counts[name][model] = 1
 
     # filter incomplete genomes
-    incomplete_genomes = [
+    incomplete_genomes = {
         g for g in dict_counts
         if len(dict_counts[g]) < (args.model_count * min_models_fraction)
-    ]
+    }
+
+    removed_reasons = {
+        g: [f"minmarker:{len(dict_counts[g]) / args.model_count:.4f}"]
+        for g in incomplete_genomes
+    }
+    removed_genomes = set(incomplete_genomes)
+
+    if args.max_sdup >= 0:
+        high_single_dup = {
+            g for g, counts in dict_counts.items()
+            if counts and max(counts.values()) > args.max_sdup
+        }
+        for g in high_single_dup:
+            removed_reasons.setdefault(g, []).append(f"maxsdup:{max(dict_counts[g].values())}")
+        removed_genomes.update(high_single_dup)
+
+    if args.max_dupl >= 0:
+        high_dup_fraction = set()
+        for g, counts in dict_counts.items():
+            dup_fraction = sum(1 for v in counts.values() if v > 1) / args.model_count
+            if dup_fraction > args.max_dupl:
+                high_dup_fraction.add(g)
+                removed_reasons.setdefault(g, []).append(f"maxdupl:{dup_fraction:.4f}")
+        removed_genomes.update(high_dup_fraction)
+
     rows_to_drop = []
     for idx, row in finaldf.iterrows():
         name = row[0].split("|")[0]
-        if name in incomplete_genomes:
+        if name in removed_genomes:
             rows_to_drop.append(idx)
     finaldf = finaldf.drop(rows_to_drop)
 
     with open("log_genomes_removed.txt", "w") as f:
-        f.write("\n".join(incomplete_genomes))
+        for genome in sorted(removed_genomes):
+            reasons = ";".join(removed_reasons.get(genome, ["filtered"]))
+            f.write(f"{genome}\t{reasons}\n")
 
     # write marker count matrix
     count_mat = pd.DataFrame.from_dict(dict_counts).fillna(0)

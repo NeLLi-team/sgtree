@@ -18,10 +18,17 @@ Common options:
   --ref <dir>            Reference proteomes directory
   --singles              yes|no|true|false (default: false)
   --percent_models <n>   Minimum marker coverage threshold (default: 10)
+  --max_sdup <n>         Max copies allowed for one marker in a genome (-1 disables)
+  --max_dupl <f>         Max fraction of duplicated markers in a genome (-1 disables)
+  --hmmsearch_cutoff     cut_ga | cut_tc | cut_nc | evalue (default: cut_ga)
+  --hmmsearch_evalue <f> E-value used when --hmmsearch_cutoff evalue (default: 1e-5)
   --aln <method>         hmmalign | mafft | mafft-linsi (default: hmmalign)
+  --tree_method <name>   fasttree | iqtree (default: fasttree)
+  --iqtree_fast          yes|no|true|false (default: true)
+  --iqtree_model <str>   IQ-TREE model string (default: LG+F+I+G4)
   --hmmsearch_cpus <n>   CPUs for HMM search (default: 8)
   --align_cpus <n>       CPUs for alignment steps (default: 4)
-  --fasttree_cpus <n>    CPUs for FastTree steps (default: 1)
+  --fasttree_cpus <n>    CPUs for tree-building steps (default: 1)
 
 Examples:
   pixi run sgtree --genomedir testgenomes/Chloroflexi --modeldir resources/models/UNI56.hmm
