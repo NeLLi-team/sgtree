@@ -7,12 +7,22 @@ from pyhmmer import easel, hmmer, plan7
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run pyhmmer hmmalign for a marker")
-    parser.add_argument("--models", required=True, help="Combined marker-set HMM file")
-    parser.add_argument("--marker", required=True, help="Marker name to align against")
+    model_group = parser.add_mutually_exclusive_group(required=True)
+    model_group.add_argument("--model", help="Single-marker HMM file")
+    model_group.add_argument("--models", help="Combined marker-set HMM file")
+    parser.add_argument("--marker", help="Marker name when using --models")
     parser.add_argument("--seqs", required=True, help="Input marker FASTA sequences")
     parser.add_argument("--out", required=True, help="Output aligned FASTA file")
     parser.add_argument("--cpus", type=int, default=1, help="Number of CPUs to use")
     return parser.parse_args()
+
+
+def _load_single_hmm(model_path: str):
+    with plan7.HMMFile(model_path) as hmm_file:
+        hmm_profile = next(iter(hmm_file), None)
+    if hmm_profile is None:
+        raise ValueError(f"No HMM profile found in file: {model_path}")
+    return hmm_profile
 
 
 def _load_marker_hmm(models_path: str, marker: str):
@@ -29,7 +39,12 @@ def _load_marker_hmm(models_path: str, marker: str):
 def main() -> None:
     args = parse_args()
 
-    hmm_profile = _load_marker_hmm(args.models, args.marker)
+    if args.model:
+        hmm_profile = _load_single_hmm(args.model)
+    else:
+        if not args.marker:
+            raise ValueError("--marker is required when using --models")
+        hmm_profile = _load_marker_hmm(args.models, args.marker)
     with easel.SequenceFile(args.seqs, digital=True, alphabet=hmm_profile.alphabet) as seq_file:
         try:
             msa = hmmer.hmmalign(

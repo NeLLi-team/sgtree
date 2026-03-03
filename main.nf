@@ -15,6 +15,11 @@ workflow {
     genomedir = file(params.genomedir, checkIfExists: true)
     modeldir  = file(params.modeldir, checkIfExists: true)
     color_refdir = params.ref ? file(params.ref, checkIfExists: true).toString() : ''
+    marker_selection_enabled = (
+        (params.marker_selection instanceof Boolean)
+            ? params.marker_selection
+            : ['true', 'yes', '1'].contains(params.marker_selection?.toString()?.trim()?.toLowerCase())
+    )
     singles_enabled = (
         (params.singles instanceof Boolean)
             ? params.singles
@@ -66,7 +71,7 @@ workflow {
     )
 
     // Marker selection (steps 10-15)
-    if (params.marker_selection) {
+    if (marker_selection_enabled) {
         MARKER_SELECTION_WF(
             SGTREE_MAIN.out.aligned,
             SGTREE_MAIN.out.tree,

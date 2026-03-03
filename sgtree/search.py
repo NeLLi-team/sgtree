@@ -10,6 +10,21 @@ from pyhmmer import easel, hmmer, plan7
 from sgtree.config import Config
 
 
+def _cap_namemodel_duplicates(df: pd.DataFrame, max_per_group: int = 5) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    if "namemodel" not in df.columns:
+        raise ValueError("Missing required column 'namemodel' for duplicate capping")
+    if "score_bits" not in df.columns:
+        raise ValueError("Missing required column 'score_bits' for duplicate capping")
+    return (
+        df.sort_values(["namemodel", "score_bits", "savedname"], ascending=[True, False, True])
+        .groupby("namemodel", group_keys=False)
+        .head(max_per_group)
+        .copy()
+    )
+
+
 def _count_models_in_hmm(models_path: str) -> int:
     count = 0
     with open(models_path, "rb") as handle:
@@ -196,18 +211,24 @@ def build_working_df(cfg: Config, finaldf: pd.DataFrame) -> tuple[pd.DataFrame, 
     finaldf = finaldf.copy()
     finaldf["savedname"] = finaldf[0].apply(lambda c: c.replace("|", "/"))
     df = finaldf.map(lambda x: x.split("|")[0] if isinstance(x, str) else x)
+    score_col = 7 if 7 in df.columns else ("7" if "7" in df.columns else None)
+    if score_col is None:
+        raise ValueError("Expected HMMER bitscore column '7' in parsed domtblout table")
+    df["score_bits"] = pd.to_numeric(df[score_col], errors="coerce")
+    if df["score_bits"].isna().any():
+        raise ValueError("Failed to parse one or more HMMER bitscores from column '7'")
     df['namemodel'] = df[0] + "/" + df[3]
     df = df.drop_duplicates(subset='savedname', keep='first')
     df.to_csv(os.path.join(cfg.tables_dir, "before_drops_elim_incompletes"))
 
-    # keep max 5 duplicates per namemodel
-    helperdf = pd.concat(g for _, g in df.groupby("namemodel") if 5 >= len(g) >= 1)
-    helperdf.to_csv(os.path.join(cfg.tables_dir, "duplicates_namemodel"))
+    # cap duplicate copy count per genome+marker group (keep best-scoring copies)
+    capped = _cap_namemodel_duplicates(df, max_per_group=5)
+    capped.to_csv(os.path.join(cfg.tables_dir, "duplicates_namemodel"))
 
-    newdf = df.drop_duplicates(subset='namemodel', keep=False)
-    newdf.to_csv(os.path.join(cfg.tables_dir, "dropped_namemodel"))
+    dropped = df.loc[~df.index.isin(capped.index)]
+    dropped.to_csv(os.path.join(cfg.tables_dir, "dropped_namemodel"))
 
-    df = pd.merge(helperdf, newdf, how='outer')
+    df = capped
     df.to_csv(os.path.join(cfg.tables_dir, "merged_final"))
 
     # merge with reference data if available

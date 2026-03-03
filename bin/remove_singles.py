@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--tree", required=True)
     parser.add_argument("--species_tree", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--num_nei", type=int, default=0, help="Override neighbor count (0=auto)")
     args = parser.parse_args()
 
     tf = Tree(args.tree)
@@ -45,7 +46,11 @@ def main():
     rf, maxrf, *_ = ti.robinson_foulds(td, unrooted_trees=True)
     maxrf = maxrf + 0.0001
     rdist = rf / maxrf
-    num_nei = round(len(lst_nodes) * (1 - rdist))
+    max_neighbors = max(1, len(lst_nodes) - 1)
+    if args.num_nei > 0:
+        num_nei = min(args.num_nei, max_neighbors)
+    else:
+        num_nei = max(1, round(len(lst_nodes) * (1 - rdist)))
     total_score = num_nei ** 2
     cutoff = total_score / 15
 
