@@ -68,6 +68,23 @@ def _process_file_worker(args):
         raise
 
 
+def _map_with_fallback(func, args, workers: int):
+    if not args:
+        return
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        for item in args:
+            func(item)
+        return
+    try:
+        with mp.Pool(n_workers) as pool:
+            pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        for item in args:
+            func(item)
+
+
 def eliminate_duplicates(cfg: Config, df_fordups: pd.DataFrame):
     """For each aligned marker, keep only the highest-scoring hit per genome."""
     os.makedirs(cfg.aln_spectree_dir, exist_ok=True)
@@ -75,7 +92,4 @@ def eliminate_duplicates(cfg: Config, df_fordups: pd.DataFrame):
     aligned_files = glob.glob(os.path.join(cfg.aligned_dir, "*.faa"))
     args = [(f, cfg.aln_spectree_dir, df_fordups) for f in aligned_files]
 
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_process_file_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_process_file_worker, args, cfg.num_cpus)

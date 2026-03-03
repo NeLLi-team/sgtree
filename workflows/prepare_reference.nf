@@ -5,6 +5,8 @@ workflow PREPARE_REFERENCE {
     refdir
     modeldir
     percent_models
+    max_sdup
+    max_dupl
 
     main:
     // Run the core pipeline on reference genomes (no marker selection, no ref-of-ref)
@@ -13,6 +15,8 @@ workflow PREPARE_REFERENCE {
         modeldir,
         percent_models,
         0,            // lflt
+        max_sdup,
+        max_dupl,
         'hmmalign',   // aln method
         false,        // has_ref
         file('NO_REF_MERGED'),

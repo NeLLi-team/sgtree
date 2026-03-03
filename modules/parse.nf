@@ -8,6 +8,8 @@ process PARSE_HMMSEARCH {
     val  model_count
     val  percent_models
     val  lflt
+    val  max_sdup
+    val  max_dupl
     val  has_ref
     path ref_merged_final, stageAs: 'ref_merged_final.csv'
     path ref_proteomes, stageAs: 'ref_proteomes.faa'
@@ -29,6 +31,8 @@ process PARSE_HMMSEARCH {
         --model_count ${model_count} \\
         --percent_models ${percent_models} \\
         --lflt ${lflt} \\
+        --max_sdup ${max_sdup} \\
+        --max_dupl ${max_dupl} \\
         ${ref_merged_arg} \\
         ${ref_prot_arg}
     """
