@@ -59,14 +59,23 @@ class Config:
 
     @property
     def model_file_count(self):
-        return len(glob.glob(os.path.join(self.modeldir, "*")))
+        if os.path.isfile(self.modeldir):
+            count = 0
+            with open(self.modeldir, "rb") as handle:
+                for line in handle:
+                    if line.startswith(b"NAME"):
+                        count += 1
+            return count
+        return len(glob.glob(os.path.join(self.modeldir, "*.hmm")))
 
     def ref_dir_path(self):
         """Path to the reference concat directory for this ref+model combination."""
         if self.ref is None:
             return None
         ref_name = self.ref.rstrip("/").split("/")[-1]
-        model_name = self.modeldir.rstrip("/").split("/")[-1]
+        model_name = os.path.basename(self.modeldir.rstrip("/"))
+        if model_name.endswith(".hmm"):
+            model_name = model_name[:-4]
         return os.path.join(self.ref_concat, f"{ref_name}_{model_name}")
 
     def print_banner(self):

@@ -10,7 +10,11 @@ process CONCAT_INPUTS {
 
     script:
     """
-    cat ${modeldir}/*.hmm > models.hmm
+    if [ -d "${modeldir}" ]; then
+        cat ${modeldir}/*.hmm > models.hmm
+    else
+        cp ${modeldir} models.hmm
+    fi
     if [ -d "${genomedir}" ]; then
         cat ${genomedir}/*.faa > proteomes.faa
     else
@@ -32,6 +36,6 @@ process HMMSEARCH {
 
     script:
     """
-    hmmsearch --cut_ga --cpu ${task.cpus} --domtblout hits.hmmout --noali ${models} ${proteomes} > /dev/null
+    run_hmmsearch_pyhmmer.py --models ${models} --proteomes ${proteomes} --out hits.hmmout --cpus ${task.cpus}
     """
 }

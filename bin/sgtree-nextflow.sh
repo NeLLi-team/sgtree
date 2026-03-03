@@ -6,11 +6,11 @@ show_help() {
 SGTree (Nextflow runner)
 
 Usage:
-  pixi run sgtree --genomedir <dir> --modeldir <dir> [options]
+  pixi run sgtree --genomedir <dir> --modeldir <marker_set.hmm> [options]
 
 Required arguments:
   --genomedir <dir>      Directory with input proteomes (*.faa)
-  --modeldir <dir>       Directory with marker models (*.hmm)
+  --modeldir <file>      Combined marker-set HMM file (for example, models/UNI56.hmm)
 
 Common options:
   --outdir <dir>         Output directory (default: runs/nextflow/default)
@@ -24,11 +24,11 @@ Common options:
   --fasttree_cpus <n>    CPUs for FastTree steps (default: 1)
 
 Examples:
-  pixi run sgtree --genomedir testgenomes/Chloroflexi --modeldir hmms/UNI56
+  pixi run sgtree --genomedir testgenomes/Chloroflexi --modeldir models/UNI56.hmm
 
   pixi run sgtree \
     --genomedir testgenomes/Chloroflexi \
-    --modeldir hmms/UNI56 \
+    --modeldir models/UNI56.hmm \
     --outdir runs/nextflow/manual_full \
     --marker_selection true \
     --ref testgenomes/chlorref \
