@@ -33,6 +33,16 @@ def _get_score(identifier, df_fordups, score_col: str):
     return f"{row['savedname']}:{float(row[score_col])}"
 
 
+def _pick_best_scored_id(scored_ids: list[str]) -> str:
+    """Pick highest-scoring identifier with deterministic tie-break on id."""
+    if not scored_ids:
+        raise ValueError("Expected at least one scored identifier")
+    return min(
+        scored_ids,
+        key=lambda entry: (-float(entry.rsplit(":", 1)[1]), entry.rsplit(":", 1)[0]),
+    )
+
+
 def _process_file_worker(args):
     """Worker: eliminate duplicates for one aligned marker file."""
     filepath, aln_spectree_dir, df_fordups, score_col = args
@@ -59,11 +69,10 @@ def _process_file_worker(args):
         # for each set of duplicates, remove the best score from the "to-remove" list
         ids_to_remove = set()
         for key, scored_ids in dups.items():
-            scores = [float(s.split(":")[1]) for s in scored_ids]
-            best_idx = scores.index(max(scores))
-            for i, scored_id in enumerate(scored_ids):
-                if i != best_idx:
-                    raw_id = scored_id.split(":")[0].replace("/", "|")
+            best_scored_id = _pick_best_scored_id(scored_ids)
+            for scored_id in scored_ids:
+                if scored_id != best_scored_id:
+                    raw_id = scored_id.split(":", 1)[0].replace("/", "|")
                     ids_to_remove.add(raw_id)
 
         # keep only non-removed records
