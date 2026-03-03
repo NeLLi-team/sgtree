@@ -1,6 +1,6 @@
 # SGTree
 
-SGTree builds species trees from conserved marker proteins in genome proteomes.
+SGTree is an end-to-end workflow for phylogenetic tree building. Use the provided sets of HMMs or provide your own HMMs to find the proteins of interest. SGTree then performs gene tree to approximate species tree reconciliation to select the most likely correct copy of a protein in case of duplications (paralogs, contamination). 
 
 ## Setup
 
@@ -17,8 +17,15 @@ Primary interface (Nextflow):
 ```bash
 pixi run sgtree --help
 ```
-
 Basic run:
+
+```bash
+pixi run sgtree \
+  --genomedir <path to dir with protein faa files, one faa file per genome> \
+  --modeldir <path to models>
+```
+
+Example run:
 
 ```bash
 pixi run sgtree \
@@ -40,7 +47,7 @@ pixi run sgtree \
 
 `pixi run sgtree` writes logs automatically to `runs/nextflow/logs/`.
 
-Second choice (Python implementation):
+Second choice (Python implementation without nextflow):
 
 ```bash
 pixi run sgtree-python testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
