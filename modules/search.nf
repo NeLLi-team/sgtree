@@ -36,6 +36,12 @@ process HMMSEARCH {
 
     script:
     """
-    run_hmmsearch_pyhmmer.py --models ${models} --proteomes ${proteomes} --out hits.hmmout --cpus ${task.cpus}
+    run_hmmsearch_pyhmmer.py \\
+        --models ${models} \\
+        --proteomes ${proteomes} \\
+        --out hits.hmmout \\
+        --cpus ${task.cpus} \\
+        --hmmsearch_cutoff ${params.hmmsearch_cutoff ?: 'cut_ga'} \\
+        --hmmsearch_evalue ${params.hmmsearch_evalue ?: 1e-5}
     """
 }

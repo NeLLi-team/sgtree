@@ -49,7 +49,7 @@ def concat_inputs(cfg: Config) -> int:
 
 
 def run_hmmsearch(cfg: Config):
-    """Run pyhmmer search with gathering cutoffs on models vs proteomes."""
+    """Run pyhmmer search on models vs proteomes with configurable threshold mode."""
     print("-... running hmmsearch")
     start = time.time()
 
@@ -58,17 +58,37 @@ def run_hmmsearch(cfg: Config):
     if not hmms:
         raise ValueError(f"Marker set does not contain valid HMM entries: {cfg.models_path}")
 
-    with easel.SequenceFile(cfg.proteomes_path, digital=True, alphabet=hmms[0].alphabet) as seq_file:
-        with open(cfg.hitsoutdir, "wb") as hits_out:
-            for i, hits in enumerate(
-                hmmer.hmmsearch(
-                    hmms,
-                    seq_file,
-                    cpus=max(1, cfg.num_cpus),
-                    bit_cutoffs="gathering",
-                )
-            ):
-                hits.write(hits_out, format="domains", header=(i == 0))
+    base_opts = {}
+    if cfg.hmmsearch_cutoff == "cut_ga":
+        base_opts["bit_cutoffs"] = "gathering"
+    elif cfg.hmmsearch_cutoff == "cut_tc":
+        base_opts["bit_cutoffs"] = "trusted"
+    elif cfg.hmmsearch_cutoff == "cut_nc":
+        base_opts["bit_cutoffs"] = "noise"
+    else:
+        base_opts["E"] = cfg.hmmsearch_evalue
+        base_opts["domE"] = cfg.hmmsearch_evalue
+
+    requested_cpus = max(1, cfg.num_cpus)
+
+    def _run_search(cpus: int):
+        search_opts = dict(base_opts)
+        search_opts["cpus"] = cpus
+        with easel.SequenceFile(cfg.proteomes_path, digital=True, alphabet=hmms[0].alphabet) as seq_file:
+            with open(cfg.hitsoutdir, "wb") as hits_out:
+                for i, hits in enumerate(hmmer.hmmsearch(hmms, seq_file, **search_opts)):
+                    hits.write(hits_out, format="domains", header=(i == 0))
+
+    try:
+        _run_search(requested_cpus)
+    except PermissionError as e:
+        if requested_cpus == 1:
+            raise
+        print(
+            f"warning: pyhmmer multiprocessing unavailable ({e}); "
+            "retrying hmmsearch with cpus=1"
+        )
+        _run_search(1)
 
     elapsed = time.time() - start
     print(f"\nmarker protein detection done - runtime: {elapsed:.1f} seconds")
@@ -120,20 +140,43 @@ def parse_hmmsearch(cfg: Config) -> tuple[pd.DataFrame, dict]:
                 dict_counts[name][model] = 1
 
     # filter incomplete genomes
-    incomplete_genomes = [
+    incomplete_genomes = {
         g for g in dict_counts
         if len(dict_counts[g]) < (cfg.model_count * min_models)
-    ]
+    }
+
+    removed_reasons = {g: [f"minmarker:{len(dict_counts[g]) / cfg.model_count:.4f}"] for g in incomplete_genomes}
+    removed_genomes = set(incomplete_genomes)
+
+    if cfg.max_sdup >= 0:
+        high_single_dup = {
+            g for g, counts in dict_counts.items()
+            if counts and max(counts.values()) > cfg.max_sdup
+        }
+        for g in high_single_dup:
+            removed_reasons.setdefault(g, []).append(f"maxsdup:{max(dict_counts[g].values())}")
+        removed_genomes.update(high_single_dup)
+
+    if cfg.max_dupl >= 0:
+        high_dup_fraction = set()
+        for g, counts in dict_counts.items():
+            dup_fraction = sum(1 for v in counts.values() if v > 1) / cfg.model_count
+            if dup_fraction > cfg.max_dupl:
+                high_dup_fraction.add(g)
+                removed_reasons.setdefault(g, []).append(f"maxdupl:{dup_fraction:.4f}")
+        removed_genomes.update(high_dup_fraction)
 
     rows_to_drop = []
     for idx, row in finaldf.iterrows():
         name = row[0].split("|")[0]
-        if name in incomplete_genomes:
+        if name in removed_genomes:
             rows_to_drop.append(idx)
     finaldf = finaldf.drop(rows_to_drop)
 
     with open(os.path.join(cfg.outdir, "log_genomes_removed.txt"), "w") as f:
-        f.write("\n".join(incomplete_genomes))
+        for genome in sorted(removed_genomes):
+            reasons = ";".join(removed_reasons.get(genome, ["filtered"]))
+            f.write(f"{genome}\t{reasons}\n")
 
     print(f"AFTER hmmout {finaldf.shape} # rows deleted {len(rows_to_drop)}")
 

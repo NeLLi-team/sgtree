@@ -29,7 +29,13 @@ workflow {
         refdir = file(params.ref, checkIfExists: true)
 
         // Run reference sub-workflow
-        PREPARE_REFERENCE(refdir, modeldir, params.percent_models)
+        PREPARE_REFERENCE(
+            refdir,
+            modeldir,
+            params.percent_models,
+            params.max_sdup,
+            params.max_dupl
+        )
 
         ref_merged_final = PREPARE_REFERENCE.out.table_elim_dups
         ref_proteomes    = PREPARE_REFERENCE.out.proteomes
@@ -51,6 +57,8 @@ workflow {
         modeldir,
         params.percent_models,
         params.lflt,
+        params.max_sdup,
+        params.max_dupl,
         params.aln,
         params.ref ? true : false,
         ref_merged_final,

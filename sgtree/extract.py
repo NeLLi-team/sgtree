@@ -53,6 +53,23 @@ def _write_seqs_worker(args):
         raise
 
 
+def _map_with_fallback(func, args, workers: int):
+    if not args:
+        return
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        for item in args:
+            func(item)
+        return
+    try:
+        with mp.Pool(n_workers) as pool:
+            pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        for item in args:
+            func(item)
+
+
 def write_extracted_sequences(cfg: Config):
     """Retrieve actual protein sequences from proteome FASTA files, write per-model FASTAs."""
     os.makedirs(cfg.extracted_seqs_dir, exist_ok=True)
@@ -76,7 +93,4 @@ def write_extracted_sequences(cfg: Config):
         (f, cfg.ref_proteomes_path, cfg.extracted_seqs_dir)
         for f in ls_of_files
     ]
-    pool = mp.Pool(cfg.num_cpus)
-    pool.map(_write_seqs_worker, args)
-    pool.close()
-    pool.join()
+    _map_with_fallback(_write_seqs_worker, args, cfg.num_cpus)
