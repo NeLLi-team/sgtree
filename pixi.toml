@@ -17,7 +17,8 @@ trimal = ">=1.5.0,<1.6"
 fasttree = ">=2.2.0,<2.3"
 
 [tasks]
-sgtree = "python -m sgtree"
+sgtree = "bash ./bin/sgtree-nextflow.sh"
+sgtree-python = "python -m sgtree"
 test-basic = "python -m sgtree testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8"
 test-full = "python -m sgtree testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8 --marker_selection yes --ref testgenomes/chlorref"
 clean-runtime = "bash -lc 'set -euo pipefail; shopt -s nullglob dotglob; rm -rf .nextflow work sgtree_out; rm -f .nextflow.log*; for d in results_*; do rm -rf -- \"$d\"; done; mkdir -p runs; for p in runs/*; do [ \"$p\" = \"runs/.gitkeep\" ] && continue; rm -rf -- \"$p\"; done; touch runs/.gitkeep'"
