@@ -32,9 +32,12 @@ def _get_ascore(identifier: str, score_table: pd.DataFrame, score_col: str) -> s
 
 def _best_score(scored_list):
     """Return the entry with the highest score from a list of 'name:score' strings."""
-    scores = [float(s.split(":")[1]) for s in scored_list]
-    best_idx = scores.index(max(scores))
-    return scored_list[best_idx]
+    if not scored_list:
+        return None
+    return min(
+        scored_list,
+        key=lambda entry: (-float(entry.rsplit(":", 1)[1]), entry.rsplit(":", 1)[0]),
+    )
 
 
 def _removekey(d, key):
@@ -273,21 +276,30 @@ def _remove_singles_worker(args):
     # score and filter
     flagged = []
     removed_count = 0
+    borderline_count = 0
     marker_name = os.path.basename(filepath).split(".")[0].split("_")[-2]
 
     for node in lst_nodes:
         ls_model = [n.split("|")[0] for n in dict_neighbors[node.name]]
         ls_init = dict_neighborsi[node.name.split("|")[0]]
         score = _score_func(ls_model, ls_init)
+        margin = score - cutoff
         if score > cutoff:
             flagged.append(node)
+            if abs(margin) <= 1:
+                borderline_count += 1
         else:
             removed_count += 1
             with open(os.path.join(outdir, "removed", marker_name), "a") as f:
-                f.write(f"\nsin{node.name}\n")
+                f.write(
+                    f"\nsin{node.name}\tscore={score:.3f}\tcutoff={cutoff:.3f}\tmargin={margin:.3f}\n"
+                )
 
     with open(os.path.join(outdir, "removed", marker_name), "a") as f:
-        f.write(f"\n{removed_count}/{len(lst_nodes)} {rdist}")
+        f.write(
+            f"\n{removed_count}/{len(lst_nodes)} {rdist} "
+            f"num_nei={num_nei} cutoff={cutoff:.3f} borderline_kept={borderline_count}"
+        )
 
     flagged_names = [x.name for x in flagged]
     t_prot = tf.copy()
