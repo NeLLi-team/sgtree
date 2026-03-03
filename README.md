@@ -1,77 +1,35 @@
 # SGTree
 
-SGTree builds species trees from conserved marker proteins in genome proteomes.  
-It now supports both:
-
-- a modular Python package (`python -m sgtree`)
-- a modular Nextflow DSL2 workflow (`main.nf`, `modules/`, `workflows/`)
-
-## Status
-
-The codebase and outputs are functionally aligned across Python and Nextflow, including:
-
-- basic run (`tree.nwk`)
-- marker-selection run (`tree_final.nwk`)
-- singleton filtering (`--singles yes`)
-
-Regression parity is enforced by:
-
-```bash
-pixi run test-regression
-```
-
-This test checks topology parity, marker matrix parity, and RF selection status parity.
-Outputs are written to `runs/regression/`.
+SGTree builds species trees from conserved marker proteins in genome proteomes.
 
 ## Setup
 
-Recommended: Pixi (reproducible and already configured in this repo).
+Install the Pixi environment:
 
 ```bash
 pixi install
 ```
 
-Alternative environments are available in:
-
-- `environment.yml`
-- `linux_env.txt`
-- `osx_env.txt`
-
 ## Run
 
-### Python package path
+Primary interface (Nextflow):
 
 ```bash
-# basic
-pixi run python -m sgtree testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
-
-# marker selection + references
-pixi run python -m sgtree \
-  testgenomes/Chloroflexi hmms/UNI56 \
-  --num_cpus 8 \
-  --marker_selection yes \
-  --ref testgenomes/chlorref \
-  --singles yes \
-  --save_dir runs/python/manual_full
+pixi run sgtree --help
 ```
 
-Backward-compatible wrapper still works:
+Basic run:
 
 ```bash
-pixi run ./sgtree.py testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
-```
-
-### Nextflow path
-
-```bash
-# basic
-pixi run ./nextflow -log runs/nextflow/logs/manual_basic.log run main.nf \
+pixi run sgtree \
   --genomedir testgenomes/Chloroflexi \
-  --modeldir hmms/UNI56 \
-  --outdir runs/nextflow/manual_basic
+  --modeldir hmms/UNI56
+```
 
-# marker selection + references + singles
-pixi run ./nextflow -log runs/nextflow/logs/manual_full.log run main.nf \
+Marker-selection run with references and singleton filtering:
+
+```bash
+pixi run sgtree \
   --genomedir testgenomes/Chloroflexi \
   --modeldir hmms/UNI56 \
   --outdir runs/nextflow/manual_full \
@@ -80,12 +38,19 @@ pixi run ./nextflow -log runs/nextflow/logs/manual_full.log run main.nf \
   --singles yes
 ```
 
-Useful Nextflow resource controls:
+`pixi run sgtree` writes logs automatically to `runs/nextflow/logs/`.
 
-- `--hmmsearch_cpus`
-- `--align_cpus`
-- `--fasttree_cpus`
-- `--render_png`
+Second choice (Python implementation):
+
+```bash
+pixi run sgtree-python testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
+```
+
+Backward-compatible wrapper:
+
+```bash
+pixi run ./sgtree.py testgenomes/Chloroflexi hmms/UNI56 --num_cpus 8
+```
 
 ## Input Requirements
 
@@ -96,40 +61,26 @@ Proteomes must be FASTA (`*.faa`) with headers like:
 MLCAFAEEEAKIAETVGKVATELKVKKLLSDFATKEGEEHISTYNKIAMTAKAEGYADIEAMLCAFAEEEAKLQKL
 ```
 
-The part before `|` must match the genome filename stem.
+The text before `|` must match the genome filename stem.
 
 ## Output Structure
 
-### Nextflow output (`--outdir`)
-
-Basic run:
+Nextflow output (`--outdir`):
 
 ```text
 <outdir>/
   tree.nwk
+  tree_final.nwk                 # marker-selection mode
+  tree_final.png                 # marker-selection mode
   marker_count_matrix.csv
-  marker_count.txt
+  marker_count.txt               # basic mode
+  marker_counts.txt              # marker-selection mode
+  marker_selection_rf_values.txt # marker-selection mode
   color.txt
   log_genomes_removed.txt
 ```
 
-Marker-selection run:
-
-```text
-<outdir>/
-  tree.nwk
-  tree_final.nwk
-  tree_final.png
-  marker_count_matrix.csv
-  marker_counts.txt
-  marker_selection_rf_values.txt
-  color.txt
-  log_genomes_removed.txt
-```
-
-### Python output (`--save_dir`)
-
-Python keeps final files at top level and archives intermediates under `temp/`:
+Python output (`--save_dir`):
 
 ```text
 <save_dir>/
@@ -149,11 +100,11 @@ Python keeps final files at top level and archives intermediates under `temp/`:
 ```text
 sgtree/
   sgtree/                 # Python package implementation
-  sgtree.py               # backward-compatible thin wrapper
+  sgtree.py               # backward-compatible wrapper
   main.nf                 # Nextflow entrypoint
   workflows/              # DSL2 workflow composition
   modules/                # DSL2 process modules
-  bin/                    # helper scripts used by Nextflow modules
+  bin/                    # helper scripts and launch wrappers
   tests/
     regression_parity.py  # cross-engine parity checks
   hmms/                   # marker model sets
@@ -163,7 +114,7 @@ sgtree/
   nextflow.config         # runtime defaults and CPU settings
 ```
 
-## ASCII Workflow Diagram
+## Workflow
 
 ```text
                             +-------------------+
@@ -205,7 +156,7 @@ sgtree/
                                       |
                                       v
                              +--------+--------+
-                             | BUILD_SUPERMAT  |
+                             | BUILD_SUPERMATRIX|
                              +--------+--------+
                                       |
                                       v
@@ -247,7 +198,7 @@ sgtree/
                                   |
                                   v
                              +----+-----+
-                             |SUPERMAT  |
+                             |SUPERMATRIX|
                              +----+-----+
                                   |
                                   v
@@ -266,9 +217,7 @@ sgtree/
 
 ## Repository Hygiene
 
-Runtime artifacts are expected under `runs/` by default.  
-Large runtime artifacts (`work/`, `.nextflow*`, `runs/`, `results_*`) can grow quickly and are usually not versioned.  
-For strict cleanup between runs:
+Use this command for a clean runtime workspace between runs:
 
 ```bash
 pixi run clean-runtime
