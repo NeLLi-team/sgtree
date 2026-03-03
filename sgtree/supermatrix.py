@@ -30,7 +30,7 @@ def run_trimal(cfg: Config, input_dir: str, output_dir: str):
     """Run trimal -gt 0.1 on all .faa files in input_dir, writing to output_dir."""
     os.makedirs(output_dir, exist_ok=True)
 
-    files = glob.glob(os.path.join(input_dir, "*.faa"))
+    files = sorted(glob.glob(os.path.join(input_dir, "*.faa")))
     args = [
         (f, os.path.join(output_dir, os.path.basename(f)))
         for f in files
@@ -53,7 +53,7 @@ def run_trimal_simple(cfg: Config, input_dir: str, output_dir: str):
     """Run trimal without header cleanup (for protein tree trimming)."""
     os.makedirs(output_dir, exist_ok=True)
 
-    files = glob.glob(os.path.join(input_dir, "*.faa"))
+    files = sorted(glob.glob(os.path.join(input_dir, "*.faa")))
     args = [(f, os.path.join(output_dir, os.path.basename(f))) for f in files]
 
     pool = mp.Pool(cfg.num_cpus)
@@ -71,7 +71,7 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
 
     # build dataframe with all trimmed alignments
     df_conc = pd.DataFrame(columns=["SeqID"])
-    for filepath in glob.glob(os.path.join(trimmed_dir, "*")):
+    for filepath in sorted(glob.glob(os.path.join(trimmed_dir, "*.faa"))):
         record_dict = SeqIO.to_dict(SeqIO.parse(filepath, "fasta"))
         record_dict = {k: v.format("fasta").split("\n", 1)[1] for k, v in record_dict.items()}
         new_dict = {}
@@ -83,6 +83,9 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
         )
         df_conc = pd.merge(new_df, df_conc, how="outer")
 
+    marker_cols = sorted(col for col in df_conc.columns if col != "SeqID")
+    df_conc = df_conc[["SeqID"] + marker_cols].sort_values("SeqID")
+
     # fill NaN cells with X characters of appropriate length
     _fill_nan_gaps(df_conc)
 
@@ -91,14 +94,15 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
 
     # rebuild from saved CSV and write concatenated FASTA
     df_conc = pd.read_csv(table_path)
-    df_conc = df_conc.set_index("SeqID")
+    df_conc = df_conc.set_index("SeqID").sort_index()
     record_dict = df_conc.T.to_dict("list")
     record_dict = {k: v[1:] for k, v in record_dict.items()}
     record_dict = {k: "".join(str(x) for x in v) for k, v in record_dict.items()}
     record_dict = {k: v.replace("\n", "") for k, v in record_dict.items()}
 
     with open(concat_path, "w") as f:
-        for k, v in record_dict.items():
+        for k in sorted(record_dict):
+            v = record_dict[k]
             f.write(f">{k}\n{v}\n")
 
 

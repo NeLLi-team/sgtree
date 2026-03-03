@@ -2,9 +2,8 @@ import os
 import glob
 import subprocess
 import multiprocessing as mp
-import fileinput
 
-from Bio import AlignIO
+from pyhmmer import easel, hmmer, plan7
 
 from sgtree.config import Config
 
@@ -33,43 +32,50 @@ def _run_hmmalign(args):
     extracted_seqs_dir, aligned_dir, modelset_path, filename = args
     filepath = os.path.join(extracted_seqs_dir, filename)
     model = filename.split(".")[0]
-    sto_path = os.path.join(aligned_dir, model + ".sto")
     faa_path = os.path.join(aligned_dir, model + ".faa")
+    hmm_profile = None
+    with plan7.HMMFile(modelset_path) as hmm_file:
+        for hmm_profile_candidate in hmm_file:
+            hmm_name = hmm_profile_candidate.name
+            if isinstance(hmm_name, bytes):
+                hmm_name = hmm_name.decode("utf-8", errors="replace")
+            if str(hmm_name) == model:
+                hmm_profile = hmm_profile_candidate
+                break
+    if hmm_profile is None:
+        raise ValueError(f"Could not find marker '{model}' in marker-set HMM file: {modelset_path}")
 
-    fetch_proc = subprocess.Popen(
-        ["hmmfetch", modelset_path, model],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    try:
-        with fetch_proc.stdout as fetch_out:
-            cmd = ["hmmalign", "--trim", "-o", sto_path, "-", filepath]
-            result = subprocess.run(
-                cmd,
-                stdin=fetch_out,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-    finally:
-        fetch_rc = fetch_proc.wait()
-    if fetch_rc != 0:
-        fetch_err = fetch_proc.stderr.read().decode("utf-8", errors="replace")
-        raise subprocess.CalledProcessError(fetch_rc, ["hmmfetch", modelset_path, model], stderr=fetch_err)
-    if result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, cmd, stderr=result.stderr)
+    with easel.SequenceFile(filepath, digital=True, alphabet=hmm_profile.alphabet) as seq_file:
+        msa = hmmer.hmmalign(hmm_profile, seq_file, cpus=1, trim=True)
+    with open(faa_path, "wb") as out_handle:
+        msa.write(out_handle, format="afa")
+    _normalize_fasta(faa_path)
 
-    aln = AlignIO.read(sto_path, "stockholm")
-    AlignIO.write(aln, faa_path, "fasta")
 
-    # clean up fasta headers
-    for line in fileinput.input(faa_path, inplace=True):
-        line = line.rstrip()
-        if not line:
-            continue
-        if ">" in line:
-            print("|".join(line.split("|")[0:]))
-        else:
-            print(line)
+def _normalize_fasta(fasta_path: str) -> None:
+    """Normalize FASTA headers and sequence order for deterministic downstream trees."""
+    records = []
+    header = None
+    seq_chunks = []
+    with open(fasta_path) as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if header is not None:
+                    records.append((header, "".join(seq_chunks)))
+                header = "|".join(line.split("|")[0:])
+                seq_chunks = []
+            else:
+                seq_chunks.append(line)
+    if header is not None:
+        records.append((header, "".join(seq_chunks)))
+
+    records.sort(key=lambda item: item[0])
+    with open(fasta_path, "w") as f:
+        for header, seq in records:
+            f.write(f"{header}\n{seq}\n")
 
 
 def run_alignment(cfg: Config):
