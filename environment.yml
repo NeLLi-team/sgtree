@@ -8,7 +8,6 @@ dependencies:
   - biopython >=1.86,<1.87
   - numpy >=1.26,<2
   - ete3 >=3.1.3,<3.2
-  - hmmer >=3.4,<3.5
   - pyhmmer >=0.12.0,<0.13
   - mafft >=7.520,<8
   - trimal >=1.5.0,<1.6
