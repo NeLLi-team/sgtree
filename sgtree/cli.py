@@ -5,6 +5,7 @@ import shutil
 import datetime
 import time
 import argparse
+import shutil
 
 from sgtree.config import Config
 from sgtree import search, extract, align, duplicates, supermatrix, phylogeny
@@ -45,10 +46,15 @@ def parse_args() -> Config:
                         help="output directory name")
     parser.add_argument("--singles", type=str, default="no",
                         help="remove singleton markers (yes/no)")
+    parser.add_argument("--singles_mode", type=str, default="neighbor",
+                        choices=["neighbor", "delta_rf", "backbone", "ensemble"],
+                        help="singleton filtering mode")
     parser.add_argument("--lflt", type=int, default=0,
                         help="remove sequences shorter than N%% of median length")
     parser.add_argument("--num_nei", type=int, default=0,
                         help="number of neighbors to check (0=auto)")
+    parser.add_argument("--singles_min_rfdist", type=float, default=0.25,
+                        help="minimum marker-tree/global-tree RF distance required to activate singleton filtering")
     parser.add_argument("--aln", type=str, default="hmmalign",
                         help="alignment method: mafft, mafft-linsi, or hmmalign")
     parser.add_argument("--tree_method", type=str, default="fasttree",
@@ -63,12 +69,23 @@ def parse_args() -> Config:
                         help="hmmsearch threshold mode")
     parser.add_argument("--hmmsearch_evalue", type=float, default=1e-5,
                         help="hmmsearch E-value threshold when --hmmsearch_cutoff evalue")
+    parser.add_argument("--selection_mode", type=str, default="coordinate",
+                        choices=["legacy", "coordinate"],
+                        help="duplicate-resolution mode for marker selection")
+    parser.add_argument("--selection_max_rounds", type=int, default=5,
+                        help="max coordinate-descent rounds for --selection_mode coordinate")
+    parser.add_argument("--selection_global_rounds", type=int, default=1,
+                        help="max guide-tree rebuild rounds for marker selection")
+    parser.add_argument("--lock_references", type=str, default="no",
+                        help="keep reference duplicate resolution score-locked (yes/no)")
     parser.add_argument("--max_sdup", type=int, default=-1,
                         help="max copies allowed for any single marker per genome (-1 disables)")
     parser.add_argument("--max_dupl", type=float, default=-1.0,
                         help="max fraction of markers allowed in duplicate per genome (-1 disables)")
     parser.add_argument("--is_ref", type=str, default="no",
                         help="internal flag, not for user use")
+    parser.add_argument("--keep_intermediates", type=str, default="no",
+                        help="keep intermediate directories/files instead of archiving them (yes/no)")
 
     args = parser.parse_args()
     start_time = str(datetime.datetime.now())
@@ -95,12 +112,20 @@ def parse_args() -> Config:
     marker_selection = _parse_bool(args.marker_selection, flag="--marker_selection")
     singles = _parse_bool(args.singles, flag="--singles")
     is_ref = _parse_bool(args.is_ref, flag="--is_ref")
+    lock_references = _parse_bool(args.lock_references, flag="--lock_references")
+    keep_intermediates = _parse_bool(args.keep_intermediates, flag="--keep_intermediates")
     if args.max_dupl != -1.0 and not (0.0 <= args.max_dupl <= 1.0):
         raise ValueError("--max_dupl must be between 0 and 1, or -1 to disable")
     if args.hmmsearch_cutoff == "evalue" and args.hmmsearch_evalue <= 0:
         raise ValueError("--hmmsearch_evalue must be > 0 when cutoff mode is evalue")
     if args.num_nei < 0:
         raise ValueError("--num_nei must be >= 0")
+    if not (0.0 <= args.singles_min_rfdist <= 1.0):
+        raise ValueError("--singles_min_rfdist must be between 0 and 1")
+    if args.selection_max_rounds < 1:
+        raise ValueError("--selection_max_rounds must be >= 1")
+    if args.selection_global_rounds < 1:
+        raise ValueError("--selection_global_rounds must be >= 1")
 
     return Config(
         genomedir=genomedir,
@@ -115,13 +140,20 @@ def parse_args() -> Config:
         iqtree_model=args.iqtree_model,
         hmmsearch_cutoff=args.hmmsearch_cutoff,
         hmmsearch_evalue=args.hmmsearch_evalue,
+        selection_mode=args.selection_mode,
+        selection_max_rounds=args.selection_max_rounds,
+        selection_global_rounds=args.selection_global_rounds,
+        lock_references=lock_references,
         max_sdup=args.max_sdup,
         max_dupl=args.max_dupl,
         ref=args.ref.rstrip("/") if args.ref else None,
         ref_concat=ref_concat,
         marker_selection=marker_selection,
         singles=singles,
+        singles_mode=args.singles_mode,
         num_nei=args.num_nei,
+        singles_min_rfdist=args.singles_min_rfdist,
+        keep_intermediates=keep_intermediates,
         is_ref=is_ref,
         start_time=start_time,
     )
@@ -149,11 +181,18 @@ def main():
           f" iqtree model {cfg.iqtree_model}\n"
           f" hmmsearch cutoff {cfg.hmmsearch_cutoff}\n"
           f" hmmsearch evalue {cfg.hmmsearch_evalue}\n"
+          f" selection mode {cfg.selection_mode}\n"
+          f" selection max rounds {cfg.selection_max_rounds}\n"
+          f" selection global rounds {cfg.selection_global_rounds}\n"
+          f" lock references {'yes' if cfg.lock_references else 'no'}\n"
           f" minimum percentage of models {cfg.percent_models}\n"
           f" max single-marker copies {cfg.max_sdup}\n"
           f" max duplicated-marker fraction {cfg.max_dupl}\n"
+          f" singleton mode {cfg.singles_mode}\n"
           f" singleton-neighbor override {cfg.num_nei} (0=auto)\n"
+          f" singleton min RF distance {cfg.singles_min_rfdist}\n"
           f" reference directory {cfg.ref}\n"
+          f" keep intermediates {'yes' if cfg.keep_intermediates else 'no'}\n"
           f" --marker_selection {'yes' if cfg.marker_selection else 'no'}\n")
     if cfg.ref:
         print(f"--ref_concat {cfg.ref_dir_path()}\n")
@@ -259,7 +298,7 @@ def main():
         sgtree_logging.write_logfile(cfg, timings)
 
         # Cleanup (basic run)
-        if not cfg.marker_selection and not cfg.is_ref:
+        if not cfg.marker_selection and not cfg.is_ref and not cfg.keep_intermediates:
             cleanup.cleanup_basic(cfg.outdir)
 
     except Exception as e:
@@ -297,10 +336,61 @@ def main():
             # RF-distance marker selection
             t_start_ms = time.time()
             print("- ...starting marker selection (Noperm):\n")
-            marker_selection.run_noperm(cfg, ls_refs)
+            current_species_tree = os.path.join(cfg.outdir, "tree.nwk")
+            previous_kept = None
+            total_rounds = max(1, cfg.selection_global_rounds)
 
-            if cfg.singles:
-                marker_selection.remove_singles(cfg)
+            for round_idx in range(1, total_rounds + 1):
+                current_use_singles = cfg.singles and round_idx == total_rounds
+                kept = marker_selection.run_noperm(
+                    cfg,
+                    ls_refs,
+                    species_tree_path=current_species_tree,
+                    initial_kept=previous_kept,
+                )
+                rf_src = os.path.join(cfg.outdir, "marker_selection_rf_values.txt")
+                if total_rounds > 1:
+                    shutil.copyfile(
+                        rf_src,
+                        os.path.join(cfg.outdir, f"marker_selection_rf_values_round{round_idx}.txt"),
+                    )
+
+                if current_use_singles:
+                    marker_selection.remove_singles(cfg, species_tree_path=current_species_tree)
+
+                marker_selection.write_cleaned_alignments(cfg, use_singles=current_use_singles)
+
+                print("- ...running trimal for final alignment:")
+                aligned_final_dir = os.path.join(cfg.outdir, "aligned_final")
+                trimmed_final_dir = os.path.join(cfg.outdir, "trimmed_final")
+                supermatrix.run_trimal_simple(cfg, aligned_final_dir, trimmed_final_dir)
+                print("\ntrimming done")
+                print("=" * 80 + "\n")
+
+                print("- ...creating supermatrix")
+                table_path = os.path.join(cfg.tables_dir, "table_df_concatenated_w_X_final")
+                concat_final_dir = os.path.join(cfg.outdir, "concat_final")
+                concat_final_path = os.path.join(concat_final_dir, "concatenated.faa")
+                supermatrix.build_supermatrix(
+                    trimmed_final_dir, concat_final_dir, table_path, concat_final_path
+                )
+                print("\nsupermatrix created")
+                print("=" * 80 + "\n")
+
+                print(f"- ...running {cfg.tree_method} for tree_final.nwk")
+                tree_final_path = os.path.join(cfg.outdir, "tree_final.nwk")
+                phylogeny.run_species_tree(cfg, concat_final_path, tree_final_path)
+                if total_rounds > 1:
+                    shutil.copyfile(
+                        tree_final_path,
+                        os.path.join(cfg.outdir, f"tree_round_{round_idx}.nwk"),
+                    )
+
+                if previous_kept is not None and kept == previous_kept:
+                    print(f"- ...marker selection converged after round {round_idx}")
+                    break
+                previous_kept = kept
+                current_species_tree = tree_final_path
 
             ms_time = time.time() - t_start_ms
             print(f"Marker selection runtime {ms_time:.1f}")
@@ -316,33 +406,6 @@ def main():
             raise
 
         try:
-            # Write cleaned alignments
-            marker_selection.write_cleaned_alignments(cfg)
-
-            # Final trimal
-            print("- ...running trimal for final alignment:")
-            aligned_final_dir = os.path.join(cfg.outdir, "aligned_final")
-            trimmed_final_dir = os.path.join(cfg.outdir, "trimmed_final")
-            supermatrix.run_trimal_simple(cfg, aligned_final_dir, trimmed_final_dir)
-            print("\ntrimming done")
-            print("=" * 80 + "\n")
-
-            # Final supermatrix
-            print("- ...creating supermatrix")
-            table_path = os.path.join(cfg.tables_dir, "table_df_concatenated_w_X_final")
-            concat_final_dir = os.path.join(cfg.outdir, "concat_final")
-            concat_final_path = os.path.join(concat_final_dir, "concatenated.faa")
-            supermatrix.build_supermatrix(
-                trimmed_final_dir, concat_final_dir, table_path, concat_final_path
-            )
-            print("\nsupermatrix created")
-            print("=" * 80 + "\n")
-
-            # Final tree
-            print(f"- ...running {cfg.tree_method} for tree_final.nwk")
-            tree_final_path = os.path.join(cfg.outdir, "tree_final.nwk")
-            phylogeny.run_species_tree(cfg, concat_final_path, tree_final_path)
-
             # Render tree
             color_file = os.path.join(cfg.outdir, "color.txt")
             render.render_tree(cfg, color_file)
@@ -351,7 +414,8 @@ def main():
             itol.write_heatmap(cfg, tree_final_path, "marker_counts.txt")
 
             # Cleanup
-            cleanup.cleanup_marker_selection(cfg.outdir)
+            if not cfg.keep_intermediates:
+                cleanup.cleanup_marker_selection(cfg.outdir)
 
         except Exception as e:
             print(f"ERROR in final tree: {e.__doc__}\n {e}")

@@ -1,42 +1,62 @@
+from __future__ import annotations
+
 import os
 
-from ete3 import Tree, TreeStyle, faces
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+from Bio import Phylo
+
+
+def load_colors(color_file: str) -> dict[str, str]:
+    color_dict: dict[str, str] = {}
+    with open(color_file) as handle:
+        for line in handle.readlines()[6:]:
+            parts = line.strip().split(" ")
+            if len(parts) >= 2:
+                color_dict[parts[0]] = parts[1]
+    return color_dict
+
+
+def render_tree_file(tree_path: str, color_file: str, out_png: str) -> None:
+    color_dict = load_colors(color_file)
+    tree = Phylo.read(tree_path, "newick")
+
+    terminals = tree.get_terminals()
+    if len(terminals) > 2:
+        try:
+            tree.root_at_midpoint()
+        except Exception:
+            pass
+
+    fig_height = max(2.5, min(0.32 * max(1, len(terminals)) + 1.5, 24))
+    fig_width = 10
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    Phylo.draw(
+        tree,
+        axes=ax,
+        do_show=False,
+        show_confidence=False,
+        label_func=lambda clade: clade.name if clade.is_terminal() else None,
+    )
+
+    for text in ax.texts:
+        label = text.get_text().strip()
+        if label in color_dict:
+            text.set_color(color_dict[label])
+            text.set_fontweight("bold")
+
+    ax.set_axis_off()
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
 def render_tree(cfg, color_file: str):
-    """Render tree_final.nwk as PNG with color-coded branches."""
     tree_path = os.path.join(cfg.outdir, "tree_final.nwk")
     if not os.path.exists(tree_path):
         return
-
-    # parse color file
-    color_dict = {}
-    try:
-        with open(color_file) as f:
-            content = f.readlines()
-            for line in content[6:]:
-                parts = line.strip().split(" ")
-                if len(parts) >= 2:
-                    color_dict[parts[0]] = parts[1]
-    except Exception:
-        print("ERROR creating colordict")
-        return
-
-    def add_branchcolor(node):
-        if node.is_leaf():
-            color = color_dict.get(node.name, "#000000")
-            taxon_face = faces.TextFace(node.name, fgcolor=color, fsize=10, fstyle="bold")
-            faces.add_face_to_node(taxon_face, node, 1)
-            node.img_style["fgcolor"] = color
-            node.img_style["vt_line_color"] = color
-            node.img_style["hz_line_color"] = color
-
-    tfin = Tree(tree_path)
-    tfin.dist = 0
-    tfin.allow_face_overlap = True
-    ts = TreeStyle()
-    ts.mode = "r"
-    ts.min_leaf_separation = 0
-    ts.layout_fn = add_branchcolor
-    tfin.set_outgroup(tfin.get_midpoint_outgroup())
-    tfin.render(os.path.join(cfg.outdir, "tree_final.png"), w=183, units="mm", tree_style=ts)
+    render_tree_file(tree_path, color_file, os.path.join(cfg.outdir, "tree_final.png"))

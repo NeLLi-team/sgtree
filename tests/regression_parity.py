@@ -58,9 +58,11 @@ def main():
     py_basic = OUT / "py_basic"
     py_full = OUT / "py_full"
     py_full_singles = OUT / "py_full_singles"
+    py_iter = OUT / "py_iter"
     nf_basic = OUT / "nf_basic"
     nf_full = OUT / "nf_full"
     nf_full_singles = OUT / "nf_full_singles"
+    nf_iter = OUT / "nf_iter"
     logs_dir = OUT / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +90,14 @@ def main():
         "--save_dir", str(py_full_singles),
     ])
     run([
+        "python", "-m", "sgtree",
+        "testgenomes/Chloroflexi", "resources/models/UNI56.hmm",
+        "--num_cpus", "8",
+        "--marker_selection", "yes",
+        "--selection_global_rounds", "2",
+        "--save_dir", str(py_iter),
+    ])
+    run([
         "./nextflow", "-log", str(logs_dir / "nf_basic.log"), "run", "main.nf",
         "-work-dir", str(OUT / "work_basic"),
         "--genomedir", "testgenomes/Chloroflexi",
@@ -113,6 +123,15 @@ def main():
         "--singles", "yes",
         "--ref", "testgenomes/chlorref",
     ])
+    run([
+        "./nextflow", "-log", str(logs_dir / "nf_iter.log"), "run", "main.nf",
+        "-work-dir", str(OUT / "work_iter"),
+        "--genomedir", "testgenomes/Chloroflexi",
+        "--modeldir", "resources/models/UNI56.hmm",
+        "--outdir", str(nf_iter),
+        "--marker_selection", "true",
+        "--selection_global_rounds", "2",
+    ])
 
     # Expected output files
     assert_exists(py_basic / "tree.nwk")
@@ -129,6 +148,10 @@ def main():
     assert_exists(py_full_singles / "marker_selection_rf_values.txt")
     assert_exists(py_full_singles / "marker_count_matrix.csv")
     assert_any([py_full_singles / "marker_counts.txt", py_full_singles / "temp" / "itol" / "marker_counts.txt"])
+    assert_exists(py_iter / "tree_final.nwk")
+    assert_exists(py_iter / "tree_final.png")
+    assert_exists(py_iter / "marker_selection_rf_values.txt")
+    assert_exists(py_iter / "marker_count_matrix.csv")
 
     assert_exists(nf_basic / "tree.nwk")
     assert_exists(nf_basic / "marker_count_matrix.csv")
@@ -147,6 +170,12 @@ def main():
     assert_exists(nf_full_singles / "marker_count_matrix.csv")
     assert_exists(nf_full_singles / "marker_counts.txt")
     assert_exists(nf_full_singles / "color.txt")
+    assert_exists(nf_iter / "tree_final.nwk")
+    assert_exists(nf_iter / "tree_final.png")
+    assert_exists(nf_iter / "marker_selection_rf_values.txt")
+    assert_exists(nf_iter / "marker_count_matrix.csv")
+    assert_exists(nf_iter / "marker_counts.txt")
+    assert_exists(nf_iter / "color.txt")
 
     # Topology parity checks
     if rf_norm(py_basic / "tree.nwk", nf_basic / "tree.nwk") != 0:
@@ -155,6 +184,8 @@ def main():
         raise AssertionError("Topology mismatch: python full vs nextflow full")
     if rf_norm(py_full_singles / "tree_final.nwk", nf_full_singles / "tree_final.nwk") != 0:
         raise AssertionError("Topology mismatch: python singles vs nextflow singles")
+    if rf_norm(py_iter / "tree_final.nwk", nf_iter / "tree_final.nwk") != 0:
+        raise AssertionError("Topology mismatch: python iterative vs nextflow iterative")
 
     # Matrix parity checks (ignore row/column ordering)
     if not load_matrix(py_basic / "marker_count_matrix.csv").equals(load_matrix(nf_basic / "marker_count_matrix.csv")):
@@ -163,6 +194,8 @@ def main():
         raise AssertionError("Marker matrix mismatch: python full vs nextflow full")
     if not load_matrix(py_full_singles / "marker_count_matrix.csv").equals(load_matrix(nf_full_singles / "marker_count_matrix.csv")):
         raise AssertionError("Marker matrix mismatch: python singles vs nextflow singles")
+    if not load_matrix(py_iter / "marker_count_matrix.csv").equals(load_matrix(nf_iter / "marker_count_matrix.csv")):
+        raise AssertionError("Marker matrix mismatch: python iterative vs nextflow iterative")
 
     # RF status parity checks
     py_rf = load_rf_status(py_full / "marker_selection_rf_values.txt")
@@ -183,6 +216,17 @@ def main():
         only_nf = sorted(set(nf_rf_singles.items()) - set(py_rf_singles.items()))
         raise AssertionError(
             "RF status mismatch between python and nextflow (singles).\n"
+            f"Only in python: {only_py[:5]}\n"
+            f"Only in nextflow: {only_nf[:5]}"
+        )
+
+    py_rf_iter = load_rf_status(py_iter / "marker_selection_rf_values.txt")
+    nf_rf_iter = load_rf_status(nf_iter / "marker_selection_rf_values.txt")
+    if py_rf_iter != nf_rf_iter:
+        only_py = sorted(set(py_rf_iter.items()) - set(nf_rf_iter.items()))
+        only_nf = sorted(set(nf_rf_iter.items()) - set(py_rf_iter.items()))
+        raise AssertionError(
+            "RF status mismatch between python and nextflow (iterative).\n"
             f"Only in python: {only_py[:5]}\n"
             f"Only in nextflow: {only_nf[:5]}"
         )
