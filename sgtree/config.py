@@ -18,13 +18,20 @@ class Config:
     iqtree_model: str
     hmmsearch_cutoff: str
     hmmsearch_evalue: float
+    selection_mode: str
+    selection_max_rounds: int
+    selection_global_rounds: int
+    lock_references: bool
     max_sdup: int
     max_dupl: float
     ref: str | None
     ref_concat: str
     marker_selection: bool
     singles: bool
+    singles_mode: str
     num_nei: int
+    singles_min_rfdist: float
+    keep_intermediates: bool
     is_ref: bool
     start_time: str
     model_count: int = 0

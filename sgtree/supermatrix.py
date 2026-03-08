@@ -83,11 +83,17 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
     # build dataframe with all trimmed alignments
     df_conc = pd.DataFrame(columns=["SeqID"])
     for filepath in sorted(glob.glob(os.path.join(trimmed_dir, "*.faa"))):
-        record_dict = SeqIO.to_dict(SeqIO.parse(filepath, "fasta"))
+        with open(filepath) as handle:
+            record_dict = SeqIO.to_dict(SeqIO.parse(handle, "fasta"))
         record_dict = {k: v.format("fasta").split("\n", 1)[1] for k, v in record_dict.items()}
         new_dict = {}
         for key in record_dict:
-            new_dict[key.split("|")[0]] = record_dict[key]
+            genome_id = key.split("|")[0]
+            if genome_id in new_dict:
+                raise ValueError(
+                    f"Duplicate genome id '{genome_id}' remains in alignment {os.path.basename(filepath)}"
+                )
+            new_dict[genome_id] = record_dict[key]
         new_df = pd.DataFrame(
             list(new_dict.items()),
             columns=["SeqID", os.path.basename(filepath)],

@@ -1,38 +1,17 @@
 #!/usr/bin/env python
 """RF-distance based duplicate resolution for one marker tree."""
 import argparse
+import sys
+from pathlib import Path
 
-import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from ete3 import Tree
 
-
-SCORE_COLUMNS = ("score_bits", "7")
-
-
-def load_score_table(table_path: str) -> tuple[pd.DataFrame, str]:
-    dfa = pd.read_csv(table_path)
-    if "savedname" not in dfa.columns:
-        raise ValueError(f"Missing required column 'savedname' in {table_path}")
-    score_col = next((col for col in SCORE_COLUMNS if col in dfa.columns), None)
-    if score_col is None:
-        raise ValueError(
-            f"Missing score column in {table_path}; expected one of: {', '.join(SCORE_COLUMNS)}"
-        )
-    return dfa.set_index("savedname"), score_col
-
-
-def get_ascore(identifier: str, score_table: pd.DataFrame, score_col: str) -> str:
-    row = score_table.loc[identifier.replace("|", "/")]
-    return row.name + ":" + str(float(row[score_col]))
-
-
-def best_score(scored_list):
-    if not scored_list:
-        return None
-    return min(
-        scored_list,
-        key=lambda entry: (-float(entry.rsplit(":", 1)[1]), entry.rsplit(":", 1)[0]),
-    )
+from sgtree.marker_selection import resolve_marker_tree
 
 
 def main():
@@ -44,97 +23,35 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--rf_out", required=True)
     parser.add_argument("--ref_list", default=None)
+    parser.add_argument("--selection_mode", default="coordinate", choices=["legacy", "coordinate"])
+    parser.add_argument("--selection_max_rounds", type=int, default=5)
+    parser.add_argument("--lock_references", default="no")
     args = parser.parse_args()
 
     ls_refs = args.ref_list.split(",") if args.ref_list else None
-    score_table, score_col = load_score_table(args.table_elim_dups)
+    lock_references = str(args.lock_references).strip().lower() in {"yes", "true", "1"}
 
-    t = Tree(args.marker_tree)
-    lst_nodes = [node.name for node in next(t.copy().traverse())]
+    cleaned_nodes, records = resolve_marker_tree(
+        marker_tree_path=args.marker_tree,
+        species_tree_path=args.species_tree,
+        table_path=args.table_elim_dups,
+        marker_name=args.marker,
+        ls_refs=ls_refs,
+        selection_mode=args.selection_mode,
+        max_rounds=args.selection_max_rounds,
+        lock_references=lock_references,
+    )
 
-    # find duplicates
-    seen = {}
-    for x in lst_nodes:
-        genome = x.split("|")[0]
-        if genome not in seen:
-            seen[genome] = x
-        else:
-            seen[genome] = seen[genome] + "," + x
-    dups = {k: v.split(",") for k, v in seen.items()}
+    with open(args.rf_out, "w") as handle:
+        for record in records:
+            handle.write(
+                f"{record['protein_id']} {record['marker']} "
+                f"{record['rf_distance']:.6f} {record['status']}\n"
+            )
 
-    # score all entries
-    for key in dups:
-        dups[key] = [get_ascore(v, score_table, score_col) for v in dups[key]]
-
-    speciestree = Tree(args.species_tree)
-    bad_nodes = []
-
-    rf_lines = []
-    for key, value in dups.items():
-        if ls_refs is not None and key.split("|")[0] + ".faa" in ls_refs:
-            continue
-        if len(value) == 1:
-            continue
-
-        best_each = None
-        best_protein = None
-        rf_results = []
-        candidates = []
-
-        for each in value:
-            ls_nodes_local = [each]
-            dcopy = {k: v for k, v in dups.items() if k != key}
-            for k, v in dcopy.items():
-                bs = best_score(v)
-                if bs is not None:
-                    ls_nodes_local.append(bs)
-
-            ls_nodes_local = [e for e in ls_nodes_local if e is not None]
-            alt = [x.split(":")[0].replace("/", "|") for x in ls_nodes_local]
-
-            speciestree_copy = speciestree.copy()
-            speciestree_copy.prune([n.split("|")[0] for n in alt])
-
-            t_prot = t.copy()
-            t_prot.prune(alt)
-            t_protcopy = t_prot.copy()
-
-            for node in next(t_protcopy.traverse()):
-                node.name = node.name.split("|")[0]
-
-            rf, maxrf, *_ = speciestree_copy.robinson_foulds(t_protcopy, unrooted_trees=True)
-            maxrf = maxrf + 0.0001
-            rf_dist = rf / maxrf
-
-            rf_results.append((each.split(":")[0], rf_dist))
-
-            candidates.append((rf_dist, each))
-
-        if candidates:
-            # Deterministic tie-breaker: lowest RF, then lexicographically smallest protein id.
-            _, best_each = min(candidates, key=lambda item: (item[0], item[1].split(":")[0]))
-            best_protein = best_each.split(":")[0]
-
-        for protein, rf_d in rf_results:
-            status = "Kept" if protein == best_protein else "Removed"
-            rf_lines.append(f"{protein} {args.marker} {rf_d:.6f} {status}")
-
-        if best_each is not None:
-            bad_nodes_local = [
-                n.split(":")[0].replace("/", "|") for n in value if n != best_each
-            ]
-            bad_nodes.extend(bad_nodes_local)
-
-    # write RF values
-    with open(args.rf_out, "w") as f:
-        for line in rf_lines:
-            f.write(line + "\n")
-
-    # write cleaned tree
-    cleaned_nodes = [n for n in lst_nodes if n not in bad_nodes]
-    t_final = t.copy()
-    t_final.prune(cleaned_nodes)
-    t_final.write(format=1, outfile=args.out)
+    tree = Tree(args.marker_tree)
+    tree.prune(cleaned_nodes)
+    tree.write(format=1, outfile=args.out)
 
 
 if __name__ == "__main__":

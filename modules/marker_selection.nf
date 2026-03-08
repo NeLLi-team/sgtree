@@ -21,6 +21,9 @@ process RF_SELECTION {
         --marker ${marker} \\
         --out cleaned_${marker}.nw \\
         --rf_out rf_values.txt \\
+        --selection_mode ${params.selection_mode ?: 'coordinate'} \\
+        --selection_max_rounds ${params.selection_max_rounds ?: 5} \\
+        --lock_references ${params.lock_references ?: false} \\
         ${refs_arg}
     """
 }
@@ -31,13 +34,14 @@ process REMOVE_SINGLES {
     input:
     tuple val(marker), path(cleaned_tree)
     path species_tree
+    path table_elim_dups
 
     output:
     tuple val(marker), path("no_singles_${marker}.nw"), emit: tree
 
     script:
     """
-    remove_singles.py --tree ${cleaned_tree} --species_tree ${species_tree} --num_nei ${params.num_nei ?: 0} --out no_singles_${marker}.nw
+    remove_singles.py --tree ${cleaned_tree} --species_tree ${species_tree} --table_elim_dups ${table_elim_dups} --mode ${params.singles_mode ?: 'neighbor'} --num_nei ${params.num_nei ?: 0} --singles_min_rfdist ${params.singles_min_rfdist ?: 0.25} --out no_singles_${marker}.nw
     """
 }
 
