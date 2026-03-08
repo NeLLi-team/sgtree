@@ -1,0 +1,382 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import textwrap
+from copy import deepcopy
+from pathlib import Path
+from urllib import error, request
+
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+
+
+OUTDIR = Path("docs/figures")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-4.1-mini"
+
+DEFAULT_SPEC = {
+    "title": "SGTree Workflow and Benchmarking Design",
+    "subtitle": "Marker-gene species-tree inference with RF-guided duplicate cleanup and synthetic contamination benchmarks",
+    "core_heading": "Core Inference Pipeline",
+    "core_boxes": [
+        {"title": "Inputs", "lines": ["Query proteomes", "Marker HMM set"]},
+        {"title": "Search and Parse", "lines": ["pyhmmer search", "Hit filtering", "Marker-count matrix"]},
+        {"title": "Per-marker Processing", "lines": ["Sequence extraction", "Profile alignment", "Duplicate removal"]},
+        {"title": "Supermatrix Build", "lines": ["trimAl trimming", "Marker concatenation"]},
+        {"title": "Outputs", "lines": ["Species tree", "Marker counts", "Rendered figure"]},
+    ],
+    "selection_heading": "Contamination-aware Marker Selection",
+    "selection_boxes": [
+        {"title": "Marker Trees", "lines": ["Per-marker FastTree runs", "Reference-assisted option"]},
+        {"title": "RF-guided Selection", "lines": ["Copy retained if it minimizes", "species-tree RF distance"]},
+        {"title": "Optional Singleton Filter", "lines": ["neighbor", "delta-RF", "backbone", "ensemble"]},
+        {"title": "Final Tree", "lines": ["Iterative cleanup", "tree_final.nwk"]},
+    ],
+    "bridge_label": "marker_selection=yes",
+    "benchmark_heading": "Benchmark Harness",
+    "benchmark_lines": [
+        "Truth panels are generated from clean proteomes, then duplicate/triplicate/replacement contamination is injected.",
+        "Benchmark scenarios score normalized RF to the clean truth tree, duplicate removal, native retention, and replacement handling.",
+    ],
+}
+
+
+def add_box(ax, x, y, w, h, title, lines, *, fc, ec="#30404d", title_size=11, body_size=9.2, body_rel_y=0.37):
+    patch = FancyBboxPatch(
+        (x, y),
+        w,
+        h,
+        boxstyle="round,pad=0.02,rounding_size=0.03",
+        linewidth=1.6,
+        edgecolor=ec,
+        facecolor=fc,
+    )
+    ax.add_patch(patch)
+    if title:
+        ax.text(
+            x + w / 2,
+            y + h - 0.04,
+            textwrap.fill(title, width=18),
+            ha="center",
+            va="top",
+            fontsize=title_size,
+            fontweight="bold",
+            color="#182026",
+        )
+    ax.text(
+        x + w / 2,
+        y + h * body_rel_y,
+        "\n".join(textwrap.fill(line, width=28) for line in lines),
+        ha="center",
+        va="center",
+        fontsize=body_size,
+        color="#25333b",
+        linespacing=1.35,
+    )
+
+
+def add_arrow(ax, start, end, *, color="#55636f", lw=1.6):
+    ax.add_patch(
+        FancyArrowPatch(
+            start,
+            end,
+            arrowstyle="-|>",
+            mutation_scale=15,
+            linewidth=lw,
+            color=color,
+            shrinkA=6,
+            shrinkB=6,
+        )
+    )
+
+
+def _normalize_box_list(boxes: list[dict], expected: int) -> list[dict]:
+    normalized = []
+    for idx in range(expected):
+        box = boxes[idx] if idx < len(boxes) else {}
+        fallback_title = DEFAULT_SPEC["core_boxes"][idx]["title"] if expected == 5 else DEFAULT_SPEC["selection_boxes"][idx]["title"]
+        title = str(box.get("title", fallback_title)).strip() or fallback_title
+        lines = box.get("lines")
+        fallback_lines = DEFAULT_SPEC["core_boxes"][idx]["lines"] if expected == 5 else DEFAULT_SPEC["selection_boxes"][idx]["lines"]
+        if not isinstance(lines, list) or not lines:
+            lines = fallback_lines
+        cleaned_lines = [str(line).strip() for line in lines[:4] if str(line).strip()]
+        if not cleaned_lines:
+            cleaned_lines = fallback_lines
+        normalized.append(
+            {
+                "title": title,
+                "lines": cleaned_lines,
+            }
+        )
+    return normalized
+
+
+def normalize_spec(raw: dict | None) -> dict:
+    spec = deepcopy(DEFAULT_SPEC)
+    if not raw:
+        return spec
+    for key in ["title", "subtitle", "core_heading", "selection_heading", "bridge_label", "benchmark_heading"]:
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            spec[key] = value.strip()
+    for key in ["benchmark_lines"]:
+        value = raw.get(key)
+        if isinstance(value, list) and value:
+            cleaned = [str(item).strip() for item in value[:3] if str(item).strip()]
+            if cleaned:
+                spec[key] = cleaned
+    if isinstance(raw.get("core_boxes"), list):
+        spec["core_boxes"] = _normalize_box_list(raw["core_boxes"], 5)
+    if isinstance(raw.get("selection_boxes"), list):
+        spec["selection_boxes"] = _normalize_box_list(raw["selection_boxes"], 4)
+    return spec
+
+
+def _request_openrouter(api_key: str, extra_payload: dict | None = None) -> dict | None:
+    system_prompt = (
+        "You create compact JSON figure specifications for publication-style workflow diagrams. "
+        "Return only content that fits the provided schema. Keep labels short, concrete, and scientifically accurate."
+    )
+    user_prompt = (
+        "Create a workflow figure specification for SGTree. "
+        "The figure should cover: per-genome proteome inputs, marker HMM inputs, pyhmmer search, hit filtering, "
+        "marker-count matrix generation, per-marker extraction and alignment, duplicate removal, trimAl trimming, "
+        "supermatrix concatenation, species-tree inference, RF-guided duplicate cleanup, optional singleton filtering "
+        "with neighbor/delta-RF/backbone/ensemble modes, final tree inference, and a benchmark harness that injects "
+        "duplicate, triplicate, and replacement contamination into clean truth panels. "
+        "Keep the structure aligned to five top-row boxes, four second-row boxes, and a final benchmark-harness callout."
+    )
+
+    payload = {
+        "model": os.environ.get("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "plugins": [{"id": "response-healing"}],
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+
+    req = request.Request(
+        OPENROUTER_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/fredlps/sgtree",
+            "X-Title": "SGTree Workflow Figure Planner",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=60) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (error.URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+    try:
+        content = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
+    return content if isinstance(content, dict) else None
+
+
+def load_openrouter_spec() -> dict | None:
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+
+    schema_payload = {
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "workflow_figure_spec",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "subtitle": {"type": "string"},
+                        "core_heading": {"type": "string"},
+                        "core_boxes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "lines": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": ["title", "lines"],
+                                "additionalProperties": False,
+                            },
+                            "minItems": 5,
+                            "maxItems": 5,
+                        },
+                        "selection_heading": {"type": "string"},
+                        "selection_boxes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "lines": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": ["title", "lines"],
+                                "additionalProperties": False,
+                            },
+                            "minItems": 4,
+                            "maxItems": 4,
+                        },
+                        "bridge_label": {"type": "string"},
+                        "benchmark_heading": {"type": "string"},
+                        "benchmark_lines": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 3},
+                    },
+                    "required": [
+                        "title",
+                        "subtitle",
+                        "core_heading",
+                        "core_boxes",
+                        "selection_heading",
+                        "selection_boxes",
+                        "bridge_label",
+                        "benchmark_heading",
+                        "benchmark_lines",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        }
+    }
+    raw = _request_openrouter(api_key, schema_payload)
+    if raw is not None:
+        return raw
+
+    fallback_payload = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Return only valid JSON with keys title, subtitle, core_heading, core_boxes, "
+                    "selection_heading, selection_boxes, bridge_label, benchmark_heading, benchmark_lines."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Create the SGTree workflow figure spec as JSON only. "
+                    "Use exactly five core_boxes and four selection_boxes. Keep labels short."
+                ),
+            },
+        ]
+    }
+    return _request_openrouter(api_key, fallback_payload)
+
+
+def choose_spec(planner: str) -> tuple[dict, str]:
+    if planner == "static":
+        return deepcopy(DEFAULT_SPEC), "static"
+    if planner == "openrouter":
+        return normalize_spec(load_openrouter_spec()), "openrouter"
+    if planner == "auto":
+        raw = load_openrouter_spec()
+        if raw is not None:
+            return normalize_spec(raw), "openrouter"
+        return deepcopy(DEFAULT_SPEC), "static"
+    raise ValueError(f"Unsupported planner: {planner}")
+
+
+def render_workflow_figure(spec: dict, *, planner_used: str) -> None:
+    OUTDIR.mkdir(parents=True, exist_ok=True)
+    (OUTDIR / "workflow_overview_spec.json").write_text(json.dumps({"planner_used": planner_used, "spec": spec}, indent=2) + "\n")
+
+    fig, ax = plt.subplots(figsize=(14, 7.5))
+    fig.patch.set_facecolor("#fbfaf4")
+    ax.set_facecolor("#fbfaf4")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+
+    ax.text(0.05, 0.95, spec["title"], fontsize=18, fontweight="bold", color="#162028", ha="left")
+    ax.text(0.05, 0.91, spec["subtitle"], fontsize=10.5, color="#475761", ha="left")
+    ax.text(0.95, 0.95, f"planner: {planner_used}", fontsize=8.5, color="#7c8a93", ha="right")
+
+    ax.text(0.05, 0.84, spec["core_heading"], fontsize=12.5, fontweight="bold", color="#7a4b00")
+    core_layout = [
+        (0.05, 0.60, 0.15, 0.18, "#f8e7b7"),
+        (0.24, 0.60, 0.16, 0.18, "#dfead2"),
+        (0.44, 0.60, 0.16, 0.18, "#d6e9ef"),
+        (0.64, 0.60, 0.16, 0.18, "#e2def5"),
+        (0.84, 0.60, 0.11, 0.18, "#f3d8d4"),
+    ]
+    for (x, y, w, h, color), box in zip(core_layout, spec["core_boxes"], strict=True):
+        add_box(ax, x, y, w, h, box["title"], box["lines"], fc=color, title_size=10.5, body_size=8.2, body_rel_y=0.30)
+    for idx in range(len(core_layout) - 1):
+        x, y, w, h, _ = core_layout[idx]
+        nx, ny, nw, nh, _ = core_layout[idx + 1]
+        add_arrow(ax, (x + w, y + h / 2), (nx, ny + nh / 2))
+
+    ax.text(0.05, 0.49, spec["selection_heading"], fontsize=12.5, fontweight="bold", color="#215f4e")
+    selection_layout = [
+        (0.08, 0.24, 0.20, 0.16, "#dcefd8"),
+        (0.33, 0.24, 0.22, 0.16, "#cfe7e3"),
+        (0.60, 0.24, 0.18, 0.16, "#dce2f3"),
+        (0.83, 0.24, 0.12, 0.16, "#f3ddd7"),
+    ]
+    for (x, y, w, h, color), box in zip(selection_layout, spec["selection_boxes"], strict=True):
+        add_box(ax, x, y, w, h, box["title"], box["lines"], fc=color, title_size=10.2, body_size=8.2, body_rel_y=0.28)
+    for idx in range(len(selection_layout) - 1):
+        x, y, w, h, _ = selection_layout[idx]
+        nx, ny, nw, nh, _ = selection_layout[idx + 1]
+        add_arrow(ax, (x + w, y + h / 2), (nx, ny + nh / 2), color="#42695f")
+
+    add_arrow(ax, (0.52, 0.60), (0.52, 0.42), color="#42695f")
+    ax.text(0.535, 0.51, spec["bridge_label"], rotation=90, va="center", ha="left", fontsize=8.5, color="#42695f")
+
+    ax.text(0.50, 0.15, spec["benchmark_heading"], fontsize=11, fontweight="bold", color="#182026", ha="center")
+    add_box(
+        ax,
+        0.05,
+        0.04,
+        0.90,
+        0.14,
+        "",
+        spec["benchmark_lines"],
+        fc="#f3efe1",
+        body_size=8.4,
+        body_rel_y=0.28,
+    )
+
+    fig.savefig(OUTDIR / "workflow_overview.svg", bbox_inches="tight")
+    fig.savefig(OUTDIR / "workflow_overview.png", dpi=300, bbox_inches="tight")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render the SGTree workflow figure")
+    parser.add_argument(
+        "--planner",
+        choices=["auto", "openrouter", "static"],
+        default="auto",
+        help="Choose how the figure text spec is produced before local rendering",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    spec, planner_used = choose_spec(args.planner)
+    render_workflow_figure(spec, planner_used=planner_used)
+    print(f"workflow figure rendered with planner={planner_used}")
+
+
+if __name__ == "__main__":
+    main()

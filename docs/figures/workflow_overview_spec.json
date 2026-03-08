@@ -1,0 +1,82 @@
+{
+  "planner_used": "openrouter",
+  "spec": {
+    "title": "SGTree Workflow",
+    "subtitle": "Phylogenomic Tree Inference with Duplicate Handling and Benchmarking",
+    "core_heading": "Input Data and Initial Processing",
+    "core_boxes": [
+      {
+        "title": "Proteome & Marker Inputs",
+        "lines": [
+          "Per-genome proteome sequences",
+          "Marker HMM profiles"
+        ]
+      },
+      {
+        "title": "HMM Search & Filtering",
+        "lines": [
+          "Pyhmmer-based search",
+          "Hit filtering for quality"
+        ]
+      },
+      {
+        "title": "Marker Matrix Generation",
+        "lines": [
+          "Generate marker-count matrix",
+          "Per-marker extraction"
+        ]
+      },
+      {
+        "title": "Alignment & Cleanup",
+        "lines": [
+          "Multiple sequence alignment",
+          "Duplicate removal"
+        ]
+      },
+      {
+        "title": "Trimming & Concatenation",
+        "lines": [
+          "trimAl-based trimming",
+          "Supermatrix concatenation"
+        ]
+      }
+    ],
+    "selection_heading": "Phylogenetic Inference and Duplicate Handling",
+    "selection_boxes": [
+      {
+        "title": "Initial Tree Inference",
+        "lines": [
+          "Species-tree inference from supermatrix"
+        ]
+      },
+      {
+        "title": "RF-Guided Cleanup",
+        "lines": [
+          "Remove duplicates guided by RF distance"
+        ]
+      },
+      {
+        "title": "Optional Singleton Filtering",
+        "lines": [
+          "Neighbor mode",
+          "Delta-RF mode",
+          "Backbone mode",
+          "Ensemble mode"
+        ]
+      },
+      {
+        "title": "Final Tree Inference",
+        "lines": [
+          "Inference on cleaned alignment"
+        ]
+      }
+    ],
+    "bridge_label": "Iterative Optimization",
+    "benchmark_heading": "Benchmark Harness for Validation",
+    "benchmark_lines": [
+      "Inject duplicate, triplicate, and replacement contamination",
+      "Use clean truth panels",
+      "Evaluate robustness of inferred trees"
+    ]
+  }
+}
