@@ -1,82 +1,87 @@
 {
   "planner_used": "openrouter",
   "spec": {
-    "title": "SGTree Workflow",
-    "subtitle": "Phylogenomic Tree Inference with Duplicate Handling and Benchmarking",
-    "core_heading": "Input Data and Initial Processing",
+    "title": "SGTree Workflow and Benchmarking Design",
+    "subtitle": "Marker-gene species-tree inference with RF-guided duplicate cleanup and synthetic contamination benchmarks",
+    "core_heading": "Core Inference Pipeline",
     "core_boxes": [
       {
-        "title": "Proteome & Marker Inputs",
+        "title": "Inputs",
         "lines": [
-          "Per-genome proteome sequences",
-          "Marker HMM profiles"
+          "Query proteomes",
+          "Marker HMM set"
         ]
       },
       {
-        "title": "HMM Search & Filtering",
+        "title": "Search and Parse",
         "lines": [
-          "Pyhmmer-based search",
-          "Hit filtering for quality"
+          "pyhmmer search",
+          "Hit filtering",
+          "Marker-count matrix"
         ]
       },
       {
-        "title": "Marker Matrix Generation",
+        "title": "Per-marker Processing",
         "lines": [
-          "Generate marker-count matrix",
-          "Per-marker extraction"
-        ]
-      },
-      {
-        "title": "Alignment & Cleanup",
-        "lines": [
-          "Multiple sequence alignment",
+          "Sequence extraction",
+          "Profile alignment",
           "Duplicate removal"
         ]
       },
       {
-        "title": "Trimming & Concatenation",
+        "title": "Supermatrix Build",
         "lines": [
-          "trimAl-based trimming",
-          "Supermatrix concatenation"
+          "trimAl trimming",
+          "Marker concatenation"
+        ]
+      },
+      {
+        "title": "Outputs",
+        "lines": [
+          "Species tree",
+          "Marker counts",
+          "Rendered figure"
         ]
       }
     ],
-    "selection_heading": "Phylogenetic Inference and Duplicate Handling",
+    "selection_heading": "Contamination-aware Marker Selection",
     "selection_boxes": [
       {
-        "title": "Initial Tree Inference",
+        "title": "Marker Trees",
         "lines": [
-          "Species-tree inference from supermatrix"
+          "Per-marker FastTree runs",
+          "Reference-assisted option"
         ]
       },
       {
-        "title": "RF-Guided Cleanup",
+        "title": "RF-guided Selection",
         "lines": [
-          "Remove duplicates guided by RF distance"
+          "Copy retained if it minimizes",
+          "species-tree RF distance"
         ]
       },
       {
-        "title": "Optional Singleton Filtering",
+        "title": "Optional Singleton Filter",
         "lines": [
-          "Neighbor mode",
-          "Delta-RF mode",
-          "Backbone mode",
-          "Ensemble mode"
+          "neighbor",
+          "delta-RF",
+          "backbone",
+          "ensemble"
         ]
       },
       {
-        "title": "Final Tree Inference",
+        "title": "Final Tree",
         "lines": [
-          "Inference on cleaned alignment"
+          "Iterative cleanup",
+          "tree_final.nwk"
         ]
       }
     ],
-    "bridge_label": "Iterative Optimization",
-    "benchmark_heading": "Benchmark Harness for Validation",
+    "bridge_label": "marker_selection=yes",
+    "benchmark_heading": "Benchmark Harness",
     "benchmark_lines": [
-      "Inject duplicate, triplicate, and replacement contamination",
-      "Use clean truth panels",
-      "Evaluate robustness of inferred trees"
+      "Truth panels are generated from clean proteomes, then duplicate/triplicate/replacement contamination is injected.",
+      "Benchmark scenarios score normalized RF to the clean truth tree, duplicate removal, native retention, and replacement handling."
     ]
   }
 }
