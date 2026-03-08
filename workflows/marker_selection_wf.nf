@@ -1,8 +1,14 @@
 include { TRIMAL_SIMPLE }                                        from '../modules/trim'
+include { TRIMAL_SIMPLE as TRIMAL_SIMPLE_ROUND1 }                 from '../modules/trim'
 include { TRIMAL_SIMPLE as TRIMAL_SIMPLE_FINAL }                  from '../modules/trim'
 include { FASTTREE_PER_MARKER }                                   from '../modules/phylogeny'
+include { FASTTREE_INTERMEDIATE }                                 from '../modules/phylogeny'
 include { RF_SELECTION; REMOVE_SINGLES; WRITE_CLEANED_ALIGNMENT; FORMAT_RF_VALUES } from '../modules/marker_selection'
+include { RF_SELECTION as RF_SELECTION_ROUND2 }                   from '../modules/marker_selection'
+include { WRITE_CLEANED_ALIGNMENT as WRITE_CLEANED_ALIGNMENT_ROUND1 } from '../modules/marker_selection'
+include { WRITE_CLEANED_ALIGNMENT as WRITE_CLEANED_ALIGNMENT_ROUND2 } from '../modules/marker_selection'
 include { BUILD_SUPERMATRIX as BUILD_SUPERMATRIX_FINAL }          from '../modules/supermatrix'
+include { BUILD_SUPERMATRIX as BUILD_SUPERMATRIX_ROUND1 }         from '../modules/supermatrix'
 include { FASTTREE_FINAL }                                        from '../modules/phylogeny'
 
 workflow MARKER_SELECTION_WF {
@@ -27,25 +33,57 @@ workflow MARKER_SELECTION_WF {
         table_elim_dups,
         ref_list
     )
+    global_rounds = (params.selection_global_rounds ?: 1) as int
 
-    // Collect per-marker RF values and add legacy header line
-    rf_values_raw = RF_SELECTION.out.rf_values.collectFile(name: 'rf_values_raw.txt')
-    FORMAT_RF_VALUES(rf_values_raw)
+    if (global_rounds > 1) {
+        // Round 1 duplicate cleanup without singleton pruning.
+        trees_with_aln_round1 = RF_SELECTION.out.cleaned_tree.join(aligned)
+        WRITE_CLEANED_ALIGNMENT_ROUND1(trees_with_aln_round1)
+        TRIMAL_SIMPLE_ROUND1(WRITE_CLEANED_ALIGNMENT_ROUND1.out.cleaned)
 
-    // Step 13: Optionally remove singletons
-    if (do_singles) {
-        REMOVE_SINGLES(RF_SELECTION.out.cleaned_tree, species_tree)
-        trees_for_cleaning = REMOVE_SINGLES.out.tree
+        cleaned_round1 = TRIMAL_SIMPLE_ROUND1.out.trimmed
+            .map { marker, file -> file }
+            .collect()
+
+        BUILD_SUPERMATRIX_ROUND1(cleaned_round1)
+        FASTTREE_INTERMEDIATE(BUILD_SUPERMATRIX_ROUND1.out.supermatrix)
+
+        // Round 2 duplicate cleanup against the rebuilt guide tree.
+        RF_SELECTION_ROUND2(
+            FASTTREE_PER_MARKER.out.tree,
+            FASTTREE_INTERMEDIATE.out.tree,
+            table_elim_dups,
+            ref_list
+        )
+
+        rf_values_raw = RF_SELECTION_ROUND2.out.rf_values.collectFile(name: 'rf_values_raw.txt')
+        FORMAT_RF_VALUES(rf_values_raw)
+
+        if (do_singles) {
+            REMOVE_SINGLES(RF_SELECTION_ROUND2.out.cleaned_tree, FASTTREE_INTERMEDIATE.out.tree, table_elim_dups)
+            trees_for_cleaning = REMOVE_SINGLES.out.tree
+        } else {
+            trees_for_cleaning = RF_SELECTION_ROUND2.out.cleaned_tree
+        }
+
+        trees_with_aln = trees_for_cleaning.join(aligned)
+        WRITE_CLEANED_ALIGNMENT_ROUND2(trees_with_aln)
+        TRIMAL_SIMPLE_FINAL(WRITE_CLEANED_ALIGNMENT_ROUND2.out.cleaned)
     } else {
-        trees_for_cleaning = RF_SELECTION.out.cleaned_tree
+        rf_values_raw = RF_SELECTION.out.rf_values.collectFile(name: 'rf_values_raw.txt')
+        FORMAT_RF_VALUES(rf_values_raw)
+
+        if (do_singles) {
+            REMOVE_SINGLES(RF_SELECTION.out.cleaned_tree, species_tree, table_elim_dups)
+            trees_for_cleaning = REMOVE_SINGLES.out.tree
+        } else {
+            trees_for_cleaning = RF_SELECTION.out.cleaned_tree
+        }
+
+        trees_with_aln = trees_for_cleaning.join(aligned)
+        WRITE_CLEANED_ALIGNMENT_ROUND1(trees_with_aln)
+        TRIMAL_SIMPLE_FINAL(WRITE_CLEANED_ALIGNMENT_ROUND1.out.cleaned)
     }
-
-    // Step 14: Write cleaned alignments (join tree back with original alignment by marker)
-    trees_with_aln = trees_for_cleaning.join(aligned)
-    WRITE_CLEANED_ALIGNMENT(trees_with_aln)
-
-    // Step 15: Trim cleaned alignments, build final supermatrix and tree
-    TRIMAL_SIMPLE_FINAL(WRITE_CLEANED_ALIGNMENT.out.cleaned)
 
     cleaned_collected = TRIMAL_SIMPLE_FINAL.out.trimmed
         .map { marker, file -> file }
