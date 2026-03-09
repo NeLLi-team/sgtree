@@ -185,6 +185,19 @@ def normalize_spec(raw: dict | None) -> dict:
         spec["selection_boxes"] = _normalize_box_list(raw["selection_boxes"], 4)
     spec["title"] = "SGTree Workflow"
     spec["subtitle"] = "Contamination-aware species-tree inference from marker proteins"
+    spec["core_boxes"] = [
+        {"title": "Inputs", "lines": ["Query proteomes", "Marker HMMs"]},
+        {"title": "Search and Parse", "lines": ["pyhmmer search", "hit filtering", "count matrix"]},
+        {"title": "Per-marker Processing", "lines": ["extract sequences", "profile alignment", "duplicate cleanup"]},
+        {"title": "Supermatrix Build", "lines": ["trimAl", "concatenate"]},
+        {"title": "Outputs", "lines": ["tree.nwk", "tree_final.nwk", "marker counts"]},
+    ]
+    spec["selection_boxes"] = [
+        {"title": "Marker Trees", "lines": ["per-marker FastTree", "optional references"]},
+        {"title": "RF-guided Selection", "lines": ["retain copy with", "lowest species-tree RF"]},
+        {"title": "Optional Singleton Filter", "lines": ["neighbor default", "RF-aware fallback"]},
+        {"title": "Final Tree", "lines": ["iterative cleanup", "final inference"]},
+    ]
     spec["benchmark_heading"] = "Benchmark Harness"
     spec["benchmark_lines"] = [
         "Build clean truth panels from selected genomes and marker subsets.",
@@ -205,6 +218,9 @@ def _request_openrouter(api_key: str, extra_payload: dict | None = None) -> dict
         "supermatrix concatenation, species-tree inference, RF-guided duplicate cleanup, optional singleton filtering "
         "with neighbor/delta-RF/backbone/ensemble modes, final tree inference, and a benchmark harness that injects "
         "duplicate, triplicate, and replacement contamination into clean truth panels. "
+        "Use a flat monoline academic vector style, a white background, very light accent fills, and dark thin outlines. "
+        "Keep labels short and concrete: no more than three lines per box and no line longer than a short phrase. "
+        "Avoid decorative badges, avoid long sentences inside boxes, and avoid any layout that risks text overlap. "
         "Keep the structure aligned to five top-row boxes, four second-row boxes, and a final benchmark-harness callout."
     )
 
@@ -370,11 +386,11 @@ def render_workflow_figure(spec: dict, *, planner_used: str) -> None:
 
     ax.text(0.04, 0.84, spec["core_heading"], fontsize=13, fontweight="bold", color="#111827")
     core_layout = [
-        (0.04, 0.60, 0.15, 0.18, "#ffffff"),
-        (0.22, 0.60, 0.16, 0.18, "#ffffff"),
-        (0.41, 0.60, 0.18, 0.18, "#ffffff"),
-        (0.62, 0.60, 0.16, 0.18, "#ffffff"),
-        (0.81, 0.60, 0.15, 0.18, "#ffffff"),
+        (0.04, 0.60, 0.15, 0.18, "#f8f3e3"),
+        (0.22, 0.60, 0.16, 0.18, "#edf5ef"),
+        (0.41, 0.60, 0.18, 0.18, "#edf4fb"),
+        (0.62, 0.60, 0.16, 0.18, "#f1eef9"),
+        (0.81, 0.60, 0.15, 0.18, "#f8efea"),
     ]
     for (x, y, w, h, color), box in zip(core_layout, spec["core_boxes"], strict=True):
         add_box(
@@ -399,10 +415,10 @@ def render_workflow_figure(spec: dict, *, planner_used: str) -> None:
 
     ax.text(0.04, 0.49, spec["selection_heading"], fontsize=13, fontweight="bold", color="#111827")
     selection_layout = [
-        (0.06, 0.22, 0.22, 0.19, "#ffffff"),
-        (0.32, 0.22, 0.22, 0.19, "#ffffff"),
-        (0.58, 0.22, 0.20, 0.19, "#ffffff"),
-        (0.82, 0.22, 0.14, 0.19, "#ffffff"),
+        (0.06, 0.22, 0.22, 0.19, "#eef6f1"),
+        (0.32, 0.22, 0.22, 0.19, "#eef7f8"),
+        (0.58, 0.22, 0.20, 0.19, "#f1f4fb"),
+        (0.82, 0.22, 0.14, 0.19, "#faf0ec"),
     ]
     for (x, y, w, h, color), box in zip(selection_layout, spec["selection_boxes"], strict=True):
         add_box(
@@ -438,7 +454,7 @@ def render_workflow_figure(spec: dict, *, planner_used: str) -> None:
     ax.add_patch(bridge)
     ax.text(0.50, 0.458, spec["bridge_label"], va="center", ha="center", fontsize=9.0, color="#111827")
 
-    add_callout(ax, 0.04, 0.02, 0.92, 0.15, spec["benchmark_heading"], spec["benchmark_lines"])
+    add_callout(ax, 0.04, 0.02, 0.92, 0.15, spec["benchmark_heading"], spec["benchmark_lines"], fc="#f8fafc")
 
     fig.savefig(OUTDIR / "workflow_overview.svg", bbox_inches="tight", pad_inches=0.08, facecolor=fig.get_facecolor())
     fig.savefig(OUTDIR / "workflow_overview.png", dpi=300, bbox_inches="tight", pad_inches=0.08, facecolor=fig.get_facecolor())
