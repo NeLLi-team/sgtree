@@ -24,7 +24,7 @@ In the default branch, `CONCAT_INPUTS` merges marker models and normalizes prote
 
 When `--marker_selection true`, `MARKER_SELECTION_WF` builds per-marker trees and applies `rf_marker_selection.py` to resolve duplicated marker copies against the current species tree using normalized Robinson-Foulds distances. For each duplicated genome-marker case, the retained copy is the one minimizing RF distance; removed copies are recorded in `marker_selection_rf_values.txt`.
 
-When `--singles true`, `remove_singles.py` applies a neighborhood-consistency filter. For each leaf, nearest-neighbor ordering in the marker tree is compared against the pruned species tree. The neighborhood size is adapted from global RF discordance unless `--num_nei` is set. Leaves exceeding the scoring cutoff are pruned before cleaned alignments are rebuilt and the final concatenated tree (`tree_final.nwk`) is inferred.
+When `--singles true`, `remove_singles.py` applies a neighborhood-consistency filter. For each leaf, nearest-neighbor ordering in the marker tree is compared against the pruned species tree. The neighborhood size is adapted from global RF discordance unless `--num_nei` is set. In runs without duplicate-resolution activity, highly discordant singleton markers now escalate from the plain neighbor heuristic to an RF-aware backbone score so that obvious replacement-style outliers are not masked by the contaminated guide tree. Leaves exceeding the resulting cutoff are pruned before cleaned alignments are rebuilt and the final concatenated tree (`tree_final.nwk`) is inferred.
 
 ## Synthetic Benchmark Framework
 

@@ -56,20 +56,20 @@ The main numerical results are:
 
 | Dataset | Duplicate only: RF change / removed | Replacement only: RF change / removed | Combined: RF change / removed |
 |---|---|---|---|
-| Flavo Small | `0.133 → 0.067` (`4/8`) | `0.133 → 0.000` (`3/4`) | `0.200 → 0.000` (`6/12`) |
-| Flavo Large | `0.048 → 0.000` (`4/8`) | `0.024 → 0.024` (`4/4`) | `0.000 → 0.024` (`4/12`) |
-| Gamma Small | `0.091 → 0.091` (`6/8`) | `0.000 → 0.000` (`2/4`) | `0.182 → 0.000` (`7/12`) |
-| Gamma Large | `0.036 → 0.036` (`4/8`) | `0.036 → 0.071` (`2/4`) | `0.071 → 0.000` (`11/12`) |
-| Cross Small | `0.333 → 0.333` (`3/8`) | `0.367 → 0.400` (`2/4`) | `0.567 → 0.400` (`5/12`) |
-| Cross Large | `0.145 → 0.000` (`8/8`) | `0.197 → 0.237` (`2/4`) | `0.145 → 0.066` (`10/12`) |
+| Flavo Small | `0.133 → 0.067` (`4/8`) | `0.133 → 0.067` (`4/4`) | `0.200 → 0.000` (`6/12`) |
+| Flavo Large | `0.048 → 0.000` (`4/8`) | `0.024 → 0.048` (`4/4`) | `0.000 → 0.024` (`4/12`) |
+| Gamma Small | `0.091 → 0.091` (`6/8`) | `0.000 → 0.000` (`4/4`) | `0.182 → 0.000` (`7/12`) |
+| Gamma Large | `0.036 → 0.036` (`4/8`) | `0.036 → 0.000` (`3/4`) | `0.071 → 0.000` (`11/12`) |
+| Cross Small | `0.333 → 0.333` (`3/8`) | `0.367 → 0.172` (`4/4`) | `0.567 → 0.400` (`5/12`) |
+| Cross Large | `0.145 → 0.000` (`8/8`) | `0.197 → 0.108` (`4/4`) | `0.145 → 0.066` (`10/12`) |
 
 ## Interpretation
 
 Within-group added-copy contamination is now handled more effectively than in the earlier pre-fix runs. Flavo Large duplicate-only cleanup now reaches `0.048 → 0.000` while removing `4/8` added contaminant copies, and Cross Large duplicate-only cleanup reaches `0.145 → 0.000` with `8/8` duplicates removed. Duplicate-only cleanup still has little topological effect in Gamma Small and Gamma Large, and Cross Small remains difficult.
 
-Singleton replacement is handled well in the Flavo panels and reasonably in the Gamma panels, but it remains difficult in the cross-clade panels. Both cross-clade replacement-only datasets still become slightly worse topologically after applying `singles_neighbor`, even though `2/4` contaminant markers are removed in each case.
+Singleton replacement is no longer hardest in the cross-clade panels. After the singleton-filter update, both cross-clade replacement-only datasets remove `4/4` contaminants and improve RF (`0.367 → 0.172` in Cross Small; `0.197 → 0.108` in Cross Large), which is consistent with the larger divergence between donor and recipient clades. The more difficult replacement-only cases are now the within-group panels, especially Flavo Large.
 
-The combined scenario remains the most informative. Gamma Large is now the strongest combined case by contaminant removal, with `11/12` contaminants removed and RF improving from `0.071` to `0.000`. Cross Large is the clearest cross-clade success case, improving from `0.145` to `0.066` while removing `10/12` contaminant markers. The weakest combined case remains Flavo Large, where the final tree is slightly worse than the initial contaminated tree despite removal of all four singleton replacements.
+The combined scenario remains the most informative. Gamma Large is the strongest combined case by contaminant removal, with `11/12` contaminants removed and RF improving from `0.071` to `0.000`. Cross Large is the clearest cross-clade success case, improving from `0.145` to `0.066` while removing `10/12` contaminant markers. The weakest combined case remains Flavo Large, where the final tree is slightly worse than the initial contaminated tree despite removal of all four singleton replacements.
 
 ## Validation
 
