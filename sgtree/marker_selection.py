@@ -603,9 +603,26 @@ def prune_singletons(
     return current
 
 
+def effective_singleton_mode(
+    mode: str,
+    rdist: float,
+    *,
+    duplicate_resolution_present: bool,
+) -> str:
+    """Escalate high-discordance singleton filtering to an RF-aware mode.
+
+    The plain neighbor heuristic is often sufficient for mild discordance, but
+    when a marker tree is already far from the guide species tree, RF-aware
+    pruning is a better fit for obvious replacement-style outliers.
+    """
+    if mode == "neighbor" and rdist >= 0.35 and not duplicate_resolution_present:
+        return "backbone"
+    return mode
+
+
 def _remove_singles_worker(args):
     """Worker: remove singleton markers for one file."""
-    filepath, species_tree_path, outdir, num_nei_override, singles_min_rfdist, singles_mode, table_path = args
+    filepath, species_tree_path, outdir, num_nei_override, singles_min_rfdist, singles_mode, table_path, duplicate_markers = args
     tf = Tree(filepath)
     td = _tree_to_genome_level(tf)
     td_leaves = list(td.iter_leaves())
@@ -616,6 +633,12 @@ def _remove_singles_worker(args):
     rf, maxrf, *_ = ti.robinson_foulds(td, unrooted_trees=True)
     maxrf = maxrf + 0.0001
     rdist = rf / maxrf
+    marker_name = os.path.basename(filepath).split(".")[0].split("_")[-2]
+    effective_mode = effective_singleton_mode(
+        singles_mode,
+        rdist,
+        duplicate_resolution_present=bool(duplicate_markers),
+    )
     if rdist < singles_min_rfdist:
         tf.write(
             format=1,
@@ -625,10 +648,10 @@ def _remove_singles_worker(args):
             ),
         )
         return
-    if singles_mode in {"delta_rf", "backbone", "ensemble"}:
+    if effective_mode in {"delta_rf", "backbone", "ensemble"}:
         score_table = None
         score_col = None
-        if singles_mode == "ensemble":
+        if effective_mode == "ensemble":
             score_table, score_col = _load_score_table(table_path)
         if num_nei_override > 0:
             num_nei = min(num_nei_override, max(1, len(lst_nodes) - 1))
@@ -637,7 +660,7 @@ def _remove_singles_worker(args):
         chosen_tree = prune_singletons(
             species_tree=ti,
             working_tree=tf,
-            mode=singles_mode,
+            mode=effective_mode,
             k=num_nei,
             score_table=score_table,
             score_col=score_col,
@@ -693,8 +716,6 @@ def _remove_singles_worker(args):
     flagged = []
     removed_count = 0
     borderline_count = 0
-    marker_name = os.path.basename(filepath).split(".")[0].split("_")[-2]
-
     for node in lst_nodes:
         ls_model = [n.split("|")[0] for n in dict_neighbors[node.name]]
         ls_init = dict_neighborsi[node.name.split("|")[0]]
@@ -735,6 +756,12 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
     files = glob.glob(os.path.join(cfg.outdir, "protTrees", "no_duplicates", "out", "*"))
     if species_tree_path is None:
         species_tree_path = os.path.join(cfg.outdir, "tree.nwk")
+    duplicate_markers = {
+        marker
+        for marker, _genome in _load_kept_assignments(
+            os.path.join(cfg.outdir, "marker_selection_rf_values.txt")
+        )
+    }
     args = [
         (
             f,
@@ -744,6 +771,7 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
             cfg.singles_min_rfdist,
             cfg.singles_mode,
             os.path.join(cfg.outdir, "table_elim_dups"),
+            duplicate_markers,
         )
         for f in files
     ]
