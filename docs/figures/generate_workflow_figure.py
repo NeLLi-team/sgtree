@@ -43,13 +43,30 @@ DEFAULT_SPEC = {
 }
 
 
-def add_box(ax, x, y, w, h, title, lines, *, fc, ec="#30404d", title_size=11, body_size=9.2, body_rel_y=0.37):
+def add_box(
+    ax,
+    x,
+    y,
+    w,
+    h,
+    title,
+    lines,
+    *,
+    fc,
+    ec="#1f2933",
+    lw=1.8,
+    title_size=11,
+    body_size=9.0,
+    title_width=18,
+    body_width=26,
+    body_rel_y=0.40,
+):
     patch = FancyBboxPatch(
         (x, y),
         w,
         h,
         boxstyle="round,pad=0.02,rounding_size=0.03",
-        linewidth=1.6,
+        linewidth=lw,
         edgecolor=ec,
         facecolor=fc,
     )
@@ -58,26 +75,26 @@ def add_box(ax, x, y, w, h, title, lines, *, fc, ec="#30404d", title_size=11, bo
         ax.text(
             x + w / 2,
             y + h - 0.04,
-            textwrap.fill(title, width=18),
+            textwrap.fill(title, width=title_width),
             ha="center",
             va="top",
             fontsize=title_size,
             fontweight="bold",
-            color="#182026",
+            color="#111827",
         )
     ax.text(
         x + w / 2,
         y + h * body_rel_y,
-        "\n".join(textwrap.fill(line, width=28) for line in lines),
+        "\n".join(textwrap.fill(line, width=body_width) for line in lines),
         ha="center",
         va="center",
         fontsize=body_size,
-        color="#25333b",
+        color="#334155",
         linespacing=1.35,
     )
 
 
-def add_arrow(ax, start, end, *, color="#55636f", lw=1.6):
+def add_arrow(ax, start, end, *, color="#334155", lw=1.6):
     ax.add_patch(
         FancyArrowPatch(
             start,
@@ -89,6 +106,40 @@ def add_arrow(ax, start, end, *, color="#55636f", lw=1.6):
             shrinkA=6,
             shrinkB=6,
         )
+    )
+
+
+def add_callout(ax, x, y, w, h, title, lines, *, fc="#ffffff", ec="#1f2933"):
+    patch = FancyBboxPatch(
+        (x, y),
+        w,
+        h,
+        boxstyle="round,pad=0.02,rounding_size=0.03",
+        linewidth=1.8,
+        edgecolor=ec,
+        facecolor=fc,
+    )
+    ax.add_patch(patch)
+    ax.text(
+        x + 0.025,
+        y + h - 0.035,
+        title,
+        ha="left",
+        va="top",
+        fontsize=12,
+        fontweight="bold",
+        color="#111827",
+    )
+    bullet_lines = [f"• {textwrap.fill(line, width=64)}" for line in lines]
+    ax.text(
+        x + 0.03,
+        y + h - 0.07,
+        "\n".join(bullet_lines),
+        ha="left",
+        va="top",
+        fontsize=8.8,
+        color="#334155",
+        linespacing=1.45,
     )
 
 
@@ -132,6 +183,13 @@ def normalize_spec(raw: dict | None) -> dict:
         spec["core_boxes"] = _normalize_box_list(raw["core_boxes"], 5)
     if isinstance(raw.get("selection_boxes"), list):
         spec["selection_boxes"] = _normalize_box_list(raw["selection_boxes"], 4)
+    spec["title"] = "SGTree Workflow"
+    spec["subtitle"] = "Contamination-aware species-tree inference from marker proteins"
+    spec["benchmark_heading"] = "Benchmark Harness"
+    spec["benchmark_lines"] = [
+        "Build clean truth panels from selected genomes and marker subsets.",
+        "Inject duplicate, triplicate, and singleton-replacement contamination; score normalized RF and contaminant removal.",
+    ]
     return spec
 
 
@@ -299,65 +357,91 @@ def render_workflow_figure(spec: dict, *, planner_used: str) -> None:
     OUTDIR.mkdir(parents=True, exist_ok=True)
     (OUTDIR / "workflow_overview_spec.json").write_text(json.dumps({"planner_used": planner_used, "spec": spec}, indent=2) + "\n")
 
-    fig, ax = plt.subplots(figsize=(14, 7.5))
-    fig.patch.set_facecolor("#fbfaf4")
-    ax.set_facecolor("#fbfaf4")
+    fig, ax = plt.subplots(figsize=(16, 9))
+    fig.patch.set_facecolor("#ffffff")
+    ax.set_facecolor("#ffffff")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.97, bottom=0.03)
 
-    ax.text(0.05, 0.95, spec["title"], fontsize=18, fontweight="bold", color="#162028", ha="left")
-    ax.text(0.05, 0.91, spec["subtitle"], fontsize=10.5, color="#475761", ha="left")
-    ax.text(0.95, 0.95, f"planner: {planner_used}", fontsize=8.5, color="#7c8a93", ha="right")
+    ax.text(0.04, 0.95, spec["title"], fontsize=22, fontweight="bold", color="#111827", ha="left")
+    ax.text(0.04, 0.915, spec["subtitle"], fontsize=11.2, color="#475569", ha="left")
 
-    ax.text(0.05, 0.84, spec["core_heading"], fontsize=12.5, fontweight="bold", color="#7a4b00")
+    ax.text(0.04, 0.84, spec["core_heading"], fontsize=13, fontweight="bold", color="#111827")
     core_layout = [
-        (0.05, 0.60, 0.15, 0.18, "#f8e7b7"),
-        (0.24, 0.60, 0.16, 0.18, "#dfead2"),
-        (0.44, 0.60, 0.16, 0.18, "#d6e9ef"),
-        (0.64, 0.60, 0.16, 0.18, "#e2def5"),
-        (0.84, 0.60, 0.11, 0.18, "#f3d8d4"),
+        (0.04, 0.60, 0.15, 0.18, "#ffffff"),
+        (0.22, 0.60, 0.16, 0.18, "#ffffff"),
+        (0.41, 0.60, 0.18, 0.18, "#ffffff"),
+        (0.62, 0.60, 0.16, 0.18, "#ffffff"),
+        (0.81, 0.60, 0.15, 0.18, "#ffffff"),
     ]
     for (x, y, w, h, color), box in zip(core_layout, spec["core_boxes"], strict=True):
-        add_box(ax, x, y, w, h, box["title"], box["lines"], fc=color, title_size=10.5, body_size=8.2, body_rel_y=0.30)
+        add_box(
+            ax,
+            x,
+            y,
+            w,
+            h,
+            box["title"],
+            box["lines"],
+            fc=color,
+            title_size=10.8,
+            body_size=8.8,
+            title_width=16,
+            body_width=22,
+            body_rel_y=0.36,
+        )
     for idx in range(len(core_layout) - 1):
         x, y, w, h, _ = core_layout[idx]
         nx, ny, nw, nh, _ = core_layout[idx + 1]
         add_arrow(ax, (x + w, y + h / 2), (nx, ny + nh / 2))
 
-    ax.text(0.05, 0.49, spec["selection_heading"], fontsize=12.5, fontweight="bold", color="#215f4e")
+    ax.text(0.04, 0.49, spec["selection_heading"], fontsize=13, fontweight="bold", color="#111827")
     selection_layout = [
-        (0.08, 0.24, 0.20, 0.16, "#dcefd8"),
-        (0.33, 0.24, 0.22, 0.16, "#cfe7e3"),
-        (0.60, 0.24, 0.18, 0.16, "#dce2f3"),
-        (0.83, 0.24, 0.12, 0.16, "#f3ddd7"),
+        (0.06, 0.22, 0.22, 0.19, "#ffffff"),
+        (0.32, 0.22, 0.22, 0.19, "#ffffff"),
+        (0.58, 0.22, 0.20, 0.19, "#ffffff"),
+        (0.82, 0.22, 0.14, 0.19, "#ffffff"),
     ]
     for (x, y, w, h, color), box in zip(selection_layout, spec["selection_boxes"], strict=True):
-        add_box(ax, x, y, w, h, box["title"], box["lines"], fc=color, title_size=10.2, body_size=8.2, body_rel_y=0.28)
+        add_box(
+            ax,
+            x,
+            y,
+            w,
+            h,
+            box["title"],
+            box["lines"],
+            fc=color,
+            title_size=10.5,
+            body_size=8.6,
+            title_width=15,
+            body_width=20,
+            body_rel_y=0.20,
+        )
     for idx in range(len(selection_layout) - 1):
         x, y, w, h, _ = selection_layout[idx]
         nx, ny, nw, nh, _ = selection_layout[idx + 1]
-        add_arrow(ax, (x + w, y + h / 2), (nx, ny + nh / 2), color="#42695f")
+        add_arrow(ax, (x + w, y + h / 2), (nx, ny + nh / 2))
 
-    add_arrow(ax, (0.52, 0.60), (0.52, 0.42), color="#42695f")
-    ax.text(0.535, 0.51, spec["bridge_label"], rotation=90, va="center", ha="left", fontsize=8.5, color="#42695f")
-
-    ax.text(0.50, 0.15, spec["benchmark_heading"], fontsize=11, fontweight="bold", color="#182026", ha="center")
-    add_box(
-        ax,
-        0.05,
-        0.04,
-        0.90,
+    add_arrow(ax, (0.50, 0.60), (0.50, 0.43))
+    bridge = FancyBboxPatch(
+        (0.43, 0.435),
         0.14,
-        "",
-        spec["benchmark_lines"],
-        fc="#f3efe1",
-        body_size=8.4,
-        body_rel_y=0.28,
+        0.045,
+        boxstyle="round,pad=0.01,rounding_size=0.02",
+        linewidth=1.4,
+        edgecolor="#1f2933",
+        facecolor="#ffffff",
     )
+    ax.add_patch(bridge)
+    ax.text(0.50, 0.458, spec["bridge_label"], va="center", ha="center", fontsize=9.0, color="#111827")
 
-    fig.savefig(OUTDIR / "workflow_overview.svg", bbox_inches="tight")
-    fig.savefig(OUTDIR / "workflow_overview.png", dpi=300, bbox_inches="tight")
+    add_callout(ax, 0.04, 0.02, 0.92, 0.15, spec["benchmark_heading"], spec["benchmark_lines"])
+
+    fig.savefig(OUTDIR / "workflow_overview.svg", bbox_inches="tight", pad_inches=0.08, facecolor=fig.get_facecolor())
+    fig.savefig(OUTDIR / "workflow_overview.png", dpi=300, bbox_inches="tight", pad_inches=0.08, facecolor=fig.get_facecolor())
 
 
 def parse_args() -> argparse.Namespace:
