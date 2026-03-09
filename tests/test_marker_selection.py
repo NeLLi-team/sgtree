@@ -156,6 +156,40 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(chosen.write(format=9), original.write(format=9))
 
+    def test_effective_singleton_mode_escalates_high_discordance_neighbor(self):
+        self.assertEqual(
+            marker_selection.effective_singleton_mode(
+                "neighbor",
+                0.40,
+                duplicate_resolution_present=False,
+            ),
+            "backbone",
+        )
+        self.assertEqual(
+            marker_selection.effective_singleton_mode(
+                "neighbor",
+                0.20,
+                duplicate_resolution_present=False,
+            ),
+            "neighbor",
+        )
+        self.assertEqual(
+            marker_selection.effective_singleton_mode(
+                "delta_rf",
+                0.40,
+                duplicate_resolution_present=False,
+            ),
+            "delta_rf",
+        )
+        self.assertEqual(
+            marker_selection.effective_singleton_mode(
+                "neighbor",
+                0.40,
+                duplicate_resolution_present=True,
+            ),
+            "neighbor",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
