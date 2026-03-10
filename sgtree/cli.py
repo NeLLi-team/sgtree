@@ -46,13 +46,13 @@ def parse_args() -> Config:
                         help="output directory name")
     parser.add_argument("--singles", type=str, default="no",
                         help="remove singleton markers (yes/no)")
-    parser.add_argument("--singles_mode", type=str, default="neighbor",
-                        choices=["neighbor", "delta_rf", "backbone", "ensemble"],
+    parser.add_argument("--singles_mode", type=str, default="delta_rf",
+                        choices=["delta_rf"],
                         help="singleton filtering mode")
     parser.add_argument("--lflt", type=int, default=0,
                         help="remove sequences shorter than N%% of median length")
     parser.add_argument("--num_nei", type=int, default=0,
-                        help="number of neighbors to check (0=auto)")
+                        help="singleton neighborhood size (0=auto)")
     parser.add_argument("--singles_min_rfdist", type=float, default=0.25,
                         help="minimum marker-tree/global-tree RF distance required to activate singleton filtering")
     parser.add_argument("--aln", type=str, default="hmmalign",
@@ -189,7 +189,7 @@ def main():
           f" max single-marker copies {cfg.max_sdup}\n"
           f" max duplicated-marker fraction {cfg.max_dupl}\n"
           f" singleton mode {cfg.singles_mode}\n"
-          f" singleton-neighbor override {cfg.num_nei} (0=auto)\n"
+          f" singleton neighborhood size {cfg.num_nei} (0=auto)\n"
           f" singleton min RF distance {cfg.singles_min_rfdist}\n"
           f" reference directory {cfg.ref}\n"
           f" keep intermediates {'yes' if cfg.keep_intermediates else 'no'}\n"
@@ -358,10 +358,20 @@ def main():
                 if current_use_singles:
                     marker_selection.remove_singles(cfg, species_tree_path=current_species_tree)
 
-                marker_selection.write_cleaned_alignments(cfg, use_singles=current_use_singles)
+                cleaned_seq_dir = marker_selection.write_cleaned_sequences(
+                    cfg,
+                    use_singles=current_use_singles,
+                )
+
+                print(f"- ...running {cfg.aln_method} for final alignment:")
+                aligned_final_dir = os.path.join(cfg.outdir, "aligned_final")
+                align.run_alignment(
+                    cfg,
+                    extracted_seqs_dir=cleaned_seq_dir,
+                    aligned_dir=aligned_final_dir,
+                )
 
                 print("- ...running trimal for final alignment:")
-                aligned_final_dir = os.path.join(cfg.outdir, "aligned_final")
                 trimmed_final_dir = os.path.join(cfg.outdir, "trimmed_final")
                 supermatrix.run_trimal_simple(cfg, aligned_final_dir, trimmed_final_dir)
                 print("\ntrimming done")

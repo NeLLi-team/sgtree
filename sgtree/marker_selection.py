@@ -10,6 +10,9 @@ from sgtree.config import Config
 
 
 SCORE_COLUMNS = ("score_bits", "7")
+LEGACY_SINGLETON_MODE_ALIASES = {
+    "outlier": "topoknn",
+}
 
 
 def choose_best_candidate(
@@ -304,6 +307,20 @@ def _map_with_fallback(func, args, workers: int):
             func(item)
 
 
+def _collect_with_fallback(func, args, workers: int):
+    if not args:
+        return []
+    n_workers = max(1, min(workers, len(args)))
+    if n_workers == 1:
+        return [func(item) for item in args]
+    try:
+        with mp.Pool(n_workers) as pool:
+            return pool.map(func, args)
+    except (PermissionError, OSError) as e:
+        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
+        return [func(item) for item in args]
+
+
 def _load_kept_assignments(rf_outfile: str) -> dict[tuple[str, str], str]:
     kept: dict[tuple[str, str], str] = {}
     if not os.path.exists(rf_outfile):
@@ -426,15 +443,6 @@ def run_noperm(
     return _load_kept_assignments(rf_outfile)
 
 
-def _score_func(ls_mod, ls_in):
-    """Score neighbor list similarity between protein tree and species tree."""
-    score = 0
-    for i, init in enumerate(ls_in):
-        if init in ls_mod:
-            score += len(ls_in) - abs(ls_in.index(init) - ls_mod.index(init)) - i
-    return score
-
-
 def _tree_to_genome_level(tree: Tree) -> Tree:
     reduced = tree.copy()
     seen_genomes = set()
@@ -540,30 +548,223 @@ def _leaf_neighbor_overlap(species_tree: Tree, working_tree: Tree, leaf_name: st
     return overlap / len(species_neighbors)
 
 
-def _score_singleton_leaf(
+def _canonical_singleton_mode(mode: str) -> str:
+    return LEGACY_SINGLETON_MODE_ALIASES.get(mode, mode)
+
+
+def _nearest_genome_neighbor_profile(
+    tree: Tree,
+    leaf_name: str,
+    k: int,
+) -> tuple[list[str], dict[str, float]]:
+    leaf = next(leaf for leaf in tree.iter_leaves() if leaf.name == leaf_name)
+    neighbors = []
+    for other in tree.iter_leaves():
+        if other.name == leaf_name:
+            continue
+        neighbors.append((float(leaf.get_distance(other)), other.name.split("|")[0]))
+    neighbors.sort(key=lambda item: (item[0], item[1]))
+
+    ordered: list[str] = []
+    distances: dict[str, float] = {}
+    for dist, genome in neighbors:
+        if genome in distances:
+            continue
+        ordered.append(genome)
+        distances[genome] = dist
+        if len(ordered) >= k:
+            break
+
+    max_dist = max(distances.values(), default=0.0)
+    if max_dist > 0:
+        distances = {
+            genome: dist / max_dist
+            for genome, dist in distances.items()
+        }
+    return ordered, distances
+
+
+def _leaf_topoknn_score(species_tree: Tree, working_tree: Tree, leaf_name: str, k: int) -> float:
+    species_neighbors, species_dist = _nearest_genome_neighbor_profile(
+        species_tree,
+        leaf_name.split("|")[0],
+        k,
+    )
+    gene_neighbors, gene_dist = _nearest_genome_neighbor_profile(working_tree, leaf_name, k)
+    if not species_neighbors:
+        return 0.0
+
+    overlap = len(set(species_neighbors) & set(gene_neighbors)) / len(species_neighbors)
+    species_pos = {genome: idx for idx, genome in enumerate(species_neighbors)}
+    gene_pos = {genome: idx for idx, genome in enumerate(gene_neighbors)}
+    max_rank = max(1, len(species_neighbors) - 1)
+
+    rank_penalty = 0.0
+    distance_penalty = 0.0
+    for genome in species_neighbors:
+        if genome in gene_pos:
+            rank_penalty += abs(species_pos[genome] - gene_pos[genome]) / max_rank
+        else:
+            rank_penalty += 1.0
+        distance_penalty += abs(species_dist.get(genome, 1.0) - gene_dist.get(genome, 1.0))
+
+    rank_penalty /= len(species_neighbors)
+    distance_penalty /= len(species_neighbors)
+    return (1.25 * (1.0 - overlap)) + rank_penalty + (0.5 * distance_penalty)
+
+
+def _score_singleton_candidates(
     species_tree: Tree,
     working_tree: Tree,
-    leaf_name: str,
-    mode: str,
     *,
     k: int,
     score_table: pd.DataFrame | None = None,
     score_col: str | None = None,
-) -> tuple[float, Tree]:
-    delta_rf, candidate = _leaf_rf_delta(species_tree, working_tree, leaf_name)
-    overlap = _leaf_neighbor_overlap(species_tree, working_tree, leaf_name, k)
-    branch_outlier = _branch_length_outlier(working_tree, leaf_name)
-    bitscore_outlier = _leaf_bitscore_outlier(working_tree, leaf_name, score_table, score_col)
+) -> list[dict]:
+    candidates: list[dict] = []
+    for leaf in working_tree.iter_leaves():
+        delta_rf, candidate = _leaf_rf_delta(species_tree, working_tree, leaf.name)
+        overlap = _leaf_neighbor_overlap(species_tree, working_tree, leaf.name, k)
+        branch_outlier = _branch_length_outlier(working_tree, leaf.name)
+        bitscore_outlier = _leaf_bitscore_outlier(working_tree, leaf.name, score_table, score_col)
+        topoknn_score = (
+            _leaf_topoknn_score(species_tree, working_tree, leaf.name, k)
+            + (0.25 * branch_outlier)
+            + (0.25 * bitscore_outlier)
+        )
+        candidates.append(
+            {
+                "leaf_name": leaf.name,
+                "delta_rf": delta_rf,
+                "neighbor_overlap": overlap,
+                "topoknn_score": topoknn_score,
+                "branch_outlier": branch_outlier,
+                "bitscore_outlier": bitscore_outlier,
+                "candidate_tree": candidate,
+            }
+        )
+    return candidates
+
+
+def _normalize_candidate_metric(candidates: list[dict], key: str) -> dict[str, float]:
+    values = [float(candidate[key]) for candidate in candidates]
+    if not values:
+        return {}
+    low = min(values)
+    high = max(values)
+    if high == low:
+        normalized = 1.0 if high > 0 else 0.0
+        return {candidate["leaf_name"]: normalized for candidate in candidates}
+    return {
+        candidate["leaf_name"]: (float(candidate[key]) - low) / (high - low)
+        for candidate in candidates
+    }
+
+
+def _finalize_singleton_choice(candidate: dict, *, score_key: str) -> dict:
+    chosen = dict(candidate)
+    chosen["genome"] = chosen["leaf_name"].split("|")[0]
+    chosen["score"] = float(chosen.get(score_key, 0.0))
+    return chosen
+
+
+def choose_singleton_prune(
+    species_tree: Tree,
+    working_tree: Tree,
+    *,
+    mode: str,
+    k: int,
+    score_table: pd.DataFrame | None = None,
+    score_col: str | None = None,
+) -> dict | None:
+    mode = _canonical_singleton_mode(mode)
+    if len(list(working_tree.iter_leaves())) <= 4:
+        return None
+    candidates = _score_singleton_candidates(
+        species_tree,
+        working_tree,
+        k=k,
+        score_table=score_table,
+        score_col=score_col,
+    )
+    if not candidates:
+        return None
+
+    positive_rf = [candidate for candidate in candidates if float(candidate["delta_rf"]) > 0]
+    if not positive_rf:
+        return None
 
     if mode == "delta_rf":
-        score = delta_rf
-    elif mode == "backbone":
-        score = delta_rf + max(0.0, 0.5 - overlap)
-    elif mode == "ensemble":
-        score = (3.0 * delta_rf) + max(0.0, 0.5 - overlap) + (0.25 * branch_outlier) + (0.25 * bitscore_outlier)
-    else:
-        raise ValueError(f"Unknown singleton mode: {mode}")
-    return score, candidate
+        best = max(
+            positive_rf,
+            key=lambda candidate: (
+                float(candidate["delta_rf"]),
+                float(candidate["topoknn_score"]),
+                str(candidate["leaf_name"]),
+            ),
+        )
+        return _finalize_singleton_choice(best, score_key="delta_rf")
+
+    if mode in {"topoknn", "outlier"}:
+        best = max(
+            positive_rf,
+            key=lambda candidate: (
+                float(candidate["topoknn_score"]),
+                float(candidate["delta_rf"]),
+                str(candidate["leaf_name"]),
+            ),
+        )
+        if float(best["topoknn_score"]) < 0.75:
+            return None
+        return _finalize_singleton_choice(best, score_key="topoknn_score")
+
+    if mode == "hybrid":
+        rf_norm = _normalize_candidate_metric(positive_rf, "delta_rf")
+        topoknn_norm = _normalize_candidate_metric(positive_rf, "topoknn_score")
+        branch_norm = _normalize_candidate_metric(positive_rf, "branch_outlier")
+        bitscore_norm = _normalize_candidate_metric(positive_rf, "bitscore_outlier")
+
+        for candidate in positive_rf:
+            leaf_name = candidate["leaf_name"]
+            candidate["hybrid_score"] = (
+                1.5 * rf_norm.get(leaf_name, 0.0)
+                + 1.5 * topoknn_norm.get(leaf_name, 0.0)
+                + 0.25 * branch_norm.get(leaf_name, 0.0)
+                + 0.25 * bitscore_norm.get(leaf_name, 0.0)
+            )
+
+        best_rf = max(
+            positive_rf,
+            key=lambda candidate: (
+                float(candidate["delta_rf"]),
+                float(candidate["topoknn_score"]),
+                str(candidate["leaf_name"]),
+            ),
+        )
+        best_topoknn = max(
+            positive_rf,
+            key=lambda candidate: (
+                float(candidate["topoknn_score"]),
+                float(candidate["delta_rf"]),
+                str(candidate["leaf_name"]),
+            ),
+        )
+        best = max(
+            positive_rf,
+            key=lambda candidate: (
+                float(candidate["hybrid_score"]),
+                float(candidate["delta_rf"]),
+                float(candidate["topoknn_score"]),
+                str(candidate["leaf_name"]),
+            ),
+        )
+        if best["leaf_name"] == best_rf["leaf_name"] == best_topoknn["leaf_name"]:
+            return _finalize_singleton_choice(best, score_key="hybrid_score")
+        if float(best["delta_rf"]) >= 0.05 and float(best["topoknn_score"]) >= 1.0:
+            return _finalize_singleton_choice(best, score_key="hybrid_score")
+        return None
+
+    raise ValueError(f"Unknown singleton mode: {mode}")
 
 
 def prune_singletons(
@@ -575,32 +776,63 @@ def prune_singletons(
     score_table: pd.DataFrame | None = None,
     score_col: str | None = None,
 ) -> Tree:
-    current = working_tree.copy()
-    max_pruned = max(1, len(list(current.iter_leaves())) // 5)
-    removed = 0
-    while len(list(current.iter_leaves())) > 4 and removed < max_pruned:
-        best_leaf = None
-        best_score = 0.0
-        best_candidate = None
-        for leaf in current.iter_leaves():
-            score, candidate = _score_singleton_leaf(
-                species_tree,
-                current,
-                leaf.name,
-                mode,
-                k=k,
-                score_table=score_table,
-                score_col=score_col,
-            )
-            if score > best_score:
-                best_leaf = leaf.name
-                best_score = score
-                best_candidate = candidate
-        if best_leaf is None or best_candidate is None or best_score <= 0:
-            break
-        current = best_candidate
-        removed += 1
-    return current
+    chosen = choose_singleton_prune(
+        species_tree,
+        working_tree,
+        mode=mode,
+        k=k,
+        score_table=score_table,
+        score_col=score_col,
+    )
+    if chosen is None:
+        return working_tree.copy()
+    return chosen["candidate_tree"]
+
+
+def _marker_name_from_tree_path(filepath: str) -> str:
+    return os.path.basename(filepath).split(".")[0].split("_")[-2]
+
+
+def _count_genome_marker_support(files: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for filepath in files:
+        genomes = {
+            leaf.name.split("|")[0]
+            for leaf in Tree(filepath).iter_leaves()
+        }
+        for genome in genomes:
+            counts[genome] = counts.get(genome, 0) + 1
+    return counts
+
+
+def select_singleton_proposals(
+    proposals: list[dict],
+    *,
+    genome_marker_counts: dict[str, int],
+    min_markers_per_genome: int = 1,
+) -> list[dict]:
+    budgets = {
+        genome: max(0, int(count) - int(min_markers_per_genome))
+        for genome, count in genome_marker_counts.items()
+    }
+    accepted: list[dict] = []
+    ranked = sorted(
+        proposals,
+        key=lambda proposal: (
+            -float(proposal.get("score", 0.0)),
+            -float(proposal.get("delta_rf", 0.0)),
+            -float(proposal.get("topoknn_score", 0.0)),
+            str(proposal.get("marker_name", "")),
+            str(proposal.get("leaf_name", "")),
+        ),
+    )
+    for proposal in ranked:
+        genome = str(proposal["genome"])
+        if budgets.get(genome, 0) <= 0:
+            continue
+        budgets[genome] -= 1
+        accepted.append(proposal)
+    return accepted
 
 
 def effective_singleton_mode(
@@ -609,55 +841,39 @@ def effective_singleton_mode(
     *,
     duplicate_resolution_present: bool,
 ) -> str:
-    """Escalate high-discordance singleton filtering to an RF-aware mode.
-
-    The plain neighbor heuristic is often sufficient for mild discordance, but
-    when a marker tree is already far from the guide species tree, RF-aware
-    pruning is a better fit for obvious replacement-style outliers.
-    """
-    if mode == "neighbor" and rdist >= 0.35 and not duplicate_resolution_present:
-        return "backbone"
-    return mode
+    """Use the chosen singleton cleanup implementation for all runtime runs."""
+    return "delta_rf"
 
 
-def _remove_singles_worker(args):
-    """Worker: remove singleton markers for one file."""
-    filepath, species_tree_path, outdir, num_nei_override, singles_min_rfdist, singles_mode, table_path, duplicate_markers = args
+def _propose_singleton_prune_worker(args):
+    filepath, species_tree_path, num_nei_override, singles_min_rfdist, singles_mode, table_path, duplicate_markers = args
     tf = Tree(filepath)
     td = _tree_to_genome_level(tf)
     td_leaves = list(td.iter_leaves())
-    lst_nodes = [node for node in next(tf.copy().traverse())]
     ti = Tree(species_tree_path)
     ti.prune([n.name for n in td_leaves])
 
     rf, maxrf, *_ = ti.robinson_foulds(td, unrooted_trees=True)
     maxrf = maxrf + 0.0001
     rdist = rf / maxrf
-    marker_name = os.path.basename(filepath).split(".")[0].split("_")[-2]
     effective_mode = effective_singleton_mode(
         singles_mode,
         rdist,
         duplicate_resolution_present=bool(duplicate_markers),
     )
-    if rdist < singles_min_rfdist:
-        tf.write(
-            format=1,
-            outfile=os.path.join(
-                outdir, "protTrees", "no_singles",
-                os.path.basename(filepath).split(".")[0] + ".nw",
-            ),
-        )
-        return
-    if effective_mode in {"delta_rf", "backbone", "ensemble"}:
+    leaf_count = len(list(tf.iter_leaves()))
+    if num_nei_override > 0:
+        num_nei = min(num_nei_override, max(1, leaf_count - 1))
+    else:
+        num_nei = max(2, min(10, leaf_count - 1))
+
+    chosen = None
+    if rdist >= singles_min_rfdist:
         score_table = None
         score_col = None
-        if effective_mode == "ensemble":
+        if effective_mode in {"topoknn", "outlier", "hybrid"}:
             score_table, score_col = _load_score_table(table_path)
-        if num_nei_override > 0:
-            num_nei = min(num_nei_override, max(1, len(lst_nodes) - 1))
-        else:
-            num_nei = max(2, min(5, len(lst_nodes) - 1))
-        chosen_tree = prune_singletons(
+        chosen = choose_singleton_prune(
             species_tree=ti,
             working_tree=tf,
             mode=effective_mode,
@@ -665,94 +881,85 @@ def _remove_singles_worker(args):
             score_table=score_table,
             score_col=score_col,
         )
-        choose_tree_by_rf(ti, tf, chosen_tree).write(
-            format=1,
-            outfile=os.path.join(
-                outdir, "protTrees", "no_singles",
-                os.path.basename(filepath).split(".")[0] + ".nw",
-            ),
-        )
-        return
-    max_neighbors = max(1, len(lst_nodes) - 1)
-    if num_nei_override > 0:
-        num_nei = min(num_nei_override, max_neighbors)
-    else:
-        num_nei = max(1, round(len(lst_nodes) * (1 - rdist)))
-    total_score = num_nei ** 2
-    cutoff = total_score / 15
+        if chosen is not None:
+            chosen = {
+                key: value
+                for key, value in chosen.items()
+                if key != "candidate_tree"
+            }
 
-    # get neighbors from protein tree
-    dict_neighbors = {}
-    for node in lst_nodes:
-        ori_leaf = node
-        while len(node.get_leaves()) - 1 < num_nei:
-            node = node.up
-        dict_neighbors[ori_leaf.name] = {}
-        for leaf in node.get_leaves():
-            if leaf.name != ori_leaf.name:
-                dict_neighbors[ori_leaf.name][leaf.name] = ori_leaf.get_distance(leaf.name)
-        dict_neighbors[ori_leaf.name] = sorted(
-            dict_neighbors[ori_leaf.name],
-            key=lambda leaf: (dict_neighbors[ori_leaf.name][leaf], leaf),
-        )[:num_nei]
+    return {
+        "filepath": filepath,
+        "marker_name": _marker_name_from_tree_path(filepath),
+        "mode": effective_mode,
+        "rdist": rdist,
+        "num_nei": num_nei,
+        "chosen": chosen,
+    }
 
-    # get neighbors from species tree
-    lst_nodesi = [node for node in next(ti.copy().traverse())]
-    dict_neighborsi = {}
-    for nodei in lst_nodesi:
-        ori_leafi = nodei
-        while len(nodei.get_leaves()) - 1 < num_nei:
-            nodei = nodei.up
-        dict_neighborsi[ori_leafi.name] = {}
-        for leaf in nodei.get_leaves():
-            if leaf.name != ori_leafi.name:
-                dict_neighborsi[ori_leafi.name][leaf.name] = ori_leafi.get_distance(leaf.name)
-        dict_neighborsi[ori_leafi.name] = sorted(
-            dict_neighborsi[ori_leafi.name],
-            key=lambda leaf: (dict_neighborsi[ori_leafi.name][leaf], leaf),
-        )[:num_nei]
 
-    # score and filter
-    flagged = []
-    removed_count = 0
-    borderline_count = 0
-    for node in lst_nodes:
-        ls_model = [n.split("|")[0] for n in dict_neighbors[node.name]]
-        ls_init = dict_neighborsi[node.name.split("|")[0]]
-        score = _score_func(ls_model, ls_init)
-        margin = score - cutoff
-        if score > cutoff:
-            flagged.append(node)
-            if abs(margin) <= 1:
-                borderline_count += 1
-        else:
-            removed_count += 1
-            with open(os.path.join(outdir, "removed", marker_name), "a") as f:
-                f.write(
-                    f"\nsin{node.name}\tscore={score:.3f}\tcutoff={cutoff:.3f}\tmargin={margin:.3f}\n"
-                )
+def _write_singleton_result(
+    result: dict,
+    *,
+    species_tree_path: str,
+    outdir: str,
+    accepted_markers: set[str],
+) -> None:
+    filepath = result["filepath"]
+    marker_name = result["marker_name"]
+    chosen = result["chosen"]
+    tf = Tree(filepath)
+    td = _tree_to_genome_level(tf)
+    ti = Tree(species_tree_path)
+    ti.prune([leaf.name for leaf in td.iter_leaves()])
+
+    chosen_tree = tf.copy()
+    decision = "kept"
+    if chosen is not None and marker_name in accepted_markers:
+        remaining = [
+            leaf.name
+            for leaf in tf.iter_leaves()
+            if leaf.name != chosen["leaf_name"]
+        ]
+        candidate_tree = tf.copy()
+        candidate_tree.prune(remaining)
+        chosen_tree = choose_tree_by_rf(ti, tf, candidate_tree)
+        decision = "pruned"
+    elif chosen is not None:
+        decision = "blocked_by_genome_budget"
 
     with open(os.path.join(outdir, "removed", marker_name), "a") as f:
-        f.write(
-            f"\n{removed_count}/{len(lst_nodes)} {rdist} "
-            f"num_nei={num_nei} cutoff={cutoff:.3f} borderline_kept={borderline_count}"
-        )
+        if chosen is None:
+            f.write(
+                f"\nno_singleton_prune\tmode={result['mode']}\trdist={result['rdist']:.3f}\tnum_nei={result['num_nei']}\n"
+            )
+        else:
+            f.write(
+                (
+                    f"\nsin{chosen['leaf_name']}\tmode={result['mode']}"
+                    f"\tdecision={decision}"
+                    f"\tscore={float(chosen['score']):.3f}"
+                    f"\tdelta_rf={float(chosen['delta_rf']):.3f}"
+                    f"\ttopoknn={float(chosen['topoknn_score']):.3f}"
+                    f"\toverlap={float(chosen['neighbor_overlap']):.3f}"
+                    f"\tbranch_outlier={float(chosen['branch_outlier']):.3f}"
+                    f"\tbitscore_outlier={float(chosen['bitscore_outlier']):.3f}\n"
+                )
+            )
 
-    flagged_names = [x.name for x in flagged]
-    candidate_tree = tf.copy()
-    candidate_tree.prune(flagged_names)
-    chosen_tree = choose_tree_by_rf(ti, tf, candidate_tree)
     chosen_tree.write(
         format=1,
         outfile=os.path.join(
-            outdir, "protTrees", "no_singles",
+            outdir,
+            "protTrees",
+            "no_singles",
             os.path.basename(filepath).split(".")[0] + ".nw",
         ),
     )
 
 
 def remove_singles(cfg: Config, species_tree_path: str | None = None):
-    """Remove singleton markers poorly placed by comparing neighbor topology."""
+    """Remove singleton contaminants with the delta-RF proposal workflow."""
     files = glob.glob(os.path.join(cfg.outdir, "protTrees", "no_duplicates", "out", "*"))
     if species_tree_path is None:
         species_tree_path = os.path.join(cfg.outdir, "tree.nwk")
@@ -766,7 +973,6 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
         (
             f,
             species_tree_path,
-            cfg.outdir,
             cfg.num_nei,
             cfg.singles_min_rfdist,
             cfg.singles_mode,
@@ -775,19 +981,42 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
         )
         for f in files
     ]
+    results = _collect_with_fallback(_propose_singleton_prune_worker, args, cfg.num_cpus)
+    proposals = []
+    for result in results:
+        chosen = result["chosen"]
+        if chosen is None:
+            continue
+        proposals.append(
+            {
+                **chosen,
+                "marker_name": result["marker_name"],
+            }
+        )
+    accepted = select_singleton_proposals(
+        proposals,
+        genome_marker_counts=_count_genome_marker_support(files),
+        min_markers_per_genome=1,
+    )
+    accepted_markers = {proposal["marker_name"] for proposal in accepted}
+    for result in sorted(results, key=lambda item: item["filepath"]):
+        _write_singleton_result(
+            result,
+            species_tree_path=species_tree_path,
+            outdir=cfg.outdir,
+            accepted_markers=accepted_markers,
+        )
 
-    _map_with_fallback(_remove_singles_worker, args, cfg.num_cpus)
 
-
-def _write_cleaned_worker(args):
-    """Worker: write cleaned alignment for one newick file."""
-    filepath, aligned_dir, aligned_final_dir = args
+def _write_cleaned_seq_worker(args):
+    """Worker: write cleaned sequence FASTA for one newick file."""
+    filepath, source_dir, output_dir = args
     t = Tree(filepath)
     lst_nodes = [node.name for node in t.traverse("postorder")]
     marker = os.path.basename(filepath).split("_")[3]
-    aln_path = os.path.join(aligned_dir, marker + ".faa")
+    seq_path = os.path.join(source_dir, marker + ".faa")
 
-    with open(aln_path) as f:
+    with open(seq_path) as f:
         record_dict = SeqIO.to_dict(SeqIO.parse(f, "fasta"))
 
     # keep only nodes present in the cleaned tree
@@ -795,14 +1024,18 @@ def _write_cleaned_worker(args):
         if key not in lst_nodes:
             del record_dict[key]
 
-    out_path = os.path.join(aligned_final_dir, marker + ".faa")
+    out_path = os.path.join(output_dir, marker + ".faa")
     with open(out_path, "w") as out:
         for k in record_dict:
             SeqIO.write(record_dict[k], out, "fasta")
 
 
-def write_cleaned_alignments(cfg: Config, use_singles: bool | None = None):
-    """Write cleaned alignments to aligned_final/ based on marker selection results."""
+def write_cleaned_sequences(cfg: Config, use_singles: bool | None = None) -> str:
+    """Write cleaned sequence FASTAs based on marker-selection results.
+
+    These cleaned sequence files are then re-aligned so the final tree is built
+    from alignments that never contained the removed contaminants.
+    """
     if use_singles is None:
         use_singles = cfg.singles
 
@@ -811,11 +1044,12 @@ def write_cleaned_alignments(cfg: Config, use_singles: bool | None = None):
     else:
         newick_dir = os.path.join(cfg.outdir, "protTrees", "no_duplicates", "out", "*")
 
-    aligned_dir = cfg.aligned_dir
-    aligned_final_dir = os.path.join(cfg.outdir, "aligned_final")
-    os.makedirs(aligned_final_dir, exist_ok=True)
+    source_dir = cfg.extracted_seqs_dir
+    output_dir = os.path.join(cfg.outdir, "extracted_final")
+    os.makedirs(output_dir, exist_ok=True)
 
     ls_of_files = glob.glob(newick_dir)
-    args = [(f, aligned_dir, aligned_final_dir) for f in ls_of_files]
+    args = [(f, source_dir, output_dir) for f in ls_of_files]
 
-    _map_with_fallback(_write_cleaned_worker, args, cfg.num_cpus)
+    _map_with_fallback(_write_cleaned_seq_worker, args, cfg.num_cpus)
+    return output_dir
