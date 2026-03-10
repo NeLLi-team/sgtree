@@ -54,6 +54,28 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("RecipientB|background", updated)
         self.assertIn("RecipientB|contam__MarkerX__DonorA__e001", updated)
 
+    def test_drop_native_marker_removes_record_without_replacement(self):
+        recipient_records = {
+            "RecipientB|native_marker": SeqRecord(
+                Seq("AAAA"),
+                id="RecipientB|native_marker",
+                description="RecipientB|native_marker",
+            ),
+            "RecipientB|background": SeqRecord(
+                Seq("TTTT"),
+                id="RecipientB|background",
+                description="RecipientB|background",
+            ),
+        }
+
+        updated = benchmark.drop_native_marker(
+            recipient_records,
+            native_record_id="RecipientB|native_marker",
+        )
+
+        self.assertNotIn("RecipientB|native_marker", updated)
+        self.assertIn("RecipientB|background", updated)
+
     def test_generate_cross_benchmark_accepts_different_model_sets_when_markers_overlap(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -189,6 +211,156 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(int(rows.loc["GenomeA", "within_group_events"]), 1)
         self.assertEqual(int(rows.loc["GenomeA", "cross_group_events"]), 1)
         self.assertEqual(int(rows.loc["GenomeB", "replacement_events"]), 1)
+
+    def test_evaluate_benchmark_run_reports_missing_taxa(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            scenario_dir = benchmark_dir / "scenarios" / "replacement_only"
+            run_dir = root / "run"
+            scenario_dir.mkdir(parents=True)
+            run_dir.mkdir()
+            (run_dir / "aligned_final").mkdir()
+
+            reference_tree = scenario_dir / "reference_tree.nwk"
+            reference_tree.write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree_final.nwk").write_text("(GenomeA,GenomeB);\n")
+            (run_dir / "marker_selection_rf_values.txt").write_text(
+                "ProteinID MarkerGene RFdistance Status\n"
+            )
+            (run_dir / "aligned_final" / "MarkerX.faa").write_text(
+                ">GenomeB|native_marker\nMPEPTIDE\n"
+            )
+            (scenario_dir / "events.tsv").write_text(
+                "\t".join(
+                    [
+                        "event_index",
+                        "scenario",
+                        "event_type",
+                        "recipient_genome",
+                        "recipient_group",
+                        "marker",
+                        "native_record_id",
+                        "donor_genome",
+                        "donor_group",
+                        "source_relation",
+                        "donor_record_id",
+                        "contaminant_record_id",
+                        "expected_replacement_outcome",
+                        "native_degrade_fraction",
+                    ]
+                )
+                + "\n"
+                + "\t".join(
+                    [
+                        "1",
+                        "replacement_only",
+                        "replacement",
+                        "GenomeA",
+                        "flavo",
+                        "MarkerX",
+                        "GenomeA|native_marker",
+                        "GenomeB",
+                        "gamma",
+                        "cross_group",
+                        "GenomeB|native_marker",
+                        "GenomeA|contam__MarkerX__GenomeB__e001",
+                        "DropMarkerOrRemoveContaminant",
+                        "0.12",
+                    ]
+                )
+                + "\n"
+            )
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "scenarios": [
+                            {
+                                "name": "replacement_only",
+                                "reference_tree_path": str(reference_tree),
+                            }
+                        ]
+                    }
+                )
+            )
+
+            result = benchmark.evaluate_benchmark_run(
+                benchmark_dir=benchmark_dir,
+                scenario_name="replacement_only",
+                run_dir=run_dir,
+                runtime_seconds=1.0,
+            )
+
+        self.assertFalse(result["final_taxa_match_reference"])
+        self.assertEqual(result["final_missing_taxa_count"], 1)
+        self.assertEqual(result["final_missing_taxa"], "GenomeC")
+        self.assertEqual(result["collateral_genome_loss_count"], 1)
+        self.assertEqual(result["collateral_genomes_lost"], "GenomeC")
+
+    def test_evaluate_benchmark_run_uses_manifest_reference_taxa_over_pruned_reference_tree(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            scenario_dir = benchmark_dir / "scenarios" / "combined"
+            run_dir = root / "run"
+            scenario_dir.mkdir(parents=True)
+            run_dir.mkdir()
+            (run_dir / "aligned_final").mkdir()
+
+            reference_tree = scenario_dir / "reference_tree.nwk"
+            reference_tree.write_text("(GenomeA,GenomeB);\n")
+            (run_dir / "tree.nwk").write_text("(GenomeA,GenomeB,GenomeC);\n")
+            (run_dir / "tree_final.nwk").write_text("(GenomeA,GenomeB,GenomeC);\n")
+            (run_dir / "marker_selection_rf_values.txt").write_text(
+                "ProteinID MarkerGene RFdistance Status\n"
+            )
+            (scenario_dir / "events.tsv").write_text(
+                "\t".join(
+                    [
+                        "event_index",
+                        "scenario",
+                        "event_type",
+                        "recipient_genome",
+                        "recipient_group",
+                        "marker",
+                        "native_record_id",
+                        "donor_genome",
+                        "donor_group",
+                        "source_relation",
+                        "donor_record_id",
+                        "contaminant_record_id",
+                        "expected_replacement_outcome",
+                        "native_degrade_fraction",
+                    ]
+                )
+                + "\n"
+            )
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "selected_genomes": ["GenomeA", "GenomeB", "GenomeC"],
+                        "scenarios": [
+                            {
+                                "name": "combined",
+                                "reference_tree_path": str(reference_tree),
+                                "reference_taxa": ["GenomeA", "GenomeB", "GenomeC"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            result = benchmark.evaluate_benchmark_run(
+                benchmark_dir=benchmark_dir,
+                scenario_name="combined",
+                run_dir=run_dir,
+                runtime_seconds=1.0,
+            )
+
+        self.assertTrue(result["final_taxa_match_reference"])
+        self.assertEqual(result["final_extra_taxa_count"], 0)
+        self.assertEqual(result["final_missing_taxa_count"], 0)
 
 
 if __name__ == "__main__":
