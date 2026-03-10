@@ -49,23 +49,23 @@ DEFAULT_CLEANUP_PROFILES = {
         "selection_global_rounds": 2,
         "marker_selection": True,
         "singles": False,
-        "singles_mode": "neighbor",
+        "singles_mode": "delta_rf",
     },
     "replacement_only": {
-        "name": "singles_neighbor",
+        "name": "singles_delta_rf",
         "selection_mode": "coordinate",
         "selection_global_rounds": 2,
         "marker_selection": True,
         "singles": True,
-        "singles_mode": "neighbor",
+        "singles_mode": "delta_rf",
     },
     "combined": {
-        "name": "duplicate_plus_singles_neighbor",
+        "name": "duplicate_plus_singles_delta_rf",
         "selection_mode": "coordinate",
         "selection_global_rounds": 2,
         "marker_selection": True,
         "singles": True,
-        "singles_mode": "neighbor",
+        "singles_mode": "delta_rf",
     },
 }
 
@@ -96,6 +96,17 @@ def apply_replacement_event(
         raise KeyError(f"Native marker record not found: {native_record_id}")
     del updated[native_record_id]
     updated[contaminant_record.id] = contaminant_record
+    return updated
+
+
+def drop_native_marker(
+    recipient_records: dict[str, SeqRecord],
+    native_record_id: str,
+) -> dict[str, SeqRecord]:
+    updated = dict(recipient_records)
+    if native_record_id not in updated:
+        raise KeyError(f"Native marker record not found: {native_record_id}")
+    del updated[native_record_id]
     return updated
 
 
@@ -417,6 +428,20 @@ def _write_genome_summary_tsv(path: Path, rows: list[dict]) -> pd.DataFrame:
     return summary
 
 
+def _expected_reference_taxa(
+    manifest: dict,
+    scenario_meta: dict,
+    truth_tree_path: Path,
+) -> list[str]:
+    scenario_taxa = scenario_meta.get("reference_taxa")
+    if scenario_taxa:
+        return sorted(str(name) for name in scenario_taxa)
+    selected = manifest.get("selected_genomes")
+    if selected:
+        return sorted(str(name) for name in selected)
+    return _sorted_leaf_names(truth_tree_path)
+
+
 def _scenario_summary(events: list[dict], genome_summary: pd.DataFrame) -> dict:
     event_df = pd.DataFrame(events)
     if event_df.empty:
@@ -497,7 +522,7 @@ def _materialize_benchmark_from_truth(
         percent_models=100,
         marker_selection=False,
         singles=False,
-        singles_mode="neighbor",
+        singles_mode="delta_rf",
         selection_mode="coordinate",
         selection_max_rounds=5,
         selection_global_rounds=1,
@@ -558,6 +583,7 @@ def _materialize_benchmark_from_truth(
 
     for scenario_name, spec in DEFAULT_SCENARIOS.items():
         scenario_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+        reference_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
         used_pairs: set[tuple[str, str]] = set()
         events: list[dict] = []
         event_index = 1
@@ -645,11 +671,9 @@ def _materialize_benchmark_from_truth(
                 donor_genome=donor,
                 event_index=event_index,
             )
-            _degrade_record_in_place(
-                scenario_records[recipient],
-                native_map[recipient][marker],
-                spec["native_degrade_fraction"],
-                rng,
+            reference_records[recipient] = drop_native_marker(
+                reference_records[recipient],
+                native_record_id=native_map[recipient][marker],
             )
             scenario_records[recipient] = apply_replacement_event(
                 scenario_records[recipient],
@@ -678,7 +702,26 @@ def _materialize_benchmark_from_truth(
 
         scenario_dir = scenarios_dir / scenario_name
         proteomes_dir = scenario_dir / "proteomes"
+        reference_inputs_dir = scenario_dir / "reference_inputs"
+        reference_run_dir = scenario_dir / "reference_run"
         _write_proteome_dir(scenario_records, proteomes_dir)
+        _write_proteome_dir(reference_records, reference_inputs_dir)
+        _run_sgtree_python(
+            genomedir=reference_inputs_dir,
+            modeldir=truth_models,
+            outdir=reference_run_dir,
+            num_cpus=num_cpus,
+            # The benchmark reference should preserve the original selected
+            # taxa even when replacement events remove a few native markers.
+            percent_models=0,
+            marker_selection=False,
+            singles=False,
+            singles_mode="delta_rf",
+            selection_mode="coordinate",
+            selection_max_rounds=5,
+            selection_global_rounds=1,
+            keep_intermediates=True,
+        )
         _write_events_tsv(scenario_dir / "events.tsv", events)
         genome_summary = _write_genome_summary_tsv(scenario_dir / "genome_summary.tsv", events)
         summary = _scenario_summary(events, genome_summary)
@@ -686,6 +729,9 @@ def _materialize_benchmark_from_truth(
             {
                 "name": scenario_name,
                 "proteomes_dir": str(proteomes_dir),
+                "reference_inputs_dir": str(reference_inputs_dir),
+                "reference_tree_path": str(reference_run_dir / "tree.nwk"),
+                "reference_taxa": selected_genomes,
                 "events_path": str(scenario_dir / "events.tsv"),
                 "genome_summary_path": str(scenario_dir / "genome_summary.tsv"),
                 **summary,
@@ -767,7 +813,7 @@ def generate_benchmark_dataset(
             percent_models=0,
             marker_selection=False,
             singles=False,
-            singles_mode="neighbor",
+            singles_mode="delta_rf",
             selection_mode="coordinate",
             selection_max_rounds=5,
             selection_global_rounds=1,
@@ -845,13 +891,29 @@ def _replacement_outcome(run_dir: Path, recipient: str, marker: str) -> str:
     return "native_retained"
 
 
+def _sorted_leaf_names(tree_path: Path) -> list[str]:
+    tree = Tree(str(tree_path))
+    return sorted(leaf.name for leaf in tree.iter_leaves())
+
+
+def _format_taxa_list(names: list[str]) -> str:
+    return ",".join(sorted(names))
+
+
 def evaluate_benchmark_run(
     benchmark_dir: Path,
     scenario_name: str,
     run_dir: Path,
     runtime_seconds: float,
 ) -> dict:
-    truth_tree = benchmark_dir / "truth_run" / "tree.nwk"
+    manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
+    scenario_meta = next(
+        (item for item in manifest["scenarios"] if item["name"] == scenario_name),
+        None,
+    )
+    if scenario_meta is None:
+        raise KeyError(f"Scenario not found in manifest: {scenario_name}")
+    truth_tree = Path(scenario_meta.get("reference_tree_path", benchmark_dir / "truth_run" / "tree.nwk"))
     events = _load_events(benchmark_dir / "scenarios" / scenario_name / "events.tsv")
     result_tree = run_dir / "tree_final.nwk"
     if not result_tree.exists():
@@ -880,6 +942,13 @@ def evaluate_benchmark_run(
     replacement_contaminant_removed = int(len(replacement_events) - replacement_contaminant_retained)
     total_contaminants = int(len(duplicate_events) + len(replacement_events))
     total_removed = int(contaminant_correct + replacement_contaminant_removed)
+    reference_taxa = _expected_reference_taxa(manifest, scenario_meta, truth_tree)
+    final_taxa = _sorted_leaf_names(result_tree)
+    missing_taxa = sorted(set(reference_taxa) - set(final_taxa))
+    extra_taxa = sorted(set(final_taxa) - set(reference_taxa))
+    replacement_recipients = sorted(set(replacement_events["recipient_genome"])) if not replacement_events.empty else []
+    replacement_recipient_losses = sorted(set(missing_taxa) & set(replacement_recipients))
+    collateral_losses = sorted(set(missing_taxa) - set(replacement_recipients))
 
     return {
         "scenario": scenario_name,
@@ -901,6 +970,17 @@ def evaluate_benchmark_run(
         "contaminant_markers_added": total_contaminants,
         "contaminant_markers_removed": total_removed,
         "contaminant_markers_removed_fraction": total_removed / total_contaminants if total_contaminants else 0.0,
+        "final_reference_taxa_count": len(reference_taxa),
+        "final_observed_taxa_count": len(final_taxa),
+        "final_taxa_match_reference": not missing_taxa and not extra_taxa,
+        "final_missing_taxa_count": len(missing_taxa),
+        "final_missing_taxa": _format_taxa_list(missing_taxa),
+        "final_extra_taxa_count": len(extra_taxa),
+        "final_extra_taxa": _format_taxa_list(extra_taxa),
+        "replacement_recipient_genome_loss_count": len(replacement_recipient_losses),
+        "replacement_recipient_genomes_lost": _format_taxa_list(replacement_recipient_losses),
+        "collateral_genome_loss_count": len(collateral_losses),
+        "collateral_genomes_lost": _format_taxa_list(collateral_losses),
         "runtime_seconds": runtime_seconds,
         "status": "ok",
     }

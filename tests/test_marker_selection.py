@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from ete3 import Tree
@@ -156,14 +157,14 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(chosen.write(format=9), original.write(format=9))
 
-    def test_effective_singleton_mode_escalates_high_discordance_neighbor(self):
+    def test_effective_singleton_mode_pins_runtime_cleanup_to_delta_rf(self):
         self.assertEqual(
             marker_selection.effective_singleton_mode(
                 "neighbor",
                 0.40,
                 duplicate_resolution_present=False,
             ),
-            "backbone",
+            "delta_rf",
         )
         self.assertEqual(
             marker_selection.effective_singleton_mode(
@@ -171,7 +172,7 @@ class MarkerSelectionTests(unittest.TestCase):
                 0.20,
                 duplicate_resolution_present=False,
             ),
-            "neighbor",
+            "delta_rf",
         )
         self.assertEqual(
             marker_selection.effective_singleton_mode(
@@ -183,11 +184,141 @@ class MarkerSelectionTests(unittest.TestCase):
         )
         self.assertEqual(
             marker_selection.effective_singleton_mode(
-                "neighbor",
+                "outlier",
                 0.40,
                 duplicate_resolution_present=True,
             ),
-            "neighbor",
+            "delta_rf",
+        )
+
+    def test_choose_singleton_prune_prefers_highest_delta_rf(self):
+        species = Tree("((A,B),(C,(D,E)));")
+        working = Tree("((A,B),(C,(D,E)));")
+        candidate_a = Tree("(B,(C,(D,E)));")
+        candidate_c = Tree("((A,B),(D,E));")
+
+        with patch.object(
+            marker_selection,
+            "_score_singleton_candidates",
+            return_value=[
+                {
+                    "leaf_name": "A",
+                    "delta_rf": 0.30,
+                    "topoknn_score": 0.40,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "candidate_tree": candidate_a,
+                },
+                {
+                    "leaf_name": "C",
+                    "delta_rf": 0.10,
+                    "topoknn_score": 1.10,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "candidate_tree": candidate_c,
+                },
+            ],
+        ):
+            chosen = marker_selection.choose_singleton_prune(
+                species_tree=species,
+                working_tree=working,
+                mode="delta_rf",
+                k=3,
+            )
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["leaf_name"], "A")
+
+    def test_choose_singleton_prune_hybrid_requires_consistent_support(self):
+        species = Tree("((A,B),(C,(D,E)));")
+        working = Tree("((A,B),(C,(D,E)));")
+        candidate_a = Tree("(B,(C,(D,E)));")
+        candidate_c = Tree("((A,B),(D,E));")
+
+        with patch.object(
+            marker_selection,
+            "_score_singleton_candidates",
+            return_value=[
+                {
+                    "leaf_name": "A",
+                    "delta_rf": 0.25,
+                    "topoknn_score": 0.15,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "candidate_tree": candidate_a,
+                },
+                {
+                    "leaf_name": "C",
+                    "delta_rf": 0.02,
+                    "topoknn_score": 1.40,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "candidate_tree": candidate_c,
+                },
+            ],
+        ):
+            chosen = marker_selection.choose_singleton_prune(
+                species_tree=species,
+                working_tree=working,
+                mode="hybrid",
+                k=3,
+            )
+
+        self.assertIsNone(chosen)
+
+    def test_prune_singletons_removes_only_selected_leaf(self):
+        species = Tree("((A,B),(C,(D,E)));")
+        working = Tree("((A,B),(C,(D,E)));")
+
+        with patch.object(
+            marker_selection,
+            "choose_singleton_prune",
+            return_value={
+                "leaf_name": "A",
+                "candidate_tree": Tree("(B,(C,(D,E)));"),
+            },
+        ):
+            pruned = marker_selection.prune_singletons(
+                species_tree=species,
+                working_tree=working,
+                mode="delta_rf",
+                k=3,
+            )
+
+        self.assertEqual(sorted(leaf.name for leaf in pruned.iter_leaves()), ["B", "C", "D", "E"])
+
+    def test_choose_singleton_prune_outlier_picks_obvious_misplaced_leaf(self):
+        species = Tree("(((A:1,B:1):1,C:1):1,(D:1,E:1):1);")
+        working = Tree("((((A:1,B:1):1,D:3):1,C:1):1,E:1);")
+
+        chosen = marker_selection.choose_singleton_prune(
+            species_tree=species,
+            working_tree=working,
+            mode="outlier",
+            k=3,
+        )
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["leaf_name"], "D")
+        self.assertEqual(chosen["genome"], "D")
+        self.assertGreater(chosen["score"], 0.0)
+
+    def test_select_singleton_proposals_keeps_last_marker_for_genome(self):
+        proposals = [
+            {"marker_name": "MarkerA", "genome": "Genome1", "score": 5.0},
+            {"marker_name": "MarkerB", "genome": "Genome1", "score": 4.0},
+            {"marker_name": "MarkerC", "genome": "Genome2", "score": 3.0},
+        ]
+
+        accepted = marker_selection.select_singleton_proposals(
+            proposals,
+            genome_marker_counts={"Genome1": 2, "Genome2": 1},
+            min_markers_per_genome=1,
+        )
+
+        self.assertEqual(
+            {proposal["marker_name"] for proposal in accepted},
+            {"MarkerA"},
         )
 
 
