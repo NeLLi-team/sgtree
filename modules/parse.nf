@@ -10,6 +10,8 @@ process PARSE_HMMSEARCH {
     val  lflt
     val  max_sdup
     val  max_dupl
+    val  has_keep_genomes
+    path keep_genomes, stageAs: 'ani_kept_genomes.txt'
     val  has_ref
     path ref_merged_final, stageAs: 'ref_merged_final.csv'
     path ref_proteomes, stageAs: 'ref_proteomes.faa'
@@ -23,6 +25,7 @@ process PARSE_HMMSEARCH {
     path 'log_genomes_removed.txt', emit: log_removed
 
     script:
+    def keep_arg = has_keep_genomes ? "--keep_genomes ${keep_genomes}" : ''
     def ref_merged_arg = has_ref ? "--ref_merged_final ${ref_merged_final}" : ''
     def ref_prot_arg   = has_ref ? "--ref_proteomes ${ref_proteomes}" : ''
     """
@@ -34,6 +37,7 @@ process PARSE_HMMSEARCH {
         --lflt ${lflt} \\
         --max_sdup ${max_sdup} \\
         --max_dupl ${max_dupl} \\
+        ${keep_arg} \\
         ${ref_merged_arg} \\
         ${ref_prot_arg}
     """

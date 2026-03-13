@@ -7,6 +7,7 @@ process CONCAT_INPUTS {
     path 'models.hmm'    , emit: models
     path 'models_split'  , emit: models_split
     path 'proteomes.faa' , emit: proteomes
+    path 'genome_manifest.tsv', emit: genome_manifest
     env  MODEL_COUNT     , emit: model_count
 
     script:
@@ -19,7 +20,12 @@ process CONCAT_INPUTS {
     map_stem=\$(basename "${genomedir}")
     map_stem="\${map_stem%.*}"
     map_file="proteomes_header_map_\${map_stem}.tsv"
-    python ${projectDir}/bin/normalize_concat_proteomes.py --input ${genomedir} --out proteomes.faa --map "\${map_file}"
+    python ${projectDir}/bin/normalize_concat_proteomes.py \\
+        --input ${genomedir} \\
+        --out proteomes.faa \\
+        --map "\${map_file}" \\
+        --manifest genome_manifest.tsv \\
+        --gene-call-map gene_calls.tsv
     case "${params.outdir}" in
         /*) map_out_dir="${params.outdir}" ;;
         *)  map_out_dir="${launchDir}/${params.outdir}" ;;

@@ -189,7 +189,7 @@ def prepare_reference(cfg: Config) -> list[str] | None:
         else:
             keep_files = (
                 "marker_count_matrix.csv", "proteomes",
-                "hits.hmmout", "table_elim_dups",
+                "hits.hmmout", "table_elim_dups", "genome_manifest.tsv",
             )
             if basename in keep_files:
                 continue
