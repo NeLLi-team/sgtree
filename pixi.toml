@@ -32,6 +32,7 @@ pyrodigal = ">=3.6.0,<4"
 [tasks]
 sgtree = "bash ./bin/sgtree-nextflow.sh"
 sgtree-python = "python -m sgtree"
+example = "python -m sgtree testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 4 --save_dir runs/example_basic"
 test-basic = "python -m sgtree testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8"
 test-full = "python -m sgtree testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8 --marker_selection yes --ref testgenomes/chlorref"
 test-unit = "python -m unittest discover -s tests -p 'test_*.py'"
