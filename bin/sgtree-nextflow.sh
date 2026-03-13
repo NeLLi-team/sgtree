@@ -18,6 +18,7 @@ Common options:
   --ref <dir>            Reference proteomes directory
   --ani_cluster          yes|no|true|false (default: false)
   --snp                  yes|no|true|false (default: false; requires --ani_cluster yes)
+                         SNP trees use only shared UNI56-bearing backbone contigs with >=95% ANI
   --ani_threshold <f>    ANI cutoff used before MCL clustering (default: 95.0)
   --ani_backend <name>   auto | skani | minimap2 (default: auto)
   --ani_mcl_inflation <f>
