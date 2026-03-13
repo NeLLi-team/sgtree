@@ -1,8 +1,19 @@
 #!/usr/bin/env python
 """Run pyhmmer hmmalign for one marker and write aligned FASTA."""
 import argparse
+import subprocess
+import sys
+from pathlib import Path
 
-from pyhmmer import easel, hmmer, plan7
+
+def _maybe_reexec_with_pixi_python() -> bool:
+    root = Path(__file__).resolve().parents[1]
+    pixi_python = root / ".pixi" / "envs" / "default" / "bin" / "python"
+    current_python = Path(sys.executable).resolve()
+    if not pixi_python.exists() or current_python == pixi_python.resolve():
+        return False
+    subprocess.run([str(pixi_python), str(Path(__file__).resolve()), *sys.argv[1:]], check=True)
+    return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +48,13 @@ def _load_marker_hmm(models_path: str, marker: str):
 
 
 def main() -> None:
+    global easel, hmmer, plan7
+    try:
+        from pyhmmer import easel, hmmer, plan7
+    except ModuleNotFoundError:
+        if _maybe_reexec_with_pixi_python():
+            return
+        raise
     args = parse_args()
 
     if args.model:

@@ -10,6 +10,7 @@ import shutil
 from sgtree.config import Config
 from sgtree import search, extract, align, duplicates, supermatrix, phylogeny
 from sgtree import marker_selection, itol, render, sgtree_logging, cleanup, reference
+from sgtree import ani_clustering
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
@@ -29,7 +30,7 @@ def parse_args() -> Config:
     parser = argparse.ArgumentParser(description="SGTree - Species tree from marker gene phylogenies")
 
     parser.add_argument("genomedir", type=str,
-                        help="directory containing .faa proteome files (or a concatenated fasta)")
+                        help="directory containing .faa proteomes or .fna assemblies (or a concatenated fasta)")
     parser.add_argument("modeldir", type=str,
                         help="path to marker-set .hmm file (legacy: directory of per-marker .hmm files)")
     parser.add_argument("--ref_concat", type=str, default=None,
@@ -42,7 +43,7 @@ def parse_args() -> Config:
                         help="reference genomes directory")
     parser.add_argument("--percent_models", type=int, default=10,
                         help="minimum percentage of models a genome must have")
-    parser.add_argument("--save_dir", type=str, default=None,
+    parser.add_argument("--save_dir", "--outdir", dest="save_dir", type=str, default=None,
                         help="output directory name")
     parser.add_argument("--singles", type=str, default="no",
                         help="remove singleton markers (yes/no)")
@@ -86,6 +87,19 @@ def parse_args() -> Config:
                         help="internal flag, not for user use")
     parser.add_argument("--keep_intermediates", type=str, default="no",
                         help="keep intermediate directories/files instead of archiving them (yes/no)")
+    parser.add_argument("--ani_cluster", type=str, default="no",
+                        help="collapse query+reference genomes by ANI before species-tree inference (yes/no)")
+    parser.add_argument("--snp", type=str, default="no",
+                        help="build cluster-level SNP trees after ANI clustering (yes/no)")
+    parser.add_argument("--ani_threshold", type=float, default=95.0,
+                        help="minimum ANI threshold for graph edges before MCL clustering")
+    parser.add_argument("--ani_backend", type=str, default="auto",
+                        choices=["auto", "skani", "minimap2"],
+                        help="ANI backend preference")
+    parser.add_argument("--ani_mcl_inflation", type=float, default=2.0,
+                        help="MCL inflation parameter used after ANI edge filtering")
+    parser.add_argument("--snp_tree_min_cluster_size", type=int, default=3,
+                        help="build SNP trees only for ANI clusters with at least this many genomes")
 
     args = parser.parse_args()
     start_time = str(datetime.datetime.now())
@@ -114,6 +128,8 @@ def parse_args() -> Config:
     is_ref = _parse_bool(args.is_ref, flag="--is_ref")
     lock_references = _parse_bool(args.lock_references, flag="--lock_references")
     keep_intermediates = _parse_bool(args.keep_intermediates, flag="--keep_intermediates")
+    ani_cluster = _parse_bool(args.ani_cluster, flag="--ani_cluster")
+    snp = _parse_bool(args.snp, flag="--snp")
     if args.max_dupl != -1.0 and not (0.0 <= args.max_dupl <= 1.0):
         raise ValueError("--max_dupl must be between 0 and 1, or -1 to disable")
     if args.hmmsearch_cutoff == "evalue" and args.hmmsearch_evalue <= 0:
@@ -126,6 +142,14 @@ def parse_args() -> Config:
         raise ValueError("--selection_max_rounds must be >= 1")
     if args.selection_global_rounds < 1:
         raise ValueError("--selection_global_rounds must be >= 1")
+    if not (0.0 < args.ani_threshold <= 100.0):
+        raise ValueError("--ani_threshold must be > 0 and <= 100")
+    if args.ani_mcl_inflation <= 0:
+        raise ValueError("--ani_mcl_inflation must be > 0")
+    if args.snp_tree_min_cluster_size < 2:
+        raise ValueError("--snp_tree_min_cluster_size must be >= 2")
+    if snp and not ani_cluster:
+        raise ValueError("--snp requires --ani_cluster yes")
 
     return Config(
         genomedir=genomedir,
@@ -133,6 +157,7 @@ def parse_args() -> Config:
         outdir=outdir,
         num_cpus=args.num_cpus,
         percent_models=args.percent_models,
+        input_format="auto",
         lflt_fraction=float(args.lflt) / 100,
         aln_method=args.aln,
         tree_method=args.tree_method,
@@ -156,6 +181,12 @@ def parse_args() -> Config:
         keep_intermediates=keep_intermediates,
         is_ref=is_ref,
         start_time=start_time,
+        ani_cluster=ani_cluster,
+        snp=snp,
+        ani_threshold=args.ani_threshold,
+        ani_backend=args.ani_backend,
+        ani_mcl_inflation=args.ani_mcl_inflation,
+        snp_tree_min_cluster_size=args.snp_tree_min_cluster_size,
     )
 
 
@@ -167,8 +198,14 @@ def main():
     print(f"-... Reference directory and arguments\n"
           f" Reference directory located at {cfg.ref_concat}\n ...starting sgtree...")
 
+    if cfg.ani_cluster and not cfg.is_ref:
+        ani_clustering.prepare_ani_cluster_inputs(cfg)
+
     # handle reference genomes
     ls_refs = reference.prepare_reference(cfg)
+
+    # write iTOL color file after any ANI-driven input collapsing
+    itol.write_color_file(cfg)
 
     # print arguments
     print(f"arguments:\n"
@@ -191,6 +228,12 @@ def main():
           f" singleton mode {cfg.singles_mode}\n"
           f" singleton neighborhood size {cfg.num_nei} (0=auto)\n"
           f" singleton min RF distance {cfg.singles_min_rfdist}\n"
+          f" ANI clustering {'yes' if cfg.ani_cluster else 'no'}\n"
+          f" SNP trees {'yes' if cfg.snp else 'no'}\n"
+          f" ANI threshold {cfg.ani_threshold}\n"
+          f" ANI backend {cfg.ani_backend}\n"
+          f" ANI MCL inflation {cfg.ani_mcl_inflation}\n"
+          f" SNP tree min cluster size {cfg.snp_tree_min_cluster_size}\n"
           f" reference directory {cfg.ref}\n"
           f" keep intermediates {'yes' if cfg.keep_intermediates else 'no'}\n"
           f" --marker_selection {'yes' if cfg.marker_selection else 'no'}\n")
@@ -208,9 +251,6 @@ def main():
                 shutil.rmtree(f)
             else:
                 os.remove(f)
-
-    # write iTOL color file
-    itol.write_color_file(cfg)
 
     timings = {}
 
@@ -296,10 +336,6 @@ def main():
         # Write logfile
         print(sys.argv[:])
         sgtree_logging.write_logfile(cfg, timings)
-
-        # Cleanup (basic run)
-        if not cfg.marker_selection and not cfg.is_ref and not cfg.keep_intermediates:
-            cleanup.cleanup_basic(cfg.outdir)
 
     except Exception as e:
         print(f"ERROR: {e.__doc__}\n {e}")
@@ -423,15 +459,20 @@ def main():
             # iTOL heatmap
             itol.write_heatmap(cfg, tree_final_path, "marker_counts.txt")
 
-            # Cleanup
-            if not cfg.keep_intermediates:
-                cleanup.cleanup_marker_selection(cfg.outdir)
-
         except Exception as e:
             print(f"ERROR in final tree: {e.__doc__}\n {e}")
             import traceback
             traceback.print_exc()
             raise
+
+    if cfg.ani_cluster and cfg.snp and not cfg.is_ref:
+        ani_clustering.build_cluster_snp_trees(cfg)
+
+    if not cfg.is_ref and not cfg.keep_intermediates:
+        if cfg.marker_selection:
+            cleanup.cleanup_marker_selection(cfg.outdir)
+        else:
+            cleanup.cleanup_basic(cfg.outdir)
 
     print(f"START: {cfg.start_time} END {datetime.datetime.now()}")
 
