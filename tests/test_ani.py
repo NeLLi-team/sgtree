@@ -33,6 +33,38 @@ class AniTests(unittest.TestCase):
 
         self.assertEqual(representative.genome_id, "RefB")
 
+    def test_select_shared_marker_backbone_contigs_filters_non_core_and_low_ani_contigs(self):
+        retained, core_markers, filter_df = ani.select_shared_marker_backbone_contigs(
+            genome_ids=["Rep", "Q1", "Q2"],
+            representative_genome="Rep",
+            contig_markers={
+                "Rep": {
+                    "rep_keep": {"COG0012"},
+                    "rep_extra": {"COG0090"},
+                },
+                "Q1": {
+                    "q1_keep": {"COG0012"},
+                    "q1_conflict": {"COG0012", "COG0090"},
+                },
+                "Q2": {
+                    "q2_keep": {"COG0012"},
+                },
+            },
+            contig_pair_ani={
+                ("rep_keep", "Q1", "q1_keep"): 0.97,
+                ("rep_keep", "Q2", "q2_keep"): 0.96,
+                ("rep_extra", "Q1", "q1_conflict"): 0.99,
+            },
+            min_ani=0.95,
+        )
+
+        self.assertEqual(core_markers, {"COG0012"})
+        self.assertEqual(retained["Rep"], {"rep_keep"})
+        self.assertEqual(retained["Q1"], {"q1_keep"})
+        self.assertEqual(retained["Q2"], {"q2_keep"})
+        retained_rows = filter_df[filter_df["retained"]]
+        self.assertEqual(set(retained_rows["contig_id"]), {"rep_keep", "q1_keep", "q2_keep"})
+
     def test_build_snp_trees_writes_alignment_and_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

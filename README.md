@@ -119,7 +119,7 @@ Core method controls:
 - `--singles_min_rfdist`: minimum marker/global RF distance required before singleton pruning activates (default `0.25`).
 - `--keep_intermediates`: keep intermediate alignments/tables for debugging and benchmarking (default `false`).
 - `--ani_cluster`: run pairwise ANI on the combined query+reference genome set and keep one representative per cluster for the main SGTree species tree.
-- `--snp`: build cluster-level SNP trees after ANI clustering (default `false`; requires `--ani_cluster yes`).
+- `--snp`: build cluster-level SNP trees after ANI clustering (default `false`; requires `--ani_cluster yes`). Before SNP alignment, SGTree keeps only contigs that carry shared cluster-core UNI56 markers and that still align back to the representative backbone at `>=95%` ANI.
 - `--ani_threshold`: ANI cutoff used to retain graph edges before clustering (default `95`).
 - `--ani_backend`: `auto`, `skani`, or `minimap2` (default `auto`; SGTree prefers `skani` when available and falls back to `minimap2` in restricted environments).
 - `--ani_mcl_inflation`: MCL inflation used for ANI graph clustering (default `2.0`).
@@ -213,6 +213,8 @@ Wrapper / Python output (`--outdir` or `--save_dir`):
     snp_tree_summary.tsv
     <ani_cluster_id>/
       members.tsv
+      contig_filter.tsv          # retained/discarded UNI56-bearing contigs per genome
+      filtered_contigs/          # marker-guided backbone contigs used for SNP alignment
       tree.nwk                   # cluster-size >= --snp_tree_min_cluster_size
       core_snps.fna              # cluster-size >= --snp_tree_min_cluster_size and variable sites present
 ```
@@ -235,6 +237,8 @@ Python output (`--save_dir`):
     snp_tree_summary.tsv
     <ani_cluster_id>/
       members.tsv
+      contig_filter.tsv
+      filtered_contigs/
       tree.nwk
       core_snps.fna              # only when variable SNP sites are found
   logfile_*.txt
@@ -310,7 +314,7 @@ pixi run sgtree \
 
 - Verified outputs for that run:
   - `20` ANI representatives in [`runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv`](/home/fschulz/dev/software/sgtree/runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv)
-  - one `26`-member ANI cluster with a `524`-site SNP alignment
+  - one `26`-member ANI cluster with a `524`-site SNP alignment after filtering to shared-core UNI56 backbone contigs
   - one `6`-member ANI cluster with no variable SNP sites, reported explicitly as `no_snp_sites`
 
 ## Workflow
