@@ -167,5 +167,9 @@ def build_cluster_snp_trees(cfg: Config) -> pd.DataFrame:
         outdir=cfg.snp_trees_dir,
         min_cluster_size=cfg.snp_tree_min_cluster_size,
         cpus=cfg.num_cpus,
+        models_path=cfg.models_path if os.path.exists(cfg.models_path) else cfg.modeldir,
+        hmmsearch_cutoff=cfg.hmmsearch_cutoff,
+        hmmsearch_evalue=cfg.hmmsearch_evalue,
+        min_contig_ani=max(0.95, cfg.ani_threshold / 100.0 if cfg.ani_threshold > 1.0 else cfg.ani_threshold),
     )
     return pd.read_csv(summary_path, sep="\t")

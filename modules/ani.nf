@@ -35,6 +35,7 @@ process BUILD_SNP_TREES {
     input:
     path clusters
     path query_manifest
+    path models
     val  has_ref
     path ref_manifest, stageAs: 'ref_manifest.tsv'
 
@@ -50,6 +51,10 @@ process BUILD_SNP_TREES {
         --query-manifest ${query_manifest} \\
         ${ref_arg} \\
         --outdir snp_trees \\
+        --models ${models} \\
+        --hmmsearch-cutoff ${params.hmmsearch_cutoff ?: 'cut_ga'} \\
+        --hmmsearch-evalue ${params.hmmsearch_evalue ?: 1e-5} \\
+        --min-contig-ani 0.95 \\
         --min-cluster-size ${params.snp_tree_min_cluster_size ?: 3} \\
         --num-cpus ${task.cpus}
     """

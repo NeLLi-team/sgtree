@@ -26,6 +26,11 @@ workflow {
             ? params.ani_cluster
             : ['true', 'yes', '1'].contains(params.ani_cluster?.toString()?.trim()?.toLowerCase())
     )
+    snp_enabled = (
+        (params.snp instanceof Boolean)
+            ? params.snp
+            : ['true', 'yes', '1'].contains(params.snp?.toString()?.trim()?.toLowerCase())
+    )
     singles_enabled = (
         (params.singles instanceof Boolean)
             ? params.singles
@@ -80,10 +85,11 @@ workflow {
         ref_genome_manifest
     )
 
-    if (ani_enabled) {
+    if (ani_enabled && snp_enabled) {
         BUILD_SNP_TREES(
             SGTREE_MAIN.out.ani_clusters,
             SGTREE_MAIN.out.genome_manifest,
+            modeldir,
             params.ref ? true : false,
             ref_genome_manifest
         )
