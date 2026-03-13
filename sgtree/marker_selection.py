@@ -1,6 +1,5 @@
 import os
 import glob
-import multiprocessing as mp
 
 import pandas as pd
 from Bio import SeqIO
@@ -8,6 +7,7 @@ from ete3 import Tree
 
 from sgtree.config import Config
 from sgtree.id_schema import parse_savedname, parse_sequence_id
+from sgtree.parallel import map_processed, map_threaded
 
 
 SCORE_COLUMNS = ("score_bits", "7")
@@ -320,37 +320,6 @@ def resolve_marker_tree(
     return cleaned_nodes, records
 
 
-def _map_with_fallback(func, args, workers: int):
-    if not args:
-        return
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        for item in args:
-            func(item)
-        return
-    try:
-        with mp.Pool(n_workers) as pool:
-            pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        for item in args:
-            func(item)
-
-
-def _collect_with_fallback(func, args, workers: int):
-    if not args:
-        return []
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        return [func(item) for item in args]
-    try:
-        with mp.Pool(n_workers) as pool:
-            return pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        return [func(item) for item in args]
-
-
 def _load_kept_assignments(rf_outfile: str) -> dict[tuple[str, str], str]:
     kept: dict[tuple[str, str], str] = {}
     if not os.path.exists(rf_outfile):
@@ -469,7 +438,7 @@ def run_noperm(
         for f in ls_of_files
     ]
 
-    _map_with_fallback(_process_tree_worker, args, cfg.num_cpus)
+    map_processed(_process_tree_worker, args, cfg.num_cpus)
     return _load_kept_assignments(rf_outfile)
 
 
@@ -1078,7 +1047,7 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
         )
         for f in files
     ]
-    results = _collect_with_fallback(_propose_singleton_prune_worker, args, cfg.num_cpus)
+    results = map_processed(_propose_singleton_prune_worker, args, cfg.num_cpus)
     proposals = []
     for result in results:
         chosen = result["chosen"]
@@ -1162,5 +1131,5 @@ def write_cleaned_sequences(cfg: Config, use_singles: bool | None = None) -> str
     ls_of_files = glob.glob(newick_dir)
     args = [(f, source_dir, output_dir) for f in ls_of_files]
 
-    _map_with_fallback(_write_cleaned_seq_worker, args, cfg.num_cpus)
+    map_threaded(_write_cleaned_seq_worker, args, cfg.num_cpus)
     return output_dir
