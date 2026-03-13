@@ -9,13 +9,21 @@ Usage:
   pixi run sgtree --genomedir <dir> --modeldir <marker_set.hmm> [options]
 
 Required arguments:
-  --genomedir <dir>      Directory with input proteomes (*.faa)
+  --genomedir <dir>      Directory with input proteomes (*.faa) or assemblies (*.fna)
   --modeldir <file>      Combined marker-set HMM file (for example, resources/models/UNI56.hmm)
 
 Common options:
   --outdir <dir>         Output directory (default: runs/nextflow/default)
   --marker_selection     true|false (default: false)
   --ref <dir>            Reference proteomes directory
+  --ani_cluster          yes|no|true|false (default: false)
+  --snp                  yes|no|true|false (default: false; requires --ani_cluster yes)
+  --ani_threshold <f>    ANI cutoff used before MCL clustering (default: 95.0)
+  --ani_backend <name>   auto | skani | minimap2 (default: auto)
+  --ani_mcl_inflation <f>
+                         MCL inflation used after ANI filtering (default: 2.0)
+  --snp_tree_min_cluster_size <n>
+                         Build SNP trees only for ANI clusters of at least n genomes (default: 3)
   --singles              yes|no|true|false (default: false)
   --percent_models <n>   Minimum marker coverage threshold (default: 10)
   --max_sdup <n>         Max copies allowed for one marker in a genome (-1 disables)
@@ -50,7 +58,8 @@ Examples:
 
 Notes:
   - Logs are written automatically to runs/nextflow/logs/.
-  - For the Python implementation, run: pixi run sgtree-python ...
+  - Nucleotide (`*.fna`) inputs, `--ani_cluster yes`, and `--snp yes` are routed to the Python engine automatically.
+  - For the Python implementation directly, run: pixi run sgtree-python ...
 HELP
 }
 
@@ -70,5 +79,86 @@ mkdir -p runs/nextflow/logs
 log_file="runs/nextflow/logs/sgtree_$(date +%Y%m%d_%H%M%S).log"
 
 echo "[sgtree] nextflow log: ${log_file}"
+
+args=("$@")
+genomedir=""
+modeldir=""
+refdir=""
+ani_cluster="no"
+snp="no"
+
+for ((i=0; i<${#args[@]}; i++)); do
+  case "${args[i]}" in
+    --genomedir)
+      genomedir="${args[i+1]:-}"
+      i=$((i + 1))
+      ;;
+    --modeldir)
+      modeldir="${args[i+1]:-}"
+      i=$((i + 1))
+      ;;
+    --ref)
+      refdir="${args[i+1]:-}"
+      i=$((i + 1))
+      ;;
+    --ani_cluster)
+      ani_cluster="${args[i+1]:-no}"
+      i=$((i + 1))
+      ;;
+    --snp)
+      snp="${args[i+1]:-no}"
+      i=$((i + 1))
+      ;;
+  esac
+done
+
+is_true() {
+  case "${1,,}" in
+    yes|true|1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+looks_like_fna_input() {
+  local path="$1"
+  if [[ -z "$path" ]]; then
+    return 1
+  fi
+  if [[ -f "$path" ]]; then
+    case "${path##*.}" in
+      fna|fa|fasta) return 0 ;;
+    esac
+    return 1
+  fi
+  if [[ -d "$path" ]]; then
+    shopt -s nullglob
+    local matches=("$path"/*.fna "$path"/*.fa "$path"/*.fasta)
+    shopt -u nullglob
+    if (( ${#matches[@]} > 0 )); then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+if is_true "$ani_cluster" || is_true "$snp" || looks_like_fna_input "$genomedir" || looks_like_fna_input "$refdir"; then
+  rest_args=()
+  skip_next=0
+  for ((i=0; i<${#args[@]}; i++)); do
+    if (( skip_next )); then
+      skip_next=0
+      continue
+    fi
+    case "${args[i]}" in
+      --genomedir|--modeldir)
+        skip_next=1
+        ;;
+      *)
+        rest_args+=("${args[i]}")
+        ;;
+    esac
+  done
+  exec python -m sgtree "$genomedir" "$modeldir" "${rest_args[@]}"
+fi
 
 exec ./nextflow -log "${log_file}" run main.nf "$@"

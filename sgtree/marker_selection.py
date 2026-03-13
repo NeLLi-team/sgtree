@@ -7,6 +7,7 @@ from Bio import SeqIO
 from ete3 import Tree
 
 from sgtree.config import Config
+from sgtree.id_schema import parse_savedname, parse_sequence_id
 
 
 SCORE_COLUMNS = ("score_bits", "7")
@@ -24,8 +25,9 @@ def choose_best_candidate(
     Preference order:
     1. lower RF distance
     2. more informative splits in the RF comparison
-    3. higher HMM bitscore
-    4. lexicographically smaller protein id for stability
+    3. stronger same-contig marker support
+    4. higher HMM bitscore
+    5. lexicographically smaller protein id for stability
 
     When a previously selected protein is supplied and remains tied on the
     RF-based criteria, keep that assignment instead of flipping on bitscore.
@@ -49,6 +51,7 @@ def choose_best_candidate(
         key=lambda item: (
             float(item["rf_distance"]),
             -int(item.get("informative_splits", 0)),
+            -int(item.get("contig_marker_support", 0)),
             -float(item["bitscore"]),
             str(item["protein_id"]),
         ),
@@ -101,6 +104,26 @@ def _build_duplicate_map(lst_nodes: list[str], score_table: pd.DataFrame, score_
     return dups
 
 
+def _build_contig_support_map(score_table: pd.DataFrame) -> dict[str, int]:
+    df = score_table.reset_index().copy()
+    if "namemodel" not in df.columns:
+        return {str(row.savedname): 1 for row in df.itertuples(index=False)}
+    parsed = df["savedname"].apply(parse_savedname)
+    df["genome_id"] = parsed.apply(lambda item: item[0])
+    df["contig_id"] = parsed.apply(lambda item: item[1])
+    df["marker_id"] = df["namemodel"].astype(str).str.split("/").str[-1]
+    grouped = (
+        df.groupby(["genome_id", "contig_id"])["marker_id"]
+        .nunique()
+        .to_dict()
+    )
+    support: dict[str, int] = {}
+    for row in df.itertuples(index=False):
+        key = (str(row.genome_id), str(row.contig_id))
+        support[str(row.savedname)] = int(grouped.get(key, 1))
+    return support
+
+
 def _evaluate_candidate(
     marker_tree: Tree,
     species_tree: Tree,
@@ -108,6 +131,7 @@ def _evaluate_candidate(
     selected: dict[str, str],
     genome: str,
     scored_entry: str,
+    contig_support_map: dict[str, int],
 ) -> dict:
     alt_scored = []
     for group, entries in dups.items():
@@ -129,10 +153,13 @@ def _evaluate_candidate(
 
     rf, maxrf, *_ = species_tree_copy.robinson_foulds(prot_tree_copy, unrooted_trees=True)
     protein_id, bitscore = _split_scored_entry(scored_entry)
+    genome_id, contig_id, _gene_id = parse_savedname(protein_id)
     rf_distance = rf / maxrf if maxrf else 0.0
     return {
         "genome": genome,
         "protein_id": protein_id,
+        "contig_id": contig_id,
+        "contig_marker_support": int(contig_support_map.get(protein_id, 1)),
         "bitscore": bitscore,
         "rf_distance": rf_distance,
         "informative_splits": maxrf,
@@ -166,6 +193,7 @@ def _optimize_selected_entries(
     marker_tree: Tree,
     species_tree: Tree,
     dups: dict[str, list[str]],
+    contig_support_map: dict[str, int],
     selection_mode: str,
     max_rounds: int,
     locked_genomes: set[str],
@@ -180,7 +208,7 @@ def _optimize_selected_entries(
             if len(entries) <= 1 or genome in locked_genomes:
                 continue
             candidates = [
-                _evaluate_candidate(marker_tree, species_tree, dups, fixed_selected, genome, entry)
+                _evaluate_candidate(marker_tree, species_tree, dups, fixed_selected, genome, entry, contig_support_map)
                 for entry in entries
             ]
             selected[genome] = choose_best_candidate(
@@ -200,7 +228,7 @@ def _optimize_selected_entries(
             if len(entries) <= 1 or genome in locked_genomes:
                 continue
             candidates = [
-                _evaluate_candidate(marker_tree, species_tree, dups, selected, genome, entry)
+                _evaluate_candidate(marker_tree, species_tree, dups, selected, genome, entry, contig_support_map)
                 for entry in entries
             ]
             current_selected = selected.get(genome)
@@ -231,6 +259,7 @@ def resolve_marker_tree(
     marker_tree = Tree(marker_tree_path)
     lst_nodes = [leaf.name for leaf in marker_tree.iter_leaves()]
     dups = _build_duplicate_map(lst_nodes, score_table, score_col)
+    contig_support_map = _build_contig_support_map(score_table)
     species_tree = Tree(species_tree_path)
 
     locked_genomes = set()
@@ -251,6 +280,7 @@ def resolve_marker_tree(
         marker_tree=marker_tree,
         species_tree=species_tree,
         dups=dups,
+        contig_support_map=contig_support_map,
         selection_mode=selection_mode,
         max_rounds=max_rounds,
         locked_genomes=locked_genomes,
@@ -264,7 +294,7 @@ def resolve_marker_tree(
         if len(entries) <= 1:
             continue
         candidates = [
-            _evaluate_candidate(marker_tree, species_tree, dups, selected, genome, entry)
+            _evaluate_candidate(marker_tree, species_tree, dups, selected, genome, entry, contig_support_map)
             for entry in entries
         ]
         kept = selected[genome]
@@ -805,14 +835,70 @@ def _count_genome_marker_support(files: list[str]) -> dict[str, int]:
     return counts
 
 
+def _load_contig_marker_context(table_path: str) -> dict[tuple[str, str], set[str]]:
+    if not os.path.exists(table_path):
+        return {}
+    df = pd.read_csv(table_path)
+    if "savedname" not in df.columns or "namemodel" not in df.columns:
+        return {}
+    if "genome_id" not in df.columns or "contig_id" not in df.columns or "gene_id" not in df.columns:
+        parsed = df["savedname"].apply(parse_savedname)
+        df = df.copy()
+        df["genome_id"] = parsed.apply(lambda item: item[0])
+        df["contig_id"] = parsed.apply(lambda item: item[1])
+        df["gene_id"] = parsed.apply(lambda item: item[2])
+    df = df.copy()
+    df["marker_id"] = df["namemodel"].astype(str).str.split("/").str[-1]
+    context: dict[tuple[str, str], set[str]] = {}
+    for row in df.itertuples(index=False):
+        key = (str(row.genome_id), str(row.contig_id))
+        context.setdefault(key, set()).add(str(row.marker_id))
+    return context
+
+
+def classify_singleton_proposals(
+    proposals: list[dict],
+    *,
+    contig_marker_context: dict[tuple[str, str], set[str]],
+) -> list[dict]:
+    suspicious_by_contig: dict[tuple[str, str], set[str]] = {}
+    for proposal in proposals:
+        key = (str(proposal["genome"]), str(proposal.get("contig_id", "unknown_contig")))
+        suspicious_by_contig.setdefault(key, set()).add(str(proposal["marker_name"]))
+
+    classified: list[dict] = []
+    for proposal in proposals:
+        updated = dict(proposal)
+        genome = str(updated["genome"])
+        contig = str(updated.get("contig_id", "unknown_contig"))
+        key = (genome, contig)
+        markers_on_contig = set(contig_marker_context.get(key, set()))
+        suspicious_markers = suspicious_by_contig.get(key, set())
+
+        if contig == "unknown_contig":
+            updated["singleton_class"] = "ambiguous"
+        elif not markers_on_contig or markers_on_contig == {updated["marker_name"]}:
+            updated["singleton_class"] = "contamination_candidate"
+        elif any(marker not in suspicious_markers for marker in markers_on_contig - {updated["marker_name"]}):
+            updated["singleton_class"] = "hgt_candidate"
+        else:
+            updated["singleton_class"] = "contamination_candidate"
+        classified.append(updated)
+    return classified
+
+
 def select_singleton_proposals(
     proposals: list[dict],
     *,
     genome_marker_counts: dict[str, int],
     min_markers_per_genome: int = 1,
+    max_prunes_per_genome: int = 1,
 ) -> list[dict]:
     budgets = {
-        genome: max(0, int(count) - int(min_markers_per_genome))
+        genome: min(
+            max(0, int(count) - int(min_markers_per_genome)),
+            int(max_prunes_per_genome),
+        )
         for genome, count in genome_marker_counts.items()
     }
     accepted: list[dict] = []
@@ -887,6 +973,10 @@ def _propose_singleton_prune_worker(args):
                 for key, value in chosen.items()
                 if key != "candidate_tree"
             }
+            genome_id, contig_id, gene_id = parse_sequence_id(chosen["leaf_name"])
+            chosen["genome"] = genome_id
+            chosen["contig_id"] = contig_id
+            chosen["gene_id"] = gene_id
 
     return {
         "filepath": filepath,
@@ -926,7 +1016,13 @@ def _write_singleton_result(
         chosen_tree = choose_tree_by_rf(ti, tf, candidate_tree)
         decision = "pruned"
     elif chosen is not None:
-        decision = "blocked_by_genome_budget"
+        singleton_class = chosen.get("singleton_class", "unclassified")
+        if singleton_class == "hgt_candidate":
+            decision = "kept_hgt_candidate"
+        elif singleton_class == "ambiguous":
+            decision = "kept_ambiguous"
+        else:
+            decision = "blocked_by_genome_budget"
 
     with open(os.path.join(outdir, "removed", marker_name), "a") as f:
         if chosen is None:
@@ -938,6 +1034,7 @@ def _write_singleton_result(
                 (
                     f"\nsin{chosen['leaf_name']}\tmode={result['mode']}"
                     f"\tdecision={decision}"
+                    f"\tsingleton_class={chosen.get('singleton_class', 'unclassified')}"
                     f"\tscore={float(chosen['score']):.3f}"
                     f"\tdelta_rf={float(chosen['delta_rf']):.3f}"
                     f"\ttopoknn={float(chosen['topoknn_score']):.3f}"
@@ -993,13 +1090,27 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
                 "marker_name": result["marker_name"],
             }
         )
-    accepted = select_singleton_proposals(
+    proposals = classify_singleton_proposals(
         proposals,
+        contig_marker_context=_load_contig_marker_context(os.path.join(cfg.outdir, "table_elim_dups")),
+    )
+    accepted = select_singleton_proposals(
+        [proposal for proposal in proposals if proposal.get("singleton_class") == "contamination_candidate"],
         genome_marker_counts=_count_genome_marker_support(files),
         min_markers_per_genome=1,
     )
     accepted_markers = {proposal["marker_name"] for proposal in accepted}
+    proposal_lookup = {
+        (proposal["marker_name"], proposal["leaf_name"]): proposal
+        for proposal in proposals
+    }
     for result in sorted(results, key=lambda item: item["filepath"]):
+        chosen = result["chosen"]
+        if chosen is not None:
+            enriched = proposal_lookup.get((result["marker_name"], chosen["leaf_name"]))
+            if enriched is not None:
+                result = dict(result)
+                result["chosen"] = enriched
         _write_singleton_result(
             result,
             species_tree_path=species_tree_path,

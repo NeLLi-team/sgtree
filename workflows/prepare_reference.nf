@@ -18,12 +18,15 @@ workflow PREPARE_REFERENCE {
         max_sdup,
         max_dupl,
         'hmmalign',   // aln method
+        false,        // ani enabled
         false,        // has_ref
         file('NO_REF_MERGED'),
-        file('NO_REF_PROTEOMES')
+        file('NO_REF_PROTEOMES'),
+        file('NO_REF_GENOME_MANIFEST')
     )
 
     emit:
     table_elim_dups = SGTREE_MAIN.out.table_elim_dups
     proteomes       = SGTREE_MAIN.out.proteomes
+    genome_manifest = SGTREE_MAIN.out.genome_manifest
 }

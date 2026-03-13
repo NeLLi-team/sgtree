@@ -103,13 +103,25 @@ def _split_models(models_path: str, split_dir: str) -> None:
                 hmm_profile.write(out_handle)
 
 
-def run_alignment(cfg: Config):
-    """Run sequence alignment using the configured method (mafft, mafft-linsi, or hmmalign)."""
-    os.makedirs(cfg.aligned_dir, exist_ok=True)
+def run_alignment(
+    cfg: Config,
+    *,
+    extracted_seqs_dir: str | None = None,
+    aligned_dir: str | None = None,
+):
+    """Run sequence alignment using the configured method.
+
+    By default this uses the standard extracted/aligned directories from the
+    config, but marker-selection cleanup can provide alternate directories when
+    alignments need to be rebuilt from cleaned sequence sets.
+    """
+    extracted_seqs_dir = extracted_seqs_dir or cfg.extracted_seqs_dir
+    aligned_dir = aligned_dir or cfg.aligned_dir
+    os.makedirs(aligned_dir, exist_ok=True)
 
     files = [
         os.path.basename(f)
-        for f in glob.glob(os.path.join(cfg.extracted_seqs_dir, "*"))
+        for f in glob.glob(os.path.join(extracted_seqs_dir, "*"))
     ]
 
     print(f"- ...running {cfg.aln_method}")
@@ -118,16 +130,16 @@ def run_alignment(cfg: Config):
 
     if cfg.aln_method == "mafft":
         _map_with_fallback(_run_mafft, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, f, threads_per_job) for f in files
+            (extracted_seqs_dir, aligned_dir, f, threads_per_job) for f in files
         ], n_jobs)
     elif cfg.aln_method == "mafft-linsi":
         _map_with_fallback(_run_mafft_linsi, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, f, threads_per_job) for f in files
+            (extracted_seqs_dir, aligned_dir, f, threads_per_job) for f in files
         ], n_jobs)
     else:
         split_dir = os.path.join(cfg.outdir, "models_split")
         _split_models(cfg.models_path, split_dir)
         _map_with_fallback(_run_hmmalign, [
-            (cfg.extracted_seqs_dir, cfg.aligned_dir, os.path.join(split_dir, f"{f.split('.')[0]}.hmm"), f)
+            (extracted_seqs_dir, aligned_dir, os.path.join(split_dir, f"{f.split('.')[0]}.hmm"), f)
             for f in files
         ], n_jobs)

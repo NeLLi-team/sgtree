@@ -9,6 +9,8 @@ from pyhmmer import easel, hmmer, plan7
 
 from sgtree.config import Config
 from sgtree.fasta_normalize import normalize_and_concat_proteomes
+from sgtree.id_schema import parse_savedname
+from sgtree.input_stage import detect_input_format, gene_call_inputs, write_genome_manifest
 
 
 def _cap_namemodel_duplicates(df: pd.DataFrame, max_per_group: int = 5) -> pd.DataFrame:
@@ -35,6 +37,13 @@ def _count_models_in_hmm(models_path: str) -> int:
     return count
 
 
+def _load_keep_genomes(cfg: Config) -> set[str]:
+    if not cfg.ani_cluster or not os.path.exists(cfg.ani_keep_list_path):
+        return set()
+    with open(cfg.ani_keep_list_path) as handle:
+        return {line.strip() for line in handle if line.strip()}
+
+
 def concat_inputs(cfg: Config) -> int:
     """Stage HMM models and concatenate genome FASTA files into single files.
 
@@ -54,10 +63,33 @@ def concat_inputs(cfg: Config) -> int:
 
     os.makedirs(cfg.outdir, exist_ok=True)
     map_path = os.path.join(cfg.outdir, "proteomes_header_map.tsv")
-    stats = normalize_and_concat_proteomes(cfg.genomedir, cfg.proteomes_path, map_path)
+    input_format = cfg.input_format
+    if input_format == "auto":
+        input_format = detect_input_format(cfg.genomedir)
+    if input_format == "fna":
+        staged = gene_call_inputs(
+            cfg.genomedir,
+            cfg.staged_proteomes_dir,
+            cfg.gene_call_map_path,
+        )
+        source_path = staged.staged_source
+    elif input_format == "faa":
+        staged = None
+        source_path = cfg.genomedir
+    else:
+        raise ValueError(f"Unsupported input format: {input_format}")
+
+    write_genome_manifest(
+        cfg.genomedir,
+        input_format=input_format,
+        manifest_path=cfg.genome_manifest_path,
+        staged_source=cfg.staged_proteomes_dir if input_format == "fna" else None,
+    )
+    stats = normalize_and_concat_proteomes(source_path, cfg.proteomes_path, map_path)
+    cfg.input_format = input_format
     print(
         "-... normalized proteomes "
-        f"(genomes={stats['genomes']}, records={stats['records']}, "
+        f"(format={input_format}, genomes={stats['genomes']}, contigs={stats['contigs']}, records={stats['records']}, "
         f"invalid_chars_replaced={stats['invalid_chars_replaced']})"
     )
 
@@ -182,6 +214,13 @@ def parse_hmmsearch(cfg: Config) -> tuple[pd.DataFrame, dict]:
                 removed_reasons.setdefault(g, []).append(f"maxdupl:{dup_fraction:.4f}")
         removed_genomes.update(high_dup_fraction)
 
+    keep_genomes = _load_keep_genomes(cfg)
+    if keep_genomes:
+        non_representatives = {g for g in dict_counts if g not in keep_genomes}
+        for genome in non_representatives:
+            removed_reasons.setdefault(genome, []).append("ani_cluster:non_representative")
+        removed_genomes.update(non_representatives)
+
     rows_to_drop = []
     for idx, row in finaldf.iterrows():
         name = row[0].split("|")[0]
@@ -197,7 +236,12 @@ def parse_hmmsearch(cfg: Config) -> tuple[pd.DataFrame, dict]:
     print(f"AFTER hmmout {finaldf.shape} # rows deleted {len(rows_to_drop)}")
 
     # write marker count matrix
-    count_mat = pd.DataFrame.from_dict(dict_counts).fillna(0)
+    kept_counts = {
+        genome: counts
+        for genome, counts in dict_counts.items()
+        if genome not in removed_genomes
+    }
+    count_mat = pd.DataFrame.from_dict(kept_counts).fillna(0)
     count_mat.to_csv(os.path.join(cfg.outdir, "marker_count_matrix.csv"))
 
     return finaldf, dict_counts
@@ -211,6 +255,10 @@ def build_working_df(cfg: Config, finaldf: pd.DataFrame) -> tuple[pd.DataFrame, 
     """
     finaldf = finaldf.copy()
     finaldf["savedname"] = finaldf[0].apply(lambda c: c.replace("|", "/"))
+    parsed_ids = finaldf["savedname"].apply(parse_savedname)
+    finaldf["genome_id"] = parsed_ids.apply(lambda item: item[0])
+    finaldf["contig_id"] = parsed_ids.apply(lambda item: item[1])
+    finaldf["gene_id"] = parsed_ids.apply(lambda item: item[2])
     df = finaldf.map(lambda x: x.split("|")[0] if isinstance(x, str) else x)
     score_col = 7 if 7 in df.columns else ("7" if "7" in df.columns else None)
     if score_col is None:
@@ -219,6 +267,9 @@ def build_working_df(cfg: Config, finaldf: pd.DataFrame) -> tuple[pd.DataFrame, 
     if df["score_bits"].isna().any():
         raise ValueError("Failed to parse one or more HMMER bitscores from column '7'")
     df['namemodel'] = df[0] + "/" + df[3]
+    df["genome_id"] = finaldf["genome_id"]
+    df["contig_id"] = finaldf["contig_id"]
+    df["gene_id"] = finaldf["gene_id"]
     df = df.drop_duplicates(subset='savedname', keep='first')
     df.to_csv(os.path.join(cfg.tables_dir, "before_drops_elim_incompletes"))
 
@@ -236,6 +287,13 @@ def build_working_df(cfg: Config, finaldf: pd.DataFrame) -> tuple[pd.DataFrame, 
     if cfg.ref is not None:
         ref_path = os.path.join(cfg.ref_dir_path(), "tables", "merged_final")
         df_ref = pd.read_csv(ref_path)
+        keep_genomes = _load_keep_genomes(cfg)
+        if keep_genomes:
+            if "genome_id" not in df_ref.columns:
+                parsed_ref = df_ref["savedname"].astype(str).apply(parse_savedname)
+                df_ref = df_ref.copy()
+                df_ref["genome_id"] = parsed_ref.apply(lambda item: item[0])
+            df_ref = df_ref[df_ref["genome_id"].astype(str).isin(keep_genomes)]
         df = pd.concat([df, df_ref])
 
     df_fordups = df.set_index(df["savedname"])

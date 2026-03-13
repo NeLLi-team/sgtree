@@ -22,7 +22,7 @@ class BenchmarkTests(unittest.TestCase):
             event_index=1,
         )
 
-        self.assertTrue(record.id.startswith("RecipientB|contam__MarkerX__DonorA__e001"))
+        self.assertTrue(record.id.startswith("RecipientB|contig__contam__MarkerX__DonorA__e001|contam__MarkerX__DonorA__e001"))
         self.assertEqual(str(record.seq), "MPEPTIDE")
 
     def test_apply_replacement_event_removes_native_and_adds_contaminant(self):
@@ -40,8 +40,8 @@ class BenchmarkTests(unittest.TestCase):
         }
         contaminant = SeqRecord(
             Seq("CCCC"),
-            id="RecipientB|contam__MarkerX__DonorA__e001",
-            description="RecipientB|contam__MarkerX__DonorA__e001",
+            id="RecipientB|contig__contam__MarkerX__DonorA__e001|contam__MarkerX__DonorA__e001",
+            description="RecipientB|contig__contam__MarkerX__DonorA__e001|contam__MarkerX__DonorA__e001",
         )
 
         updated = benchmark.apply_replacement_event(
@@ -52,7 +52,7 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertNotIn("RecipientB|native_marker", updated)
         self.assertIn("RecipientB|background", updated)
-        self.assertIn("RecipientB|contam__MarkerX__DonorA__e001", updated)
+        self.assertIn("RecipientB|contig__contam__MarkerX__DonorA__e001|contam__MarkerX__DonorA__e001", updated)
 
     def test_drop_native_marker_removes_record_without_replacement(self):
         recipient_records = {
@@ -75,6 +75,146 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertNotIn("RecipientB|native_marker", updated)
         self.assertIn("RecipientB|background", updated)
+
+    def test_choose_markers_for_pair_requires_marker_presence_in_both_genomes(self):
+        native_map = {
+            "GenomeA": {"Marker1": "GenomeA|m1", "Marker2": "GenomeA|m2"},
+            "GenomeB": {"Marker1": "GenomeB|m1"},
+        }
+
+        chosen = benchmark._choose_markers_for_pair(
+            used_pairs=set(),
+            genomes=("GenomeA", "GenomeB"),
+            markers=["Marker1", "Marker2"],
+            native_map=native_map,
+            n_needed=2,
+            rng=benchmark.Random(42),
+        )
+
+        self.assertEqual(chosen, ["Marker1"])
+
+    def test_donor_candidates_with_marker_filters_missing_marker_genomes(self):
+        native_map = {
+            "GenomeA": {"Marker1": "GenomeA|m1"},
+            "GenomeB": {"Marker2": "GenomeB|m2"},
+            "GenomeC": {"Marker1": "GenomeC|m1"},
+        }
+
+        donors = benchmark._donor_candidates_with_marker(
+            ["GenomeA", "GenomeB", "GenomeC"],
+            "Marker1",
+            native_map,
+        )
+
+        self.assertEqual(donors, ["GenomeA", "GenomeC"])
+
+    def test_normalize_assembly_accession_parses_supported_filename_forms(self):
+        self.assertEqual(
+            benchmark._normalize_assembly_accession("FLAV__GCA_000016645-1"),
+            "GCA_000016645.1",
+        )
+        self.assertEqual(
+            benchmark._normalize_assembly_accession("GAMMA__GCA-000147015-1"),
+            "GCA_000147015.1",
+        )
+        self.assertEqual(
+            benchmark._normalize_assembly_accession("CHLAMYDIOTA__GCF_123456789-3"),
+            "GCF_123456789.3",
+        )
+
+    def test_taxonomy_scope_matches_enforces_expected_rank_rules(self):
+        recipient = {
+            "class": "Gammaproteobacteria",
+            "order_name": "Enterobacterales",
+            "family": "Enterobacteriaceae",
+            "genus": "Escherichia",
+        }
+        same_family_other_genus = {
+            "class": "Gammaproteobacteria",
+            "order_name": "Enterobacterales",
+            "family": "Enterobacteriaceae",
+            "genus": "Salmonella",
+        }
+        same_order_other_family = {
+            "class": "Gammaproteobacteria",
+            "order_name": "Enterobacterales",
+            "family": "Vibrionaceae",
+            "genus": "Vibrio",
+        }
+        same_class_other_order = {
+            "class": "Gammaproteobacteria",
+            "order_name": "Pseudomonadales",
+            "family": "Pseudomonadaceae",
+            "genus": "Pseudomonas",
+        }
+
+        self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_family_other_genus, "genus"))
+        self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_order_other_family, "family"))
+        self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_class_other_order, "order"))
+        self.assertFalse(benchmark._taxonomy_scope_matches(recipient, same_order_other_family, "genus"))
+        self.assertFalse(benchmark._taxonomy_scope_matches(recipient, same_class_other_order, "family"))
+
+    def test_taxonomic_donor_candidates_filter_by_scope_and_marker(self):
+        recipient_taxonomy = {
+            "RecipientA": {
+                "class": "Gammaproteobacteria",
+                "order_name": "Enterobacterales",
+                "family": "Enterobacteriaceae",
+                "genus": "Escherichia",
+            }
+        }
+        donor_taxonomy = {
+            "DonorGood": {
+                "class": "Gammaproteobacteria",
+                "order_name": "Enterobacterales",
+                "family": "Enterobacteriaceae",
+                "genus": "Salmonella",
+            },
+            "DonorWrongFamily": {
+                "class": "Gammaproteobacteria",
+                "order_name": "Enterobacterales",
+                "family": "Vibrionaceae",
+                "genus": "Vibrio",
+            },
+            "DonorMissingMarker": {
+                "class": "Gammaproteobacteria",
+                "order_name": "Enterobacterales",
+                "family": "Enterobacteriaceae",
+                "genus": "Klebsiella",
+            },
+        }
+        donor_native_map = {
+            "DonorGood": {"Marker1": "DonorGood|m1"},
+            "DonorWrongFamily": {"Marker1": "DonorWrongFamily|m1"},
+            "DonorMissingMarker": {"Marker2": "DonorMissingMarker|m2"},
+        }
+
+        donors = benchmark._taxonomic_donor_candidates(
+            recipient_genome="RecipientA",
+            marker="Marker1",
+            scope="genus",
+            recipient_taxonomy=recipient_taxonomy,
+            donor_taxonomy=donor_taxonomy,
+            donor_native_map=donor_native_map,
+            truth_tree=None,
+        )
+
+        self.assertEqual(donors, ["DonorGood"])
+
+    def test_choose_recipient_sets_honors_overlap_layout(self):
+        duplicate_recipients, replacement_recipients = benchmark._choose_recipient_sets(
+            [f"Genome{idx}" for idx in range(10)],
+            duplicate_recipients=5,
+            replacement_recipients=5,
+            overlap_recipients=2,
+            rng=benchmark.Random(42),
+        )
+
+        overlap = set(duplicate_recipients) & set(replacement_recipients)
+        self.assertEqual(len(duplicate_recipients), 5)
+        self.assertEqual(len(replacement_recipients), 5)
+        self.assertEqual(len(overlap), 2)
+        self.assertEqual(len(set(duplicate_recipients) | set(replacement_recipients)), 8)
 
     def test_generate_cross_benchmark_accepts_different_model_sets_when_markers_overlap(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,6 +313,27 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(set(records), {"GenomeA", "GenomeB"})
         self.assertEqual(set(records["GenomeA"]), {"GenomeA|prot1", "GenomeA|prot2"})
         self.assertEqual(set(records["GenomeB"]), {"GenomeB|prot1"})
+
+    def test_prepare_source_subset_accepts_fna_sources(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_dir = root / "source"
+            outdir = root / "subset"
+            source_dir.mkdir()
+            (source_dir / "GenomeA.fna").write_text(">contig1\nATGAAATTTAAATAG\n")
+            (source_dir / "GenomeB.fna").write_text(">contig1\nATGAAATTTAAATAG\n")
+
+            benchmark.prepare_source_subset(
+                source_dir=source_dir,
+                outdir=outdir,
+                list_file=None,
+                n_candidates=1,
+                seed=42,
+            )
+
+            files = sorted(outdir.iterdir())
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0].suffix, ".fna")
 
     def test_write_genome_summary_tsv_counts_duplicate_and_replacement_events(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -361,6 +522,107 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(result["final_taxa_match_reference"])
         self.assertEqual(result["final_extra_taxa_count"], 0)
         self.assertEqual(result["final_missing_taxa_count"], 0)
+
+    def test_evaluate_benchmark_run_reports_singleton_collateral_removals(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            scenario_dir = benchmark_dir / "scenarios" / "replacement_only"
+            run_dir = root / "run"
+            (scenario_dir).mkdir(parents=True)
+            (run_dir / "aligned_final").mkdir(parents=True)
+            (run_dir / "protTrees" / "no_duplicates" / "out").mkdir(parents=True)
+            (run_dir / "protTrees" / "no_singles").mkdir(parents=True)
+
+            reference_tree = scenario_dir / "reference_tree.nwk"
+            reference_tree.write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree_final.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "marker_selection_rf_values.txt").write_text(
+                "ProteinID MarkerGene RFdistance Status\n"
+            )
+            (scenario_dir / "events.tsv").write_text(
+                "\t".join(
+                    [
+                        "event_index",
+                        "scenario",
+                        "event_type",
+                        "recipient_genome",
+                        "recipient_group",
+                        "marker",
+                        "native_record_id",
+                        "donor_genome",
+                        "donor_group",
+                        "source_relation",
+                        "donor_record_id",
+                        "contaminant_record_id",
+                        "expected_replacement_outcome",
+                        "native_degrade_fraction",
+                    ]
+                )
+                + "\n"
+                + "\t".join(
+                    [
+                        "1",
+                        "replacement_only",
+                        "replacement",
+                        "GenomeA",
+                        "flavo",
+                        "MarkerX",
+                        "GenomeA|native_marker",
+                        "GenomeB",
+                        "gamma",
+                        "cross_group",
+                        "GenomeB|native_marker",
+                        "GenomeA|contam__MarkerX__GenomeB__e001",
+                        "DropMarkerOrRemoveContaminant",
+                        "0.12",
+                    ]
+                )
+                + "\n"
+            )
+            (run_dir / "aligned_final" / "MarkerX.faa").write_text("")
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "selected_genomes": ["GenomeA", "GenomeB", "GenomeC"],
+                        "scenarios": [
+                            {
+                                "name": "replacement_only",
+                                "reference_tree_path": str(reference_tree),
+                                "reference_taxa": ["GenomeA", "GenomeB", "GenomeC"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            (run_dir / "protTrees" / "no_duplicates" / "out" / "_no_dups_MarkerX_.nw").write_text(
+                "(GenomeA|x,GenomeB|x,GenomeC|x);\n"
+            )
+            (run_dir / "protTrees" / "no_singles" / "_no_dups_MarkerX_.nw").write_text(
+                "(GenomeB|x,GenomeC|x);\n"
+            )
+            (run_dir / "protTrees" / "no_duplicates" / "out" / "_no_dups_MarkerY_.nw").write_text(
+                "(GenomeA|y,GenomeB|y,GenomeC|y);\n"
+            )
+            (run_dir / "protTrees" / "no_singles" / "_no_dups_MarkerY_.nw").write_text(
+                "(GenomeA|y,GenomeB|y);\n"
+            )
+
+            result = benchmark.evaluate_benchmark_run(
+                benchmark_dir=benchmark_dir,
+                scenario_name="replacement_only",
+                run_dir=run_dir,
+                runtime_seconds=1.0,
+            )
+
+        self.assertEqual(result["singleton_intended_removed_count"], 1)
+        self.assertEqual(result["singleton_intended_removed"], "GenomeA:MarkerX")
+        self.assertEqual(result["singleton_collateral_removed_count"], 1)
+        self.assertEqual(result["singleton_collateral_removed"], "GenomeC:MarkerY")
+        self.assertEqual(result["singleton_collateral_genome_count"], 1)
+        self.assertEqual(result["singleton_collateral_genomes"], "GenomeC")
 
 
 if __name__ == "__main__":

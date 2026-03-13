@@ -52,6 +52,28 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(best["protein_id"], "GenomeA/protein_001")
 
+    def test_choose_best_candidate_prefers_higher_contig_support_before_bitscore(self):
+        candidates = [
+            {
+                "protein_id": "GenomeA/contig1/protein_001",
+                "rf_distance": 0.0,
+                "informative_splits": 4,
+                "contig_marker_support": 1,
+                "bitscore": 200.0,
+            },
+            {
+                "protein_id": "GenomeA/contig2/protein_001",
+                "rf_distance": 0.0,
+                "informative_splits": 4,
+                "contig_marker_support": 3,
+                "bitscore": 100.0,
+            },
+        ]
+
+        best = marker_selection.choose_best_candidate(candidates)
+
+        self.assertEqual(best["protein_id"], "GenomeA/contig2/protein_001")
+
     def test_resolve_marker_tree_uses_seeded_assignment_on_exact_rf_tie(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -319,6 +341,68 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertEqual(
             {proposal["marker_name"] for proposal in accepted},
             {"MarkerA"},
+        )
+
+    def test_select_singleton_proposals_defaults_to_one_prune_per_genome(self):
+        proposals = [
+            {"marker_name": "MarkerA", "genome": "Genome1", "score": 5.0},
+            {"marker_name": "MarkerB", "genome": "Genome1", "score": 4.0},
+            {"marker_name": "MarkerC", "genome": "Genome2", "score": 3.0},
+            {"marker_name": "MarkerD", "genome": "Genome2", "score": 2.0},
+        ]
+
+        accepted = marker_selection.select_singleton_proposals(
+            proposals,
+            genome_marker_counts={"Genome1": 10, "Genome2": 10},
+            min_markers_per_genome=1,
+        )
+
+        self.assertEqual(
+            {proposal["marker_name"] for proposal in accepted},
+            {"MarkerA", "MarkerC"},
+        )
+
+    def test_classify_singleton_proposals_marks_hgt_when_contig_has_other_clean_markers(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "contig_id": "contig1",
+                "leaf_name": "Genome1|contig1|gene1",
+            }
+        ]
+
+        classified = marker_selection.classify_singleton_proposals(
+            proposals,
+            contig_marker_context={("Genome1", "contig1"): {"MarkerA", "MarkerB"}},
+        )
+
+        self.assertEqual(classified[0]["singleton_class"], "hgt_candidate")
+
+    def test_classify_singleton_proposals_marks_contamination_when_all_markers_on_contig_are_suspect(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "contig_id": "contig1",
+                "leaf_name": "Genome1|contig1|gene1",
+            },
+            {
+                "marker_name": "MarkerB",
+                "genome": "Genome1",
+                "contig_id": "contig1",
+                "leaf_name": "Genome1|contig1|gene2",
+            },
+        ]
+
+        classified = marker_selection.classify_singleton_proposals(
+            proposals,
+            contig_marker_context={("Genome1", "contig1"): {"MarkerA", "MarkerB"}},
+        )
+
+        self.assertEqual(
+            {proposal["singleton_class"] for proposal in classified},
+            {"contamination_candidate"},
         )
 
 

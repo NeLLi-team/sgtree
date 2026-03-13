@@ -1,8 +1,19 @@
 #!/usr/bin/env python
 """Run HMMER-style domain search using pyhmmer and write domtblout."""
 import argparse
+import subprocess
+import sys
+from pathlib import Path
 
-from pyhmmer import easel, hmmer, plan7
+
+def _maybe_reexec_with_pixi_python() -> bool:
+    root = Path(__file__).resolve().parents[1]
+    pixi_python = root / ".pixi" / "envs" / "default" / "bin" / "python"
+    current_python = Path(sys.executable).resolve()
+    if not pixi_python.exists() or current_python == pixi_python.resolve():
+        return False
+    subprocess.run([str(pixi_python), str(Path(__file__).resolve()), *sys.argv[1:]], check=True)
+    return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,6 +38,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    try:
+        from pyhmmer import easel, hmmer, plan7
+    except ModuleNotFoundError:
+        if _maybe_reexec_with_pixi_python():
+            return
+        raise
     args = parse_args()
 
     with plan7.HMMFile(args.models) as hmm_file:

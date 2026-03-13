@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--lflt", required=True, type=int)
     parser.add_argument("--max_sdup", type=int, default=-1)
     parser.add_argument("--max_dupl", type=float, default=-1.0)
+    parser.add_argument("--keep_genomes", default=None)
     parser.add_argument("--ref_merged_final", default=None)
     parser.add_argument("--ref_proteomes", default=None)
     args = parser.parse_args()
@@ -103,6 +104,15 @@ def main():
                 removed_reasons.setdefault(g, []).append(f"maxdupl:{dup_fraction:.4f}")
         removed_genomes.update(high_dup_fraction)
 
+    keep_genomes = set()
+    if args.keep_genomes is not None:
+        with open(args.keep_genomes) as handle:
+            keep_genomes = {line.strip() for line in handle if line.strip()}
+        non_representatives = {g for g in dict_counts if g not in keep_genomes}
+        for genome in non_representatives:
+            removed_reasons.setdefault(genome, []).append("ani_cluster:non_representative")
+        removed_genomes.update(non_representatives)
+
     rows_to_drop = []
     for idx, row in finaldf.iterrows():
         name = row[0].split("|")[0]
@@ -116,7 +126,12 @@ def main():
             f.write(f"{genome}\t{reasons}\n")
 
     # write marker count matrix
-    count_mat = pd.DataFrame.from_dict(dict_counts).fillna(0)
+    kept_counts = {
+        genome: counts
+        for genome, counts in dict_counts.items()
+        if genome not in removed_genomes
+    }
+    count_mat = pd.DataFrame.from_dict(kept_counts).fillna(0)
     count_mat.to_csv("marker_count_matrix.csv")
 
     # build working df
@@ -138,6 +153,12 @@ def main():
     # merge with reference if available
     if args.ref_merged_final is not None:
         df_ref = pd.read_csv(args.ref_merged_final)
+        if keep_genomes:
+            if "genome_id" not in df_ref.columns:
+                parsed = df_ref["savedname"].astype(str).str.replace("/", "|").str.split("|")
+                df_ref = df_ref.copy()
+                df_ref["genome_id"] = parsed.apply(lambda item: item[0] if item else "")
+            df_ref = df_ref[df_ref["genome_id"].astype(str).isin(keep_genomes)]
         df = pd.concat([df, df_ref])
 
     df_fordups = df.set_index(df["savedname"])

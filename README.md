@@ -1,6 +1,6 @@
 # SGTree
 
-SGTree is an end-to-end workflow for phylogenetic tree building. Use the provided sets of HMMs or provide your own HMMs to find the proteins of interest. SGTree then performs gene tree to approximate species tree reconciliation to select the most likely correct copy of a protein in case of duplications (paralogs, contamination). 
+SGTree is an end-to-end workflow for phylogenetic tree building. Use the provided sets of HMMs or provide your own HMMs to find the proteins of interest. In the default branch, duplicate copies are resolved by HMM bitscore before species-tree inference. In `--marker_selection` mode, SGTree builds per-marker trees and performs RF-guided duplicate cleanup plus optional singleton removal to improve contamination robustness.
 
 ## Setup
 
@@ -10,11 +10,11 @@ Install the Pixi environment:
 pixi install
 ```
 
-The environment is managed through `pixi.toml` only.
+The environment is managed through `pixi.toml` and `pixi.lock`.
 
 ## Run
 
-Primary interface (Nextflow):
+Primary interface (`pixi run sgtree` wrapper):
 
 ```bash
 pixi run sgtree --help
@@ -47,8 +47,21 @@ pixi run sgtree \
   --singles yes
 ```
 
+Legacy baseline for direct comparisons:
+
+```bash
+pixi run sgtree \
+  --genomedir testgenomes/Chloroflexi \
+  --modeldir resources/models/UNI56.hmm \
+  --marker_selection true \
+  --ref testgenomes/chlorref \
+  --selection_mode legacy
+```
+
 `pixi run sgtree` writes logs automatically to `runs/nextflow/logs/`.
+For nucleotide assembly input (`*.fna`, `*.fa`, `*.fasta`) or any run with `--ani_cluster yes` or `--snp yes`, the wrapper dispatches to the Python engine automatically so gene calling, ANI clustering, and optional SNP-tree generation all happen in one code path.
 Marker searches and `--aln hmmalign` are run with `pyhmmer` (HMMER-compatible search output).
+Rendered PNG trees now use a headless-safe matplotlib/Biopython renderer.
 
 Example with IQ-TREE and explicit HMM threshold mode:
 
@@ -59,6 +72,23 @@ pixi run sgtree \
   --tree_method iqtree \
   --iqtree_fast true \
   --hmmsearch_cutoff cut_ga
+```
+
+Example with `fna` input plus ANI clustering and opt-in per-cluster SNP trees:
+
+```bash
+pixi run benchmark-prepare-burkholderiaceae
+
+pixi run sgtree \
+  --genomedir testgenomes/Burkholderiaceae50 \
+  --modeldir resources/models/UNI56.hmm \
+  --outdir runs/burkholderiaceae_ani_benchmark \
+  --num_cpus 24 \
+  --ani_cluster true \
+  --snp true \
+  --ani_threshold 95 \
+  --marker_selection true \
+  --keep_intermediates true
 ```
 
 Second choice (Python implementation without nextflow):
@@ -81,6 +111,19 @@ Core method controls:
 - `--tree_method`: `fasttree` or `iqtree` (default `fasttree`) for both species tree and per-marker trees.
 - `--iqtree_fast`: apply `-fast` when `--tree_method iqtree` (default `true`).
 - `--iqtree_model`: IQ-TREE model string (default `LG+F+I+G4`).
+- `--selection_mode`: `coordinate` or `legacy` (default `coordinate`) for marker-selection duplicate cleanup.
+- `--selection_max_rounds`: maximum coordinate-descent rounds in `coordinate` mode (default `5`).
+- `--selection_global_rounds`: rebuild the guide species tree and rerun duplicate cleanup for a small fixed number of rounds (default `1`).
+- `--lock_references`: keep reference duplicate resolution score-locked instead of RF-updating them (default `false`).
+- `--singles_mode`: `neighbor`, `delta_rf`, `backbone`, or `ensemble` when singleton filtering is enabled.
+- `--singles_min_rfdist`: minimum marker/global RF distance required before singleton pruning activates (default `0.25`).
+- `--keep_intermediates`: keep intermediate alignments/tables for debugging and benchmarking (default `false`).
+- `--ani_cluster`: run pairwise ANI on the combined query+reference genome set and keep one representative per cluster for the main SGTree species tree.
+- `--snp`: build cluster-level SNP trees after ANI clustering (default `false`; requires `--ani_cluster yes`).
+- `--ani_threshold`: ANI cutoff used to retain graph edges before clustering (default `95`).
+- `--ani_backend`: `auto`, `skani`, or `minimap2` (default `auto`; SGTree prefers `skani` when available and falls back to `minimap2` in restricted environments).
+- `--ani_mcl_inflation`: MCL inflation used for ANI graph clustering (default `2.0`).
+- `--snp_tree_min_cluster_size`: build a cluster-level SNP tree only when an ANI cluster has at least this many genomes (default `3`).
 
 HMM search thresholds:
 
@@ -114,6 +157,9 @@ Practical selection guide:
 - `--aln hmmalign` is the fastest stable default and keeps alignment behavior tied to each profile HMM.
 - `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
 - `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
+- `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
+- `--selection_global_rounds 2` is the current practical setting for harder contamination benchmarks.
+- `--singles yes` is still heuristic. On the current hard small benchmark the best topology is obtained with iterative duplicate cleanup and singleton filtering off; on the larger Flavobacteriaceae prototype, `--singles_mode neighbor` is currently the strongest singleton-aware option.
 - Typical inclusion presets:
 - Balanced: `--percent_models 10 --max_sdup 2 --max_dupl 0.25`
 - Strict: `--percent_models 30 --max_sdup 1 --max_dupl 0.10`
@@ -121,7 +167,7 @@ Practical selection guide:
 
 ## Input Requirements
 
-Proteomes must be FASTA (`*.faa`). SGTree now normalizes all inputs internally to:
+SGTree accepts either proteome FASTA (`*.faa`) or genome assembly FASTA (`*.fna`, `*.fa`, `*.fasta`). Inputs are normalized internally to:
 
 ```text
 >IMG2684622718|2685462912
@@ -130,16 +176,18 @@ MLCAFAEEEAKIAETVGKVATELKVKKLLSDFATKEGEEHISTYNKIAMTAKAEGYADIEAMLCAFAEEEAKLQKL
 
 Normalization behavior:
 
-- Directory input (`--genomedir <dir>`): one proteome per `*.faa`; genome id is derived from filename stem.
+- Directory input (`--genomedir <dir>`): one genome/proteome per file; genome id is derived from filename stem.
 - Single FASTA input (`--genomedir <file>`): if headers already contain `genome|protein`, the genome part is preserved.
+- `fna` input is gene-called with `pyrodigal` before marker search; the gene-call table is written as `gene_calls.tsv`.
 - Headers and IDs are sanitized to avoid delimiter collisions.
 - Malformed header joins (for example `...*>next_header`) are repaired before parsing.
 - Invalid amino-acid characters are replaced with `X`; `*` is removed.
 - Header mapping is written as `proteomes_header_map_<input>.tsv` in `--outdir`.
+- A genome manifest (`genome_manifest.tsv`) is written for every run and is reused by ANI clustering and optional SNP-tree generation.
 
 ## Output Structure
 
-Nextflow output (`--outdir`):
+Wrapper / Python output (`--outdir` or `--save_dir`):
 
 ```text
 <outdir>/
@@ -152,7 +200,21 @@ Nextflow output (`--outdir`):
   marker_selection_rf_values.txt # marker-selection mode
   color.txt
   log_genomes_removed.txt
+  genome_manifest.tsv
   proteomes_header_map_<input>.tsv
+  ani/
+    ani_pairwise.tsv
+    ani_clusters.tsv
+    ani_representatives.tsv
+    ani_kept_genomes.txt
+    ani_graph.tsv
+    ani_mcl_clusters.txt
+  snp_trees/                     # only with --snp yes
+    snp_tree_summary.tsv
+    <ani_cluster_id>/
+      members.tsv
+      tree.nwk                   # cluster-size >= --snp_tree_min_cluster_size
+      core_snps.fna              # cluster-size >= --snp_tree_min_cluster_size and variable sites present
 ```
 
 Python output (`--save_dir`):
@@ -164,6 +226,17 @@ Python output (`--save_dir`):
   marker_count_matrix.csv
   marker_selection_rf_values.txt  # marker-selection mode
   log_genomes_removed.txt
+  ani/
+    ani_pairwise.tsv
+    ani_clusters.tsv
+    ani_representatives.tsv
+    ani_kept_genomes.txt
+  snp_trees/                     # only with --snp yes
+    snp_tree_summary.tsv
+    <ani_cluster_id>/
+      members.tsv
+      tree.nwk
+      core_snps.fna              # only when variable SNP sites are found
   logfile_*.txt
   temp/
     *.zip
@@ -175,6 +248,8 @@ Python output (`--save_dir`):
 ```text
 sgtree/
   sgtree/                 # Python package implementation
+    benchmarks/           # synthetic benchmark generation/evaluation package
+    ani.py                # ANI clustering + SNP-tree helpers
   sgtree.py               # backward-compatible wrapper
   main.nf                 # Nextflow entrypoint
   workflows/              # DSL2 workflow composition
@@ -188,7 +263,55 @@ sgtree/
   runs/                   # runtime outputs/work/logs (.gitkeep tracked)
   pixi.toml               # reproducible environment + tasks
   nextflow.config         # runtime defaults and CPU settings
+  docs/BENCHMARKS.md      # synthetic contamination benchmark design
 ```
+
+## Benchmarking
+
+Generate the default low-runtime synthetic benchmark:
+
+```bash
+pixi run benchmark-generate
+```
+
+Run the current systematic benchmark suite:
+
+```bash
+pixi run benchmark-run
+```
+
+The benchmark generator derives a clean truth panel automatically from the bundled Chloroflexi proteomes and `UNI56.hmm`, then creates duplicate, triplicate, and replacement scenarios against a fixed truth tree. Results are written under `runs/benchmarks/`. The canonical benchmark implementation now lives under `sgtree/benchmarks/`. See [docs/BENCHMARKS.md](/home/fschulz/dev/sgtree/docs/BENCHMARKS.md).
+
+Burkholderiaceae benchmark assets:
+
+- `pixi run benchmark-prepare-burkholderiaceae` materializes the requested 50-genome panel under [`testgenomes/Burkholderiaceae50`](/home/fschulz/dev/software/sgtree/testgenomes/Burkholderiaceae50).
+- The same command writes taxonomy sidecars:
+  - [`testgenomes/burkholderiaceae50.lookup`](/home/fschulz/dev/software/sgtree/testgenomes/burkholderiaceae50.lookup)
+  - [`testgenomes/burkholderiaceae50_taxonomy.tsv`](/home/fschulz/dev/software/sgtree/testgenomes/burkholderiaceae50_taxonomy.tsv)
+  - [`testgenomes/burkholderiaceae50_selection.tsv`](/home/fschulz/dev/software/sgtree/testgenomes/burkholderiaceae50_selection.tsv)
+- The curated panel contains `20` genus/species buckets:
+  - `18` singleton species from distinct genera
+  - one `6`-strain species cluster
+  - one `26`-strain species cluster
+- Verified full run:
+
+```bash
+pixi run sgtree \
+  --genomedir testgenomes/Burkholderiaceae50 \
+  --modeldir resources/models/UNI56.hmm \
+  --outdir runs/burkholderiaceae_ani_benchmark \
+  --num_cpus 24 \
+  --ani_cluster yes \
+  --snp yes \
+  --ani_threshold 95 \
+  --marker_selection yes \
+  --keep_intermediates yes
+```
+
+- Verified outputs for that run:
+  - `20` ANI representatives in [`runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv`](/home/fschulz/dev/software/sgtree/runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv)
+  - one `26`-member ANI cluster with a `524`-site SNP alignment
+  - one `6`-member ANI cluster with no variable SNP sites, reported explicitly as `no_snp_sites`
 
 ## Workflow
 
@@ -293,10 +416,19 @@ sgtree/
 
 ## Repository Hygiene
 
-Use this command for a clean runtime workspace between runs:
+Use this command for a clean runtime workspace between runs. This no longer deletes benchmark outputs:
 
 ```bash
 pixi run clean-runtime
+```
+
+Use these commands for more targeted cleanup:
+
+```bash
+pixi run clean-regression
+pixi run clean-benchmarks
+pixi run clean-reference-cache
+pixi run clean-all
 ```
 
 ## Authors and Contributors

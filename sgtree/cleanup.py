@@ -9,7 +9,8 @@ def cleanup_basic(outdir: str):
     """Archive intermediate files for basic run (no marker selection)."""
     keep_extensions = {"txt", "png", "csv", "nwk"}
     keep_names = {"aligned_final", "concat", "tree.nwk", "hits.hmmout",
-                  "ref_and_query_proteomes", "marker_count_matrix.csv"}
+                  "ref_and_query_proteomes", "marker_count_matrix.csv",
+                  "ani", "snp_trees", "genome_manifest.tsv"}
 
     for filepath in glob.glob(os.path.join(outdir, "*")):
         basename = os.path.basename(filepath)
@@ -57,6 +58,7 @@ def cleanup_marker_selection(outdir: str):
         "tree_final.nwk", "hits.hmmout", "marker_count_matrix.csv",
         "ref_and_query_proteomes", "concat_final",
         "marker_selection_rf_values.txt",
+        "ani", "snp_trees", "genome_manifest.tsv",
     }
 
     for filepath in glob.glob(os.path.join(outdir, "*")):

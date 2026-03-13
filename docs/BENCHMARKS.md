@@ -1,89 +1,128 @@
-# SGTree Systematic Benchmarking
+# SGTree Taxonomy-Aware Benchmarking
 
-This document describes the current manuscript benchmark design. The benchmark track is now limited to three explicit contamination scenarios that map directly to the cleanup modes used in SGTree:
+This document describes the current SGTree taxonomy-aware contamination benchmark. The benchmark notebook that regenerates the exported tables and figure is [`docs/benchmark_summary.ipynb`](benchmark_summary.ipynb), and the executed notebook is [`docs/benchmark_summary.executed.ipynb`](benchmark_summary.executed.ipynb).
 
-- `duplicate_only`: added extra copies of existing markers, no singleton replacement
-- `replacement_only`: replacement of correct single-copy markers, no added duplicate copies
-- `combined`: both added duplicate copies and singleton replacement
+This document covers the contamination benchmark suite under `runs/benchmarks/`. The separate ANI/SNP Burkholderiaceae runtime benchmark and its dataset-preparation workflow are documented in [`README.md`](/home/fschulz/dev/software/sgtree/README.md).
 
-The benchmark notebook that generates the exported tables and figure is [`docs/benchmark_summary.ipynb`](benchmark_summary.ipynb), and the executed notebook is [`docs/benchmark_summary.executed.ipynb`](benchmark_summary.executed.ipynb).
+## Benchmark Structure
 
-## Dataset Families
+The benchmark is organized around manifest-defined panels rather than a fixed six-dataset list.
 
-The current benchmark set contains six datasets:
+- Rank-based panels:
+  - `genus`
+  - `family`
+  - `order`
+- Mixed high-level panels:
+  - `mixed_high_level`
 
-| Dataset | Family | Size | Selected genomes | Truth markers | Donor scope |
-|---|---|---:|---:|---:|---|
-| Flavo Small | Flavobacteriaceae | small | 18 | 10 | within-group only |
-| Flavo Large | Flavobacteriaceae | large | 45 | 15 | within-group only |
-| Gamma Small | Gammaproteobacteria | small | 14 | 13 | within-group only |
-| Gamma Large | Gammaproteobacteria | large | 31 | 10 | within-group only |
-| Cross Small | Flavo ↔ Gamma | small | 33 | 6 | cross-group only |
-| Cross Large | Flavo ↔ Gamma | large | 79 | 8 | cross-group only |
+Each benchmark directory writes a [`benchmark_manifest.json`](/home/fschulz/dev/software/sgtree/runs/benchmarks) that records:
 
-The full dataset/scenario table is exported to [`docs/data/benchmark_dataset_overview.tsv`](data/benchmark_dataset_overview.tsv). The per-genome contamination table is exported to [`docs/data/benchmark_genome_contamination.tsv`](data/benchmark_genome_contamination.tsv).
+- `lineage_label`
+- `taxonomic_scope`
+- selected truth genomes and truth markers
+- donor lineage metadata
+- per-scenario event tables
+- per-scenario genome summaries
 
-## What Is Measured
+Suite directories additionally write a `suite_manifest.json` that lists the benchmark directories belonging to that lineage/scope suite.
 
-For each dataset and scenario, the benchmark output now records:
+## Current Lineage Panels
 
-- the clean truth tree built from genomes without added contaminant markers
-- the initial RF of the contaminated tree before cleanup
-- the final RF after applying the scenario-appropriate cleanup mode
-- the RF delta (`initial_tree_rf_norm - tree_rf_norm`)
-- the number of contaminant markers removed out of the number introduced
-- duplicate-event counts and replacement-event counts separately
+The active benchmark families are:
 
-The results table is [`docs/data/benchmark_summary_all.tsv`](data/benchmark_summary_all.tsv).
+- `flavo`
+- `gamma`
+- `chlam`
 
-## Scenario-to-Mode Mapping
+The mixed high-level design reuses those three lineages with explicit donor pairs:
 
-The benchmark no longer sweeps over five cleanup heuristics. Instead, it evaluates only the cleanup mode that matches each contamination class:
+- Flavo + Chlam into Gamma
+- Gamma + Chlam into Flavo
+- Flavo + Gamma into Chlam
+
+## Contamination Scenarios
+
+Rank-based panels use three fixed contamination scenarios that map directly to SGTree cleanup modes:
 
 | Scenario | Cleanup profile | Meaning |
 |---|---|---|
-| `duplicate_only` | `duplicate_cleanup` | duplicate-marker cleanup only |
-| `replacement_only` | `singles_neighbor` | singleton-replacement cleanup with `singles_neighbor` |
-| `combined` | `duplicate_plus_singles_neighbor` | duplicate cleanup plus `singles_neighbor` |
+| `duplicate_only` | `duplicate_cleanup` | duplicate-marker contamination only |
+| `replacement_only` | `singles_delta_rf` | singleton-replacement contamination only |
+| `combined` | `duplicate_plus_singles_delta_rf` | duplicate plus singleton-replacement contamination |
 
-This matches the manuscript use case directly: one duplicate-only cleanup path, one singleton-replacement cleanup path, and one combined cleanup path.
+Mixed panels use:
 
-## Current Results
+| Scenario | Cleanup profile | Meaning |
+|---|---|---|
+| `mixed_high_level` | `duplicate_plus_singles_delta_rf` | class/phylum-level mixed donor contamination with duplicate and replacement recipients |
 
-The benchmark figure is [`docs/figures/benchmark_summary.svg`](figures/benchmark_summary.svg) and [`docs/figures/benchmark_summary.png`](figures/benchmark_summary.png). It shows, for each scenario, the initial RF, the final RF after cleanup, the RF delta, and the contaminant-removed fraction.
+Mixed panels also encode the requested overlap layout in the manifest:
 
-The main numerical results are:
+- `duplicate_recipients`
+- `replacement_recipients`
+- `overlap_recipients`
 
-| Dataset | Duplicate only: RF change / removed | Replacement only: RF change / removed | Combined: RF change / removed |
-|---|---|---|---|
-| Flavo Small | `0.133 → 0.067` (`4/8`) | `0.133 → 0.067` (`4/4`) | `0.200 → 0.000` (`6/12`) |
-| Flavo Large | `0.048 → 0.000` (`4/8`) | `0.024 → 0.048` (`4/4`) | `0.000 → 0.024` (`4/12`) |
-| Gamma Small | `0.091 → 0.091` (`6/8`) | `0.000 → 0.000` (`4/4`) | `0.182 → 0.000` (`7/12`) |
-| Gamma Large | `0.036 → 0.036` (`4/8`) | `0.036 → 0.000` (`3/4`) | `0.071 → 0.000` (`11/12`) |
-| Cross Small | `0.333 → 0.333` (`3/8`) | `0.367 → 0.172` (`4/4`) | `0.567 → 0.400` (`5/12`) |
-| Cross Large | `0.145 → 0.000` (`8/8`) | `0.197 → 0.108` (`4/4`) | `0.145 → 0.066` (`10/12`) |
+## Exported Data Products
 
-## Interpretation
+The notebook and export helper now write three stable TSVs under [`docs/data`](/home/fschulz/dev/software/sgtree/docs/data):
 
-Within-group added-copy contamination is now handled more effectively than in the earlier pre-fix runs. Flavo Large duplicate-only cleanup now reaches `0.048 → 0.000` while removing `4/8` added contaminant copies, and Cross Large duplicate-only cleanup reaches `0.145 → 0.000` with `8/8` duplicates removed. Duplicate-only cleanup still has little topological effect in Gamma Small and Gamma Large, and Cross Small remains difficult.
+- [`benchmark_dataset_overview.tsv`](/home/fschulz/dev/software/sgtree/docs/data/benchmark_dataset_overview.tsv)
+  - one row per panel/scenario pair
+  - carries `panel_id`, `panel_label`, `lineage_label`, `taxonomic_scope`, `taxonomic_scope_label`, donor metadata, scenario counts, and mixed-recipient layout fields
+- [`benchmark_genome_contamination.tsv`](/home/fschulz/dev/software/sgtree/docs/data/benchmark_genome_contamination.tsv)
+  - one row per affected recipient genome
+  - carries panel/scenario metadata plus per-genome contamination counts
+- [`benchmark_summary_all.tsv`](/home/fschulz/dev/software/sgtree/docs/data/benchmark_summary_all.tsv)
+  - one row per completed panel/scenario benchmark run
+  - carries RF, contaminant-removal, taxa-retention, and singleton-pruning outcomes
 
-Singleton replacement is no longer hardest in the cross-clade panels. After the singleton-filter update, both cross-clade replacement-only datasets remove `4/4` contaminants and improve RF (`0.367 → 0.172` in Cross Small; `0.197 → 0.108` in Cross Large), which is consistent with the larger divergence between donor and recipient clades. The more difficult replacement-only cases are now the within-group panels, especially Flavo Large.
+These TSVs are the preferred manuscript-facing source of truth because they are regenerated from manifests and `results/summary.tsv` files rather than from hardcoded dataset assumptions.
 
-The combined scenario remains the most informative. Gamma Large is the strongest combined case by contaminant removal, with `11/12` contaminants removed and RF improving from `0.071` to `0.000`. Cross Large is the clearest cross-clade success case, improving from `0.145` to `0.066` while removing `10/12` contaminant markers. The weakest combined case remains Flavo Large, where the final tree is slightly worse than the initial contaminated tree despite removal of all four singleton replacements.
+## Event Tables
+
+Per-scenario `events.tsv` files carry the full traceability needed for supplement or audit use:
+
+- `taxonomic_scope`
+- `taxonomic_scope_label`
+- `recipient_*` taxonomy fields
+- `donor_*` taxonomy fields
+- accession, organism name, record ids, and contig ids
+
+The event schema is richer than the manuscript TSVs and is intended for detailed provenance rather than the main narrative summary.
+
+## Figure Outputs
+
+The notebook regenerates these figure files under [`docs/figures`](/home/fschulz/dev/software/sgtree/docs/figures):
+
+- [`benchmark_summary.png`](/home/fschulz/dev/software/sgtree/docs/figures/benchmark_summary.png)
+- [`benchmark_summary.svg`](/home/fschulz/dev/software/sgtree/docs/figures/benchmark_summary.svg)
+- [`benchmark_summary_manuscript.png`](/home/fschulz/dev/software/sgtree/docs/figures/benchmark_summary_manuscript.png)
+- [`benchmark_summary_manuscript.svg`](/home/fschulz/dev/software/sgtree/docs/figures/benchmark_summary_manuscript.svg)
 
 ## Validation
 
-The benchmark implementation was validated with the repository unit suite and the Python-versus-Nextflow regression harness:
+Core validation commands:
 
-- `pixi run test-unit`
-- `pixi run test-regression-clean`
+- `pixi run python -m unittest tests.test_benchmark tests.test_input_stage tests.test_marker_selection tests.test_benchmark_dataset tests.test_ani tests.test_ani_clustering tests.test_cli`
+- `pixi run python bin/sgtree_benchmark.py export-docs --benchmarks-root runs/benchmarks --outdir docs/data`
 
-The new benchmark notebook also executes successfully top-to-bottom with:
+Notebook execution example:
 
 ```bash
-pixi run python /home/fschulz/dev/omics-skills/skills/notebook-ai-agents-skill/scripts/execute_notebook.py \
-  docs/benchmark_summary.ipynb \
-  --out docs/benchmark_summary.executed.ipynb \
-  --kernel sgtree \
-  --timeout 1200
+pixi run python -m ipykernel install --user --name sgtree-pixi --display-name "SGTree (pixi current)"
+pixi run python - <<'PY'
+from pathlib import Path
+import nbformat
+from nbclient import NotebookClient
+
+src = Path("docs/benchmark_summary.ipynb")
+out = Path("docs/benchmark_summary.executed.ipynb")
+nb = nbformat.read(src, as_version=4)
+NotebookClient(nb, timeout=1800, kernel_name="sgtree-pixi").execute(cwd=str(src.parent))
+nbformat.write(nb, out)
+PY
 ```
+
+## Current Caveat
+
+The benchmark catalog is now manifest-driven, so partially completed benchmark dirs can exist while long runs are still in progress. The notebook/export path only reflects completed runs that already have `results/summary.tsv`.

@@ -4,6 +4,7 @@ nextflow.enable.dsl = 2
 include { SGTREE_MAIN }         from './workflows/sgtree_main'
 include { MARKER_SELECTION_WF } from './workflows/marker_selection_wf'
 include { PREPARE_REFERENCE }   from './workflows/prepare_reference'
+include { BUILD_SNP_TREES }     from './modules/ani'
 include { WRITE_HEATMAP }       from './modules/itol'
 include { WRITE_COLOR_FILE; RENDER_TREE } from './modules/render'
 
@@ -19,6 +20,11 @@ workflow {
         (params.marker_selection instanceof Boolean)
             ? params.marker_selection
             : ['true', 'yes', '1'].contains(params.marker_selection?.toString()?.trim()?.toLowerCase())
+    )
+    ani_enabled = (
+        (params.ani_cluster instanceof Boolean)
+            ? params.ani_cluster
+            : ['true', 'yes', '1'].contains(params.ani_cluster?.toString()?.trim()?.toLowerCase())
     )
     singles_enabled = (
         (params.singles instanceof Boolean)
@@ -44,15 +50,17 @@ workflow {
 
         ref_merged_final = PREPARE_REFERENCE.out.table_elim_dups
         ref_proteomes    = PREPARE_REFERENCE.out.proteomes
+        ref_genome_manifest = PREPARE_REFERENCE.out.genome_manifest
 
         // Build ref list for marker selection (filenames like IMG123.faa)
-        ref_list = Channel.fromPath("${params.ref}/*.faa")
-            .map { it.name }
+        ref_list = Channel.fromPath(["${params.ref}/*.faa", "${params.ref}/*.fna", "${params.ref}/*.fa", "${params.ref}/*.fasta"])
+            .map { it.baseName + '.faa' }
             .collect()
             .map { it.join(',') }
     } else {
         ref_merged_final = file('NO_REF_MERGED')
         ref_proteomes    = file('NO_REF_PROTEOMES')
+        ref_genome_manifest = file('NO_REF_GENOME_MANIFEST')
         ref_list         = Channel.value('')
     }
 
@@ -65,10 +73,21 @@ workflow {
         params.max_sdup,
         params.max_dupl,
         params.aln,
+        ani_enabled,
         params.ref ? true : false,
         ref_merged_final,
-        ref_proteomes
+        ref_proteomes,
+        ref_genome_manifest
     )
+
+    if (ani_enabled) {
+        BUILD_SNP_TREES(
+            SGTREE_MAIN.out.ani_clusters,
+            SGTREE_MAIN.out.genome_manifest,
+            params.ref ? true : false,
+            ref_genome_manifest
+        )
+    }
 
     // Marker selection (steps 10-15)
     if (marker_selection_enabled) {
