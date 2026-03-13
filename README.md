@@ -22,7 +22,7 @@ This writes a basic example tree to `runs/example_basic/`.
 
 ## Run
 
-Primary interface (`pixi run sgtree` wrapper):
+Primary interface:
 
 ```bash
 pixi run sgtree --help
@@ -49,7 +49,7 @@ Marker-selection run with references and singleton filtering:
 pixi run sgtree \
   --genomedir testgenomes/Chloroflexi \
   --modeldir resources/models/UNI56.hmm \
-  --outdir runs/nextflow/manual_full \
+  --outdir runs/manual_full \
   --marker_selection true \
   --ref testgenomes/chlorref \
   --singles yes
@@ -66,8 +66,7 @@ pixi run sgtree \
   --selection_mode legacy
 ```
 
-`pixi run sgtree` writes logs automatically to `runs/nextflow/logs/`.
-For nucleotide assembly input (`*.fna`, `*.fa`, `*.fasta`) or any run with `--ani_cluster yes` or `--snp yes`, the wrapper dispatches to the Python engine automatically so gene calling, ANI clustering, and optional SNP-tree generation all happen in one code path.
+`pixi run sgtree` and `pixi run sgtree-python` now invoke the same Python engine.
 Marker searches and `--aln hmmalign` are run with `pyhmmer` (HMMER-compatible search output).
 Rendered PNG trees now use a headless-safe matplotlib/Biopython renderer.
 
@@ -99,7 +98,7 @@ pixi run sgtree \
   --keep_intermediates true
 ```
 
-Second choice (Python implementation without nextflow):
+Equivalent alias:
 
 ```bash
 pixi run sgtree-python testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8
@@ -195,7 +194,7 @@ Normalization behavior:
 
 ## Output Structure
 
-Wrapper / Python output (`--outdir` or `--save_dir`):
+Python output (`--outdir` or `--save_dir`):
 
 ```text
 <outdir>/
@@ -227,34 +226,6 @@ Wrapper / Python output (`--outdir` or `--save_dir`):
       core_snps.fna              # cluster-size >= --snp_tree_min_cluster_size and variable sites present
 ```
 
-Python output (`--save_dir`):
-
-```text
-<save_dir>/
-  tree.nwk or tree_final.nwk
-  tree_final.png                  # marker-selection mode
-  marker_count_matrix.csv
-  marker_selection_rf_values.txt  # marker-selection mode
-  log_genomes_removed.txt
-  ani/
-    ani_pairwise.tsv
-    ani_clusters.tsv
-    ani_representatives.tsv
-    ani_kept_genomes.txt
-  snp_trees/                     # only with --snp yes
-    snp_tree_summary.tsv
-    <ani_cluster_id>/
-      members.tsv
-      contig_filter.tsv
-      filtered_contigs/
-      tree.nwk
-      core_snps.fna              # only when variable SNP sites are found
-  logfile_*.txt
-  temp/
-    *.zip
-    itol/
-```
-
 ## Repository Structure
 
 ```text
@@ -263,18 +234,12 @@ sgtree/
     benchmarks/           # synthetic benchmark generation/evaluation package
     ani.py                # ANI clustering + SNP-tree helpers
   sgtree.py               # backward-compatible wrapper
-  main.nf                 # Nextflow entrypoint
-  workflows/              # DSL2 workflow composition
-  modules/                # DSL2 process modules
   bin/                    # helper scripts and launch wrappers
-  tests/
-    regression_parity.py  # cross-engine parity checks
   resources/
     models/               # combined marker-set HMM files
   testgenomes/            # example query/reference data
   runs/                   # runtime outputs/work/logs (.gitkeep tracked)
   pixi.toml               # reproducible environment + tasks
-  nextflow.config         # runtime defaults and CPU settings
   docs/BENCHMARKS.md      # synthetic contamination benchmark design
 ```
 
@@ -428,7 +393,7 @@ pixi run sgtree \
 
 ## Repository Hygiene
 
-Use this command for a clean runtime workspace between runs. This no longer deletes benchmark outputs:
+Use this command for a clean runtime workspace between runs. This does not delete benchmark outputs:
 
 ```bash
 pixi run clean-runtime
