@@ -7,9 +7,16 @@ from sgtree.config import Config
 from sgtree.parallel import map_threaded
 
 
-def run_fasttree(input_fasta: str, output_tree: str):
-    """Run FastTree to build an approximate ML tree."""
-    cmd = ["FastTree", "-quiet", "-out", output_tree, input_fasta]
+def _fasttree_executable() -> str:
+    for candidate in ("VeryFastTree", "veryfasttree", "FastTree"):
+        if shutil.which(candidate):
+            return candidate
+    raise FileNotFoundError("Could not find VeryFastTree/FastTree in PATH")
+
+
+def run_fasttree(input_fasta: str, output_tree: str, threads: int):
+    """Run VeryFastTree/FastTree to build an approximate ML tree."""
+    cmd = [_fasttree_executable(), "-threads", str(max(1, threads)), "-quiet", "-out", output_tree, input_fasta]
     subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
 
 
@@ -39,7 +46,7 @@ def run_species_tree(cfg: Config, input_fasta: str, output_tree: str):
     if cfg.tree_method == "iqtree":
         _run_iqtree(input_fasta, output_tree, cfg.num_cpus, cfg.iqtree_model, cfg.iqtree_fast)
     else:
-        run_fasttree(input_fasta, output_tree)
+        run_fasttree(input_fasta, output_tree, cfg.num_cpus)
 
 
 def run_snp_tree(cfg: Config, input_fasta: str, output_tree: str):
@@ -52,7 +59,7 @@ def run_snp_tree(cfg: Config, input_fasta: str, output_tree: str):
             "--prefix", prefix,
             "-m", "GTR+G",
             "-st", "DNA",
-            "-T", str(max(1, cfg.num_cpus)),
+            "-T", "1",
         ]
         if cfg.iqtree_fast:
             cmd.append("-fast")
@@ -63,7 +70,7 @@ def run_snp_tree(cfg: Config, input_fasta: str, output_tree: str):
             raise FileNotFoundError(f"IQ-TREE did not produce expected treefile: {treefile}")
         shutil.copyfile(treefile, output_tree)
     else:
-        cmd = ["FastTree", "-nt", "-gtr", "-quiet", "-out", output_tree, input_fasta]
+        cmd = [_fasttree_executable(), "-threads", "1", "-nt", "-gtr", "-quiet", "-out", output_tree, input_fasta]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
@@ -77,7 +84,7 @@ def _build_tree_worker(args):
     if tree_method == "iqtree":
         _run_iqtree(filepath, tree_out, 1, iqtree_model, iqtree_fast)
     else:
-        cmd = ["FastTree", "-quiet", "-out", tree_out, filepath]
+        cmd = [_fasttree_executable(), "-threads", "1", "-quiet", "-out", tree_out, filepath]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
         print(result.stdout.decode("utf-8"))
 
