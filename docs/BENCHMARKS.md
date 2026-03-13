@@ -126,3 +126,9 @@ PY
 ## Current Caveat
 
 The benchmark catalog is now manifest-driven, so partially completed benchmark dirs can exist while long runs are still in progress. The notebook/export path only reflects completed runs that already have `results/summary.tsv`.
+
+## ANI/SNP Runtime Benchmark
+
+The Burkholderiaceae ANI/SNP benchmark is intentionally separate from the contamination suite above. It uses a real 50-genome assembly panel prepared with `pixi run benchmark-prepare-burkholderiaceae`, then runs SGTree with ANI clustering enabled and SNP trees optionally enabled via `--snp yes`. This benchmark measures three things that the contamination catalog does not: representative collapse after 95% ANI clustering, strain-level SNP resolution inside retained species clusters, and the new contig-level contamination guard applied before SNP alignment.
+
+In the current verified run, the 50-genome Burkholderiaceae panel collapsed to 20 ANI representatives. One 26-member cluster produced a 524-site SNP alignment after filtering to shared cluster-core UNI56-bearing contigs that also aligned back to the representative backbone at or above 95% ANI. A second 6-member cluster passed the same contig filter but contained no variable SNP sites and was recorded as `no_snp_sites`. Each multi-member SNP cluster writes both `members.tsv` and `contig_filter.tsv`, together with the filtered contig FASTA files actually used for alignment, so the retained backbone is traceable at the contig level rather than only at the whole-genome level.
