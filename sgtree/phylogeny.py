@@ -2,9 +2,9 @@ import os
 import subprocess
 import glob
 import shutil
-import multiprocessing as mp
 
 from sgtree.config import Config
+from sgtree.parallel import map_threaded
 
 
 def run_fasttree(input_fasta: str, output_tree: str):
@@ -81,24 +81,6 @@ def _build_tree_worker(args):
         result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
         print(result.stdout.decode("utf-8"))
 
-
-def _map_with_fallback(func, args, workers: int):
-    if not args:
-        return
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        for item in args:
-            func(item)
-        return
-    try:
-        with mp.Pool(n_workers) as pool:
-            pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        for item in args:
-            func(item)
-
-
 def run_fasttree_per_marker(cfg: Config, trimmed_dir: str, treeout_dir: str):
     """Build individual protein trees for each trimmed marker alignment."""
     os.makedirs(treeout_dir, exist_ok=True)
@@ -112,4 +94,4 @@ def run_fasttree_per_marker(cfg: Config, trimmed_dir: str, treeout_dir: str):
         return
 
     workers = max(1, min(cfg.num_cpus, len(args)))
-    _map_with_fallback(_build_tree_worker, args, workers)
+    map_threaded(_build_tree_worker, args, workers)

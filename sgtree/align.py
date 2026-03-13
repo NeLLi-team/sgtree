@@ -1,12 +1,12 @@
 import os
 import glob
 import subprocess
-import multiprocessing as mp
 import shutil
 
 from pyhmmer import easel, hmmer, plan7
 
 from sgtree.config import Config
+from sgtree.parallel import map_processed, map_threaded
 
 
 def _run_mafft(args):
@@ -71,24 +71,6 @@ def _normalize_fasta(fasta_path: str) -> None:
         for header, seq in records:
             f.write(f"{header}\n{seq}\n")
 
-
-def _map_with_fallback(func, args, workers: int):
-    if not args:
-        return
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        for item in args:
-            func(item)
-        return
-    try:
-        with mp.Pool(n_workers) as pool:
-            pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        for item in args:
-            func(item)
-
-
 def _split_models(models_path: str, split_dir: str) -> None:
     if os.path.isdir(split_dir):
         shutil.rmtree(split_dir)
@@ -129,17 +111,17 @@ def run_alignment(
     threads_per_job = max(1, cfg.num_cpus // n_jobs)
 
     if cfg.aln_method == "mafft":
-        _map_with_fallback(_run_mafft, [
+        map_threaded(_run_mafft, [
             (extracted_seqs_dir, aligned_dir, f, threads_per_job) for f in files
         ], n_jobs)
     elif cfg.aln_method == "mafft-linsi":
-        _map_with_fallback(_run_mafft_linsi, [
+        map_threaded(_run_mafft_linsi, [
             (extracted_seqs_dir, aligned_dir, f, threads_per_job) for f in files
         ], n_jobs)
     else:
         split_dir = os.path.join(cfg.outdir, "models_split")
         _split_models(cfg.models_path, split_dir)
-        _map_with_fallback(_run_hmmalign, [
+        map_processed(_run_hmmalign, [
             (extracted_seqs_dir, aligned_dir, os.path.join(split_dir, f"{f.split('.')[0]}.hmm"), f)
             for f in files
         ], n_jobs)

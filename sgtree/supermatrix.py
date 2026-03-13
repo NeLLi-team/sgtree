@@ -1,30 +1,12 @@
 import os
 import glob
 import subprocess
-import multiprocessing as mp
-import fileinput
 
 import pandas as pd
 from Bio import SeqIO
 
 from sgtree.config import Config
-
-
-def _map_with_fallback(func, args, workers: int):
-    if not args:
-        return
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        for item in args:
-            func(item)
-        return
-    try:
-        with mp.Pool(n_workers) as pool:
-            pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        for item in args:
-            func(item)
+from sgtree.parallel import map_threaded
 
 
 def _run_trimal_worker(args):
@@ -32,15 +14,19 @@ def _run_trimal_worker(args):
     input_file, output_file = args
     cmd = ["trimal", "-in", input_file, "-out", output_file, "-gt", "0.1"]
     subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
-    # clean up fasta headers in input
-    for line in fileinput.input(input_file, inplace=True):
-        line = line.rstrip()
-        if not line:
-            continue
-        if ">" in line:
-            print("|".join(line.split("|")[0:]))
-        else:
-            print(line)
+    # clean up fasta headers in input without using global fileinput state.
+    normalized_lines: list[str] = []
+    with open(input_file) as handle:
+        for raw_line in handle:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                normalized_lines.append("|".join(line.split("|")[0:]))
+            else:
+                normalized_lines.append(line)
+    with open(input_file, "w") as handle:
+        handle.write("\n".join(normalized_lines) + ("\n" if normalized_lines else ""))
 
 
 def run_trimal(cfg: Config, input_dir: str, output_dir: str):
@@ -53,7 +39,7 @@ def run_trimal(cfg: Config, input_dir: str, output_dir: str):
         for f in files
     ]
 
-    _map_with_fallback(_run_trimal_worker, args, cfg.num_cpus)
+    map_threaded(_run_trimal_worker, args, cfg.num_cpus)
 
 
 def _trimal_simple_worker(args):
@@ -70,7 +56,7 @@ def run_trimal_simple(cfg: Config, input_dir: str, output_dir: str):
     files = sorted(glob.glob(os.path.join(input_dir, "*.faa")))
     args = [(f, os.path.join(output_dir, os.path.basename(f))) for f in files]
 
-    _map_with_fallback(_trimal_simple_worker, args, cfg.num_cpus)
+    map_threaded(_trimal_simple_worker, args, cfg.num_cpus)
 
 
 def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat_path: str):

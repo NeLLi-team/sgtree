@@ -1,17 +1,17 @@
 import os
 import glob
-import multiprocessing as mp
 
 import pandas as pd
 from Bio import SeqIO
 
 from sgtree.config import Config
+from sgtree.parallel import map_threaded
 
 
 SCORE_COLUMNS = ("score_bits", "7")
 
 
-def _resolve_score_column(df_fordups: pd.DataFrame) -> str:
+def _resolve_score_column(df_fordups) -> str:
     score_col = next((col for col in SCORE_COLUMNS if col in df_fordups.columns), None)
     if score_col is None:
         raise ValueError(
@@ -26,11 +26,12 @@ def _is_duplicate(seq_id, all_ids):
     return sum(1 for x in all_ids if x.split("|")[0] == genome) > 1
 
 
-def _get_score(identifier, df_fordups, score_col: str):
-    """Look up the hmmsearch score for an identifier."""
-    key = identifier.replace("|", "/")
-    row = df_fordups.loc[key]
-    return f"{row['savedname']}:{float(row[score_col])}"
+def _build_score_lookup(df_fordups, score_col: str) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for row in df_fordups.reset_index(drop=True).itertuples(index=False):
+        key = str(row.savedname).replace("/", "|")
+        lookup[key] = f"{row.savedname}:{float(getattr(row, score_col))}"
+    return lookup
 
 
 def _pick_best_scored_id(scored_ids: list[str]) -> str:
@@ -45,7 +46,7 @@ def _pick_best_scored_id(scored_ids: list[str]) -> str:
 
 def _process_file_worker(args):
     """Worker: eliminate duplicates for one aligned marker file."""
-    filepath, aln_spectree_dir, df_fordups, score_col = args
+    filepath, aln_spectree_dir, score_lookup = args
     try:
         record_dict = SeqIO.to_dict(SeqIO.parse(filepath, "fasta"))
         all_ids = list(record_dict.keys())
@@ -64,7 +65,7 @@ def _process_file_worker(args):
         # split comma-separated values and get scores
         for key in dups:
             dups[key] = dups[key].split(",")
-            dups[key] = [_get_score(v, df_fordups, score_col) for v in dups[key]]
+            dups[key] = [score_lookup[v] for v in dups[key]]
 
         # for each set of duplicates, remove the best score from the "to-remove" list
         ids_to_remove = set()
@@ -88,30 +89,13 @@ def _process_file_worker(args):
         print("elimination of duplicates exception", sys.exc_info())
         raise
 
-
-def _map_with_fallback(func, args, workers: int):
-    if not args:
-        return
-    n_workers = max(1, min(workers, len(args)))
-    if n_workers == 1:
-        for item in args:
-            func(item)
-        return
-    try:
-        with mp.Pool(n_workers) as pool:
-            pool.map(func, args)
-    except (PermissionError, OSError) as e:
-        print(f"warning: multiprocessing unavailable ({e}); falling back to serial execution")
-        for item in args:
-            func(item)
-
-
 def eliminate_duplicates(cfg: Config, df_fordups: pd.DataFrame):
     """For each aligned marker, keep only the highest-scoring hit per genome."""
     os.makedirs(cfg.aln_spectree_dir, exist_ok=True)
     score_col = _resolve_score_column(df_fordups)
+    score_lookup = _build_score_lookup(df_fordups, score_col)
 
     aligned_files = glob.glob(os.path.join(cfg.aligned_dir, "*.faa"))
-    args = [(f, cfg.aln_spectree_dir, df_fordups, score_col) for f in aligned_files]
+    args = [(f, cfg.aln_spectree_dir, score_lookup) for f in aligned_files]
 
-    _map_with_fallback(_process_file_worker, args, cfg.num_cpus)
+    map_threaded(_process_file_worker, args, cfg.num_cpus)

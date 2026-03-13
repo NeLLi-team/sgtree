@@ -1,6 +1,6 @@
 # SGTree Methods and Implementation Documentation
 
-This document describes the architecture and execution logic of `sgtree`, with emphasis on reproducibility, method choices, and exact software versions. The descriptions are grounded in a full instrumented run executed on March 3, 2026 (`runs/docs_audit/`), which completed with 231 successful tasks and no failures.
+This document describes the architecture and execution logic of `sgtree`, with emphasis on reproducibility, method choices, and exact software versions. The current codebase now executes through a single Python implementation, with the command-line entrypoint `pixi run sgtree` invoking `python -m sgtree`.
 
 ## Scope and Workflow
 
@@ -10,9 +10,9 @@ A workflow schematic corresponding to the current implementation is provided in 
 
 ## Repository and Execution Model
 
-The repository contains both a Nextflow DSL2 implementation and a Python implementation. The entrypoint is [`main.nf`](/home/fschulz/dev/sgtree/main.nf), workflow composition is defined in `workflows/`, and process modules are defined in `modules/`. Command-level operations are implemented in `bin/` scripts. A Python package implementation is maintained in `sgtree/` and can be invoked directly via `pixi run sgtree-python`. The recommended user-facing entrypoint remains `pixi run sgtree`, but the wrapper in [`bin/sgtree-nextflow.sh`](/home/fschulz/dev/sgtree/bin/sgtree-nextflow.sh) now dispatches nucleotide (`fna`) and ANI/SNP-enabled runs to the Python engine so that gene calling, ANI clustering, and SNP-tree generation all execute in the same runtime.
+The implementation is now Python-only. Command-level operations are implemented in `bin/` scripts, while the main workflow logic lives in the `sgtree/` package. The supported public entrypoints are `pixi run sgtree`, `pixi run sgtree-python`, and `python -m sgtree`; all three invoke the same Python runtime.
 
-Environment reproducibility is handled through `pixi.toml` and `pixi.lock`. Pipeline defaults are declared in [`nextflow.config`](/home/fschulz/dev/sgtree/nextflow.config), including `aln=hmmalign`, `tree_method=fasttree`, `marker_selection=false`, `ani_cluster=false`, `snp=false`, and `singles=false`.
+Environment reproducibility is handled through `pixi.toml` and `pixi.lock`. Runtime defaults are declared in the CLI/config layer, including `aln=hmmalign`, `tree_method=fasttree`, `marker_selection=false`, `ani_cluster=false`, `snp=false`, and `singles=false`.
 
 ## Default Branch: Process Logic
 
@@ -44,13 +44,12 @@ A separate real-genome runtime benchmark now exists for the ANI/SNP workflow. `p
 
 ## Implementation Validation
 
-The current codebase has been validated in two ways. First, the repository unit suite completed successfully for the ANI/SNP additions with `pixi run python -m unittest tests.test_ani tests.test_ani_clustering tests.test_cli`, and the broader SGTree regression-facing unit slice also passed with `pixi run python -m unittest tests.test_benchmark tests.test_input_stage tests.test_marker_selection tests.test_benchmark_dataset`. Second, the Burkholderiaceae ANI/SNP runtime benchmark completed successfully through the public wrapper using `pixi run sgtree --genomedir testgenomes/Burkholderiaceae50 --modeldir resources/models/UNI56.hmm --outdir runs/burkholderiaceae_snp_backbone_20260313_fix --num_cpus 12 --ani_cluster yes --snp yes --ani_threshold 95 --marker_selection yes --keep_intermediates yes`.
+The current codebase has been validated in three ways. First, the ANI/SNP unit slice completed successfully with `pixi run python -m unittest tests.test_ani tests.test_ani_clustering tests.test_cli`. Second, the broader SGTree unit slice also passed with `pixi run python -m unittest tests.test_benchmark tests.test_input_stage tests.test_marker_selection tests.test_benchmark_dataset`. Third, the Python-only full Chloroflexi reference-assisted benchmark completed successfully with `python -m sgtree testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 24 --marker_selection yes --ref testgenomes/chlorref --save_dir runs/bench_compare_python_full_24 --ref_concat runs/bench_compare_python_ref_cache_24`.
 
 ## Software Versions (Verified March 3, 2026)
 
 | Tool | Version | Evidence Command | Function in Pipeline |
 |---|---:|---|---|
-| Nextflow | 25.10.4 | `./nextflow -version` | Workflow execution and provenance |
 | Python | 3.12.12 | `pixi run python -V` | Runtime for package/scripts |
 | pyhmmer | 0.12.0 | `pixi run python -c ...` | Profile-HMM search and profile alignment |
 | MAFFT | 7.526 | `pixi run mafft --version` | Optional MSA mode |
@@ -63,27 +62,24 @@ The current codebase has been validated in two ways. First, the repository unit 
 
 ## Methodological Rationale
 
-This toolchain favors transparent and reproducible execution while preserving practical throughput for marker-rich datasets. Nextflow provides explicit process boundaries and run-level provenance [1]. pyhmmer allows profile-HMM operations to remain in Python-native workflow steps while preserving compatibility with HMMER-style methods [7,9]. MAFFT is retained as a non-profile alignment option [2]. trimAl provides automated removal of weakly supported alignment regions prior to concatenation [3]. FastTree is used as a high-throughput default [4], whereas IQ-TREE is available when a model-intensive maximum-likelihood workflow is preferred [5,6]. ETE3 underlies the RF-based tree-comparison logic used in marker selection and singleton filtering [8].
+This toolchain favors transparent and reproducible execution while preserving practical throughput for marker-rich datasets. pyhmmer allows profile-HMM operations to remain in Python-native workflow steps while preserving compatibility with HMMER-style methods [7,9]. MAFFT is retained as a non-profile alignment option [2]. trimAl provides automated removal of weakly supported alignment regions prior to concatenation [3]. FastTree is used as a high-throughput default [4], whereas IQ-TREE is available when a model-intensive maximum-likelihood workflow is preferred [5,6]. ETE3 underlies the RF-based tree-comparison logic used in marker selection and singleton filtering [8]. The Python implementation parallelizes per-marker alignments, duplicate processing, trimAl jobs, per-marker tree inference, RF-guided duplicate resolution, and cleaned-sequence regeneration according to the requested `--num_cpus`, so the execution model remains file-oriented and parallel without a separate workflow engine.
 
 ## Reproducibility Record
 
-The verification run used the command below and generated full trace/report/timeline/dag outputs in `runs/docs_audit/`.
+The verification command for the current single-engine implementation is:
 
 ```bash
-nextflow -log runs/docs_audit/nextflow.log run main.nf \
-  --genomedir testgenomes/Chloroflexi \
-  --modeldir resources/models/UNI56.hmm \
-  --outdir runs/docs_audit/out \
-  --hmmsearch_cpus 4 \
-  --align_cpus 4 \
-  --fasttree_cpus 1 \
-  -with-trace runs/docs_audit/trace.tsv \
-  -with-report runs/docs_audit/report.html \
-  -with-timeline runs/docs_audit/timeline.html \
-  -with-dag runs/docs_audit/dag.html
+pixi run python -m sgtree \
+  testgenomes/Chloroflexi \
+  resources/models/UNI56.hmm \
+  --num_cpus 24 \
+  --marker_selection yes \
+  --ref testgenomes/chlorref \
+  --save_dir runs/bench_compare_python_full_24 \
+  --ref_concat runs/bench_compare_python_ref_cache_24
 ```
 
-This run completed as `small_stonebraker` with `succeededCount=231` and `failedCount=0`, and produced `tree.nwk`, `marker_count_matrix.csv`, `marker_count.txt`, and `color.txt` in `runs/docs_audit/out/`. The machine-readable record for this run is [`docs/run_manifest.yaml`](/home/fschulz/dev/sgtree/docs/run_manifest.yaml).
+This run completed successfully and produced `tree_final.nwk`, `tree_final.png`, `marker_count_matrix.csv`, and `marker_selection_rf_values.txt` in `runs/bench_compare_python_full_24/`.
 
 ## Reference Validation
 

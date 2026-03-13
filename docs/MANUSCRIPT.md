@@ -1,0 +1,106 @@
+# SGTree: contamination-aware species tree inference from marker-gene proteins
+
+## Abstract
+
+Species-tree inference from conserved protein markers is sensitive to contamination, unresolved duplicate copies, and replacement of native single-copy markers by contaminant sequences. SGTree was developed as an end-to-end workflow for marker-based species tree reconstruction that retains a simple default path for relatively clean datasets while adding explicit contamination-aware cleanup for harder cases. The workflow starts from per-genome proteomes and a marker HMM set, identifies marker hits with pyhmmer, extracts and aligns marker proteins, trims alignments, builds a concatenated supermatrix, and infers a species tree. In the default branch, duplicate hits are resolved by score prior to tree inference. In the contamination-aware branch, SGTree builds per-marker trees, uses normalized Robinson-Foulds (RF) discordance to select among competing marker copies, and applies a conservative singleton cleanup that removes at most one leaf per marker when doing so improves agreement to the current species tree without deleting genomes from the final taxa set. We evaluated the method with six synthetic benchmark datasets spanning within-group Flavobacteriaceae, within-group Gammaproteobacteria, and cross-group contamination. The benchmark separated added-copy contamination from singleton-replacement contamination and also tested a combined scenario. Duplicate cleanup was strongest in the large cross-group duplicate-only panel, where RF decreased from `0.145` to `0.000` and all `8/8` duplicate contaminants were removed. Replacement-only cleanup was strongest in the Gamma panels, where Gamma Small improved from `0.091` to `0.000` and Gamma Large from `0.050` to `0.000` while removing `4/4` replacement contaminants in both datasets. In the large cross-group combined panel, RF decreased from `0.263` to `0.250` while `5/12` contaminant markers were removed. These results position SGTree as a practical contamination-aware workflow for species tree construction rather than a generic marker-cleaning heuristic collection.
+
+## Introduction
+
+Marker-gene phylogenomics remains one of the most widely used approaches for microbial species-tree inference, but its performance depends strongly on the assumption that each genome contributes an appropriate set of orthologous markers. In practice that assumption is often violated. Even genomes that pass standard completeness and contamination filters can still carry extra marker copies, ambiguous paralogs, or contaminant sequences that replace the expected native singleton [1,2]. These problems are especially disruptive in concatenated analyses because a small number of incorrect marker assignments can alter branch placement across the entire species tree.
+
+Most practical workflows handle this issue only indirectly. Low-quality genomes may be removed before tree building, and duplicated hits are often resolved by score alone. That approach is fast and often sufficient for clean isolate collections, but it does not distinguish between at least two common contamination modes. One mode adds extra copies of markers that should remain single-copy in the final alignment. The other replaces a native singleton with a contaminant copy, leaving the marker count unchanged while altering the phylogenetic signal. Those two problems do not behave the same way, and they do not need the same cleanup strategy.
+
+SGTree was developed to address that gap. The workflow is designed for marker-gene species tree construction from protein FASTA inputs and curated or custom HMM sets. It combines profile-HMM search, marker extraction, alignment, trimming, supermatrix construction, and tree inference in a reproducible pipeline, and it adds optional contamination-aware steps for cases in which bitscore-based duplicate resolution is not sufficient. The goal of this manuscript is therefore twofold: first, to describe SGTree itself as a species-tree workflow and explain what each cleanup branch is intended to do; second, to evaluate those branches with a benchmark that separates added-copy contamination from singleton replacement.
+
+## Methods
+
+### Workflow overview
+
+SGTree takes as input one protein FASTA file per genome together with a marker HMM file. The current implementation is a Python workflow that executes directly through the SGTree package and parallelizes per-marker work internally according to the requested CPU budget. The default execution path is intended for routine species-tree construction from relatively clean genome sets. The contamination-aware branch adds reference-assisted duplicate resolution, RF-guided marker-copy selection, and optional singleton filtering for more difficult datasets. The overall workflow is summarized in Figure 1.
+
+![Overview of the SGTree workflow. Per-genome proteomes and marker HMMs are processed through profile-HMM search, marker parsing, sequence extraction, alignment, trimming, supermatrix construction, and species-tree inference. Optional contamination-aware branches add RF-guided duplicate cleanup, reference-assisted selection, and singleton filtering before final tree reconstruction.](figures/workflow_overview.png)
+
+### Input normalization and marker detection
+
+The workflow first normalizes the input proteomes to a stable `genome|protein` header convention so that downstream steps remain robust to heterogeneous source formatting. Malformed header joins are repaired, stop characters are removed, and non-IUPAC amino-acid symbols are converted to `X`. This preprocessing is mainly a robustness measure: it reduces avoidable parsing failures and makes it easier to merge query and reference proteomes in later steps.
+
+Marker detection is then performed with pyhmmer, which provides HMMER-compatible search and alignment functionality within the Python-facing workflow [4,5]. Curated marker sets can use model-native cutoffs such as `cut_ga`, whereas less curated collections can be run with an explicit E-value threshold. After the search step, SGTree parses hits into a marker-count matrix, applies genome-level inclusion filters such as the required fraction of recovered markers, and records which proteins will be carried into the alignment stage. At this point the workflow has converted raw proteomes into a controlled per-marker representation suitable for both standard tree building and contamination-aware cleanup.
+
+### Default tree-building branch
+
+In the default branch, SGTree follows a straightforward concatenated phylogenomics workflow. Selected marker sequences are extracted, aligned marker by marker, trimmed, concatenated, and used to infer a species tree. The recommended default alignment mode is `hmmalign`, which keeps each marker aligned against its own profile HMM through pyhmmer. MAFFT and MAFFT-L-INS-i are also available when a de novo sequence alignment is preferred [5,6]. Trimmed alignments are generated with trimAl [7], concatenated into a supermatrix, and passed to FastTree by default or IQ-TREE when a more model-rich maximum-likelihood analysis is desired [8,9].
+
+This default branch is best suited to datasets in which duplicate markers are uncommon or can be resolved adequately by bitscore. In that setting, SGTree behaves like a practical end-to-end species-tree generator: it produces the tree, the marker-count matrix, and the alignment-derived outputs needed for downstream inspection without forcing the user into a more expensive contamination-aware analysis.
+
+### Contamination-aware duplicate handling
+
+The contamination-aware logic is activated with `--marker_selection yes`. In this branch, SGTree first builds per-marker trees and compares them with the current species tree using normalized RF distances implemented through ETE3 [10]. When a genome carries more than one candidate copy of a marker, the workflow evaluates which copy is most compatible with the current species-tree hypothesis and preferentially retains that sequence. The default `coordinate` selection mode iterates this choice in a coordinate-descent style across duplicated genome-marker combinations; a `legacy` mode is retained mainly for baseline comparisons.
+
+This branch is intended for situations in which score alone is not a reliable proxy for orthology. Examples include contaminant markers with strong domain scores, recently duplicated loci, and mixed-quality genome collections in which a duplicated hit may be biologically plausible but still inconsistent with the dominant species-tree signal. In those cases, RF-guided selection uses tree discordance as an additional criterion and can be more conservative than score-only duplicate removal.
+
+### Reference-assisted cleanup and singleton filtering
+
+SGTree can optionally incorporate a reference genome set through `--ref`. When references are provided, the workflow first builds a cached reference analysis and then merges reference and query data during duplicate-resolution steps. This is useful when the query collection is phylogenetically diverse or uneven in quality and the user wants the cleanup decisions to be anchored by trusted genomes. Reference copies can also be score-locked, which prevents them from being re-resolved during RF-guided selection.
+
+SGTree also implements optional singleton filtering through `--singles yes`. This branch addresses a different problem from duplicate cleanup: the case in which a genome still carries only one detected copy of a marker, but that copy is not the expected one. The current singleton path uses `--singles_mode delta_rf`. For each marker tree, SGTree evaluates whether removing a single leaf improves marker-to-species RF agreement, then applies at most one singleton prune per marker under a per-genome budget so that genomes do not disappear from the final taxa set. In practical terms, singleton filtering is most useful when marker replacement is suspected, whereas RF-guided duplicate selection is most useful when extra copies are present.
+
+### Implementation details and outputs
+
+The Python workflow is organized into stages for search, parsing, extraction, alignment, duplicate handling, trimming, supermatrix construction, phylogeny, and rendering. The standard outputs include `tree.nwk`, `tree_final.nwk` when contamination-aware cleanup is used, the marker-count matrix, RF-value summaries for marker selection, and iTOL-compatible annotation files. The current codebase was validated with the repository unit suite and direct full-workflow executions before the benchmark analyses reported here.
+
+### Benchmark design
+
+Benchmarking was designed as a validation section rather than as the definition of the method itself. Each benchmark begins from a clean proteome panel and a marker-set HMM file. SGTree is first run on uncontaminated data to define a clean-reference tree for that panel. Synthetic contamination is then introduced under one of three scenario classes. In `duplicate_only`, contaminant copies are added as extra marker copies. In `replacement_only`, a contaminant copy replaces the native singleton without adding an extra copy. In `combined`, both event types are present in the same dataset.
+
+Six benchmark datasets were evaluated: Flavo Small, Flavo Large, Gamma Small, Gamma Large, Cross Small, and Cross Large. The Flavo panels use Flavobacteriaceae source genomes and `UNI56.hmm`; the Gamma panels use Gammaproteobacteria source collections and `RProt16.hmm`; the cross-group panels combine the two lineages through their shared marker intersection. For each dataset and scenario, the workflow reports the normalized RF distance of the contaminated tree before cleanup, the RF distance after cleanup, the RF change, and the number of contaminant markers removed out of the number introduced. The benchmark therefore measures both topological recovery and explicit cleanup success.
+
+The cleanup configuration was matched to the contamination class being tested. `duplicate_only` was evaluated with duplicate cleanup only. `replacement_only` was evaluated with singleton filtering activated in `delta_rf` mode. `combined` was evaluated with both duplicate cleanup and `singles_delta_rf`. This design allows the benchmark to ask a practical question: when the expected contamination mode is known, does the corresponding SGTree cleanup path improve the species tree?
+
+## Results
+
+### Benchmark scope and readouts
+
+The benchmark comprises 18 scenario-specific runs across six dataset panels and three contamination classes. Each dataset is evaluated against a clean truth tree, an initial contaminated tree, and a final tree after scenario-matched cleanup. The main readouts are the initial normalized RF distance, the final normalized RF distance, the change in RF, and the number of contaminant markers removed out of the number introduced. Figure 2 summarizes those outcomes across all six panels.
+
+![Benchmark summary across six synthetic contamination datasets. For each dataset and contamination scenario, the figure reports the normalized RF distance before cleanup, the final RF distance after scenario-matched cleanup, and direct labels for contaminant markers removed out of contaminant markers introduced.](figures/benchmark_summary_manuscript.png)
+
+### Duplicate-only cleanup outcomes
+
+Duplicate-only cleanup changed topology in only two benchmark panels because several duplicate-only contaminated trees already matched the clean reference. The clearest duplicate-only recovery was Cross Large, where RF decreased from `0.145` to `0.000` and all `8/8` duplicate contaminants were removed. Flavo Small, Flavo Large, and Gamma Large all began at `0.000` RF and remained there after cleanup, while duplicate removal still eliminated `4/8`, `0/8`, and `4/8` contaminant markers, respectively.
+
+The remaining duplicate-only panels show why contaminant removal and topological recovery are not identical readouts. Gamma Small removed `4/8` duplicate contaminants but remained at `0.091` RF, and Cross Small removed `3/8` duplicate contaminants while remaining at `0.333` RF. In those cases, either the removed contaminants contributed little to the initial topological error or the remaining contaminants were sufficient to preserve the same tree-level discordance.
+
+### Replacement-only cleanup outcomes
+
+Replacement-only cleanup divided sharply by dataset. The strongest replacement-only results were Gamma Small and Gamma Large, which improved from `0.091` to `0.000` and from `0.050` to `0.000`, respectively, while removing all `4/4` replacement contaminants in both panels. Flavo Large also removed `4/4` replacement contaminants, but the final tree shifted from `0.027` to `0.054` RF rather than improving.
+
+The remaining replacement-only panels define the present limits of the singleton branch. Cross Large improved only modestly, from `0.197` to `0.184`, while removing `2/4` replacement contaminants. Cross Small worsened from `0.367` to `0.433` while removing `2/4` replacements, and Flavo Small removed none of the four replacement contaminants and shifted from `0.400` to `0.467` RF. These outcomes indicate that the current singleton cleanup is conservative and preserves the final taxa set, but replacement recovery remains uneven outside the Gamma panels.
+
+### Combined contamination outcomes
+
+The combined scenario remains the most informative because it tests SGTree under simultaneous added-copy and replacement-style contamination. Three panels improved topologically after scenario-matched cleanup: Flavo Small shifted from `0.467` to `0.333`, Cross Small from `0.467` to `0.367`, and Cross Large from `0.263` to `0.250`. All three removed `5/12` contaminant markers, although the recovered contaminant types differed across datasets.
+
+The remaining three combined panels were topologically unchanged. Gamma Small remained at `0.000` while removing `5/12` contaminants, Gamma Large remained at `0.100` while removing `4/12`, and Flavo Large remained at `0.054` while removing only `2/12`. The combined benchmark therefore supports a conservative conclusion. Duplicate cleanup remains useful in mixed contamination settings, but the singleton component contributes more modestly when added-copy and replacement contamination occur together.
+
+## Discussion
+
+SGTree is best understood as a species-tree workflow with optional contamination-aware refinement, not as a benchmark-specific cleanup script. The default branch covers the common case in which a user wants to move from proteome FASTA inputs and a marker HMM set to a species tree with minimal configuration. The contamination-aware branch extends that workflow for datasets in which marker duplication, contamination, or ambiguous orthology is expected to distort the tree.
+
+The current results suggest a clear practical division of labor among the implemented methods. Score-based duplicate resolution and the default branch are appropriate for relatively clean datasets and for rapid first-pass trees. RF-guided duplicate cleanup is useful when extra copies remain and tree discordance provides additional information beyond bitscore. Singleton filtering in the current `delta_rf` formulation is best viewed as a conservative replacement-cleanup pass: it can remove obvious replacement contaminants while preserving the expected taxa set, but it does not uniformly recover final topology across all datasets. Reference-assisted duplicate cleanup is best viewed here as workflow rationale and an operational option rather than as a benchmark-supported conclusion, because the current benchmark set does not isolate its contribution directly. These are complementary tools within the same workflow rather than competing heuristics that need to be averaged into a single score.
+
+The benchmark also defines the current limits of the method. Added-copy contamination is handled more reliably than singleton replacement, especially in the Cross Large duplicate-only panel. Replacement cleanup is strongest in the Gamma datasets and weakest in Flavo Small and Cross Small, where conservative singleton pruning either removes only part of the contamination or fails to improve the final tree. The mixed contamination panels reinforce the same point: SGTree can reduce discordance without collateral taxon loss, but the current singleton logic remains a limiting step in the hardest within-group and mixed contamination settings.
+
+This benchmark is structured rather than replicate-rich, so the results should be read as exact outcomes for six designed datasets rather than as a formal estimate of variance across many random realizations. Even so, it provides a useful operational picture of where the different SGTree branches help and where further method development is still needed. In that sense, the main value of the benchmark is not to rank heuristics in the abstract, but to show how a contamination-aware tree-building workflow behaves under distinct and biologically plausible marker-assignment failures.
+
+## References
+
+1. Parks DH, Imelfort M, Skennerton CT, Hugenholtz P, Tyson GW. CheckM: assessing the quality of microbial genomes recovered from isolates, single cells, and metagenomes. *Genome Research*. 2015;25(7):1043-1055. https://doi.org/10.1101/gr.186072.114
+2. Bowers RM, Kyrpides NC, Stepanauskas R, Harmon-Smith M, Doud D, Reddy TBK, et al. Minimum information about a single amplified genome (MISAG) and a metagenome-assembled genome (MIMAG) of bacteria and archaea. *Nature Biotechnology*. 2017;35(8):725-731. https://doi.org/10.1038/nbt.3893
+3. Di Tommaso P, Chatzou M, Floden EW, Barja PP, Palumbo E, Notredame C. Nextflow enables reproducible computational workflows. *Nature Biotechnology*. 2017;35(4):316-319. https://doi.org/10.1038/nbt.3820
+4. Eddy SR. Accelerated profile HMM searches. *PLoS Computational Biology*. 2011;7(10):e1002195. https://doi.org/10.1371/journal.pcbi.1002195
+5. Larralde M, Zeller G. PyHMMER: a Python library binding to HMMER for efficient sequence analysis. *Bioinformatics*. 2023;39(5):btad214. https://doi.org/10.1093/bioinformatics/btad214
+6. Katoh K, Standley DM. MAFFT multiple sequence alignment software version 7: improvements in performance and usability. *Molecular Biology and Evolution*. 2013;30(4):772-780. https://doi.org/10.1093/molbev/mst010
+7. Capella-Gutierrez S, Silla-Martinez JM, Gabaldon T. trimAl: a tool for automated alignment trimming in large-scale phylogenetic analyses. *Bioinformatics*. 2009;25(15):1972-1973. https://doi.org/10.1093/bioinformatics/btp348
+8. Price MN, Dehal PS, Arkin AP. FastTree 2: approximately maximum-likelihood trees for large alignments. *PLoS ONE*. 2010;5(3):e9490. https://doi.org/10.1371/journal.pone.0009490
+9. Minh BQ, Schmidt HA, Chernomor O, Schrempf D, Woodhams MD, von Haeseler A, et al. IQ-TREE 2: new models and efficient methods for phylogenetic inference in the genomic era. *Molecular Biology and Evolution*. 2020;37(5):1530-1534. https://doi.org/10.1093/molbev/msaa015
+10. Huerta-Cepas J, Serra F, Bork P. ETE 3: reconstruction, analysis, and visualization of phylogenomic data. *Molecular Biology and Evolution*. 2016;33(6):1635-1638. https://doi.org/10.1093/molbev/msw046
