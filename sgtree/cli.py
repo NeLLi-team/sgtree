@@ -9,7 +9,7 @@ import shutil
 
 from sgtree.config import Config
 from sgtree import search, extract, align, duplicates, supermatrix, phylogeny
-from sgtree import marker_selection, itol, render, sgtree_logging, cleanup, reference
+from sgtree import render, sgtree_logging, cleanup, reference
 from sgtree import ani_clustering
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -205,6 +205,7 @@ def main():
     ls_refs = reference.prepare_reference(cfg)
 
     # write iTOL color file after any ANI-driven input collapsing
+    from sgtree import itol
     itol.write_color_file(cfg)
 
     # print arguments
@@ -331,6 +332,7 @@ def main():
 
         # iTOL heatmap (for basic run)
         if not cfg.marker_selection:
+            from sgtree import itol
             itol.write_heatmap(cfg, tree_path, "marker_count.txt")
 
         # Write logfile
@@ -345,6 +347,7 @@ def main():
 
     # Marker selection phase
     if cfg.marker_selection:
+        from sgtree import marker_selection
         try:
             ms_timings = {}
 
@@ -457,6 +460,7 @@ def main():
             render.render_tree(cfg, color_file)
 
             # iTOL heatmap
+            from sgtree import itol
             itol.write_heatmap(cfg, tree_final_path, "marker_counts.txt")
 
         except Exception as e:
