@@ -217,6 +217,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/typst-0.13.0-h53e704d_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/unicodedata2-17.0.1-py312h4c3975b_0.conda
+      - conda: https://conda.anaconda.org/bioconda/linux-64/veryfasttree-4.0.5-h9948957_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.24.0-hd6090a7_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wcwidth-0.6.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/xcb-util-0.4.1-h4f16b4b_2.conda
@@ -437,6 +438,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/typst-0.13.0-h371c88c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/unicodedata2-17.0.1-py312h1a1c95f_0.conda
+      - conda: https://conda.anaconda.org/bioconda/osx-64/veryfasttree-4.0.5-h8e8ab34_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/noarch/wcwidth-0.6.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/xorg-libice-1.1.2-h6e16a3a_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/xorg-libsm-1.2.6-h6e16a3a_0.conda
@@ -634,6 +636,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/typst-0.13.0-h0716509_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/unicodedata2-17.0.1-py312h2bbb03f_0.conda
+      - conda: https://conda.anaconda.org/bioconda/osx-arm64/veryfasttree-4.0.5-h28ef24b_0.tar.bz2
       - conda: https://conda.anaconda.org/conda-forge/noarch/wcwidth-0.6.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/xorg-libice-1.1.2-h5505292_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/xorg-libsm-1.2.6-h5505292_0.conda
@@ -7146,6 +7149,41 @@ packages:
   - pkg:pypi/unicodedata2?source=compressed-mapping
   size: 415828
   timestamp: 1770909782683
+- conda: https://conda.anaconda.org/bioconda/linux-64/veryfasttree-4.0.5-h9948957_0.tar.bz2
+  sha256: 68a8f71459f4eff76f915809a800ad5d339b6cb2f56abb92b9d64ca88fdb2e11
+  md5: 226d47ca79cd64425bbbc9514130540b
+  depends:
+  - _openmp_mutex >=4.5
+  - libgcc >=13
+  - libgomp
+  - libstdcxx >=13
+  license: GPL-3.0-only
+  license_family: GPL3
+  purls: []
+  size: 1556691
+  timestamp: 1743981321913
+- conda: https://conda.anaconda.org/bioconda/osx-64/veryfasttree-4.0.5-h8e8ab34_0.tar.bz2
+  sha256: 3e6ab2a3006ad1e3d931cca0015220d7c1335ad8cc49b66cbbf6f2fb0aca21fd
+  md5: 65065624deea69ea14d5dc08a3b4408a
+  depends:
+  - libcxx >=18
+  - llvm-openmp >=18.1.8
+  license: GPL-3.0-only
+  license_family: GPL3
+  purls: []
+  size: 1221542
+  timestamp: 1743981997244
+- conda: https://conda.anaconda.org/bioconda/osx-arm64/veryfasttree-4.0.5-h28ef24b_0.tar.bz2
+  sha256: fe2ded923dcd57cbe167f55798681304be5f64065b49ef0312a88d4bfe396ba5
+  md5: b88350781356caa7e68c3e854d22f51b
+  depends:
+  - libcxx >=18
+  - llvm-openmp >=18.1.8
+  license: GPL-3.0-only
+  license_family: GPL3
+  purls: []
+  size: 720295
+  timestamp: 1743981973413
 - conda: https://conda.anaconda.org/conda-forge/linux-64/wayland-1.24.0-hd6090a7_1.conda
   sha256: 3aa04ae8e9521d9b56b562376d944c3e52b69f9d2a0667f77b8953464822e125
   md5: 035da2e4f5770f036ff704fa17aace24
