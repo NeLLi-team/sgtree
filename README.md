@@ -12,6 +12,14 @@ pixi install
 
 The environment is managed through `pixi.toml` and `pixi.lock`.
 
+Quick smoke test with the bundled small example dataset:
+
+```bash
+pixi run example
+```
+
+This writes a basic example tree to `runs/example_basic/`.
+
 ## Run
 
 Primary interface (`pixi run sgtree` wrapper):
