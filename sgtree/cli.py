@@ -56,8 +56,8 @@ def parse_args() -> Config:
                         help="singleton neighborhood size (0=auto)")
     parser.add_argument("--singles_min_rfdist", type=float, default=0.25,
                         help="minimum marker-tree/global-tree RF distance required to activate singleton filtering")
-    parser.add_argument("--aln", type=str, default="mafft",
-                        help="alignment method: mafft, mafft-linsi, or hmmalign")
+    parser.add_argument("--aln", type=str, default="hmmalign",
+                        help="alignment method: hmmalign, mafft, or mafft-linsi")
     parser.add_argument("--tree_method", type=str, default="fasttree",
                         choices=["fasttree", "iqtree"],
                         help="tree builder for species and marker trees: fasttree or iqtree")

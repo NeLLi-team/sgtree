@@ -624,6 +624,52 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["singleton_collateral_genome_count"], 1)
         self.assertEqual(result["singleton_collateral_genomes"], "GenomeC")
 
+    def test_export_benchmark_tables_writes_alignment_comparison_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            results_dir = benchmark_dir / "results"
+            mafft_dir = benchmark_dir / "results_mafft_20260313"
+            outdir = root / "docs_data"
+            benchmark_dir.mkdir()
+            results_dir.mkdir()
+            mafft_dir.mkdir()
+
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "lineage_label": "flavo",
+                        "taxonomic_scope": "genus",
+                        "scenarios": [{"name": "duplicate_only"}],
+                    }
+                )
+            )
+            baseline = (
+                "scenario\ttree_rf_norm\tcontaminant_markers_removed_fraction\truntime_seconds\t"
+                "final_missing_taxa_count\tstatus\trun_dir\n"
+                "duplicate_only\t0.0\t0.5\t10.0\t0\tok\tbaseline_run\n"
+            )
+            comparison = (
+                "scenario\ttree_rf_norm\tcontaminant_markers_removed_fraction\truntime_seconds\t"
+                "final_missing_taxa_count\tstatus\trun_dir\talignment_method\n"
+                "duplicate_only\t0.1\t0.75\t12.0\t0\tok\tmafft_run\tmafft\n"
+            )
+            (results_dir / "summary.tsv").write_text(baseline)
+            (mafft_dir / "summary.tsv").write_text(comparison)
+
+            benchmark.export_benchmark_tables([benchmark_dir], outdir)
+
+            comparison_df = benchmark.pd.read_csv(outdir / "benchmark_alignment_comparison.tsv", sep="\t")
+            summary_df = benchmark.pd.read_csv(outdir / "benchmark_alignment_comparison_summary.tsv", sep="\t")
+
+        self.assertEqual(len(comparison_df), 1)
+        self.assertEqual(comparison_df.loc[0, "comparison_alignment_method"], "mafft")
+        self.assertAlmostEqual(comparison_df.loc[0, "rf_delta_comparison_minus_baseline"], 0.1)
+        self.assertEqual(comparison_df.loc[0, "rf_change_direction"], "worse")
+        self.assertEqual(len(summary_df), 1)
+        self.assertEqual(summary_df.loc[0, "worsened_count"], 1)
+        self.assertAlmostEqual(summary_df.loc[0, "runtime_ratio_mean"], 1.2)
+
 
 if __name__ == "__main__":
     unittest.main()
