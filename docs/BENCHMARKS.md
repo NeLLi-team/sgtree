@@ -75,8 +75,28 @@ The notebook and export helper now write three stable TSVs under [`docs/data`](/
 - [`benchmark_summary_all.tsv`](/home/fschulz/dev/software/sgtree/docs/data/benchmark_summary_all.tsv)
   - one row per completed panel/scenario benchmark run
   - carries RF, contaminant-removal, taxa-retention, and singleton-pruning outcomes
+- [`benchmark_alignment_comparison.tsv`](/home/fschulz/dev/software/sgtree/docs/data/benchmark_alignment_comparison.tsv)
+  - one row per panel/scenario comparison between the baseline `results/summary.tsv` and the latest `results_mafft_*/summary.tsv`
+  - carries baseline vs comparison RF, contaminant-removal, runtime, and missing-taxa counts together with signed deltas
+- [`benchmark_alignment_comparison_summary.tsv`](/home/fschulz/dev/software/sgtree/docs/data/benchmark_alignment_comparison_summary.tsv)
+  - one row per benchmark panel summarizing the detailed comparison table
+  - carries counts of improved/unchanged/worsened scenarios plus mean RF and runtime shifts
 
 These TSVs are the preferred manuscript-facing source of truth because they are regenerated from manifests and `results/summary.tsv` files rather than from hardcoded dataset assumptions.
+
+## Alignment Replay Summary
+
+The March 13, 2026 replay added a side-by-side comparison between the pre-existing benchmark baseline under each panel's `results/summary.tsv` and a full MAFFT rerun under `results_mafft_20260313/summary.tsv`. The comparison spans the 12 completed lineage and mixed high-level panels documented above, for a total of 30 scenario-level comparisons.
+
+At the scenario level, MAFFT was worse in `25/30` comparisons, unchanged in `2/30`, and better in `3/30`. The three MAFFT improvements were limited to `gamma/genus/replacement_only`, `chlam/order/replacement_only`, and `chlam/order/combined`. The broad pattern was therefore unfavorable to switching the default alignment mode away from profile-guided alignment.
+
+Lineage-specific behavior was uneven:
+
+- `flavo` regressed in all `10/10` comparisons. The worst regression was `flavo/order/combined`, which shifted from `0.0213` to `0.1915` final normalized RF. Runtime increased by roughly `1.13x` to `1.30x`.
+- `gamma` was the least affected lineage. Most RF shifts were small, usually around `+0.0233`, and the only clear MAFFT improvement in the Gamma panels was `genus/replacement_only`, which improved from `0.0465` to `0.0233`. Runtime increased by about `1.05x` to `1.09x`.
+- `chlam` was mixed. `order/replacement_only` and `order/combined` improved modestly, but `family` and `genus` mostly worsened, including `chlam/family/combined` from `0.0000` to `0.1277`. Runtime increased by roughly `1.42x` to `1.64x`.
+
+Those results motivated restoring `hmmalign` as the SGTree default. MAFFT remains available as an explicit alternative (`--aln mafft` or `--aln mafft-linsi`) for cases where de novo alignment is still desired.
 
 ## Event Tables
 

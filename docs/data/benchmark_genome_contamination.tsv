@@ -1,93 +1,220 @@
-recipient_genome	recipient_group	contaminant_markers_added	duplicate_events	replacement_events	within_group_events	cross_group_events	dataset_id	dataset_label	scenario
-FLAV__GCA_000023285-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	duplicate_only
-FLAV__GCA_000827555-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	duplicate_only
-FLAV__GCA_006120725-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	duplicate_only
-FLAV__GCA_011089875-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	duplicate_only
-FLAV__GCA_000023285-1	flavo	1	0	1	1	0	flavo_small	Flavo Small	replacement_only
-FLAV__GCA_003054025-1	flavo	1	0	1	1	0	flavo_small	Flavo Small	replacement_only
-FLAV__GCA_017565765-1	flavo	1	0	1	1	0	flavo_small	Flavo Small	replacement_only
-FLAV__GCA_020886115-1	flavo	1	0	1	1	0	flavo_small	Flavo Small	replacement_only
-FLAV__GCA_000023285-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	combined
-FLAV__GCA_002302565-1	flavo	1	0	1	1	0	flavo_small	Flavo Small	combined
-FLAV__GCA_006120725-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	combined
-FLAV__GCA_011089875-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	combined
-FLAV__GCA_017565765-1	flavo	2	2	0	2	0	flavo_small	Flavo Small	combined
-FLAV__GCA_020886115-1	flavo	2	0	2	2	0	flavo_small	Flavo Small	combined
-FLAV__GCA_027941775-1	flavo	1	0	1	1	0	flavo_small	Flavo Small	combined
-FLAV__GCA_003054025-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	duplicate_only
-FLAV__GCA_010820555-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	duplicate_only
-FLAV__GCA_021172165-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	duplicate_only
-FLAV__GCA_027941775-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	duplicate_only
-FLAV__GCA_000827555-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	replacement_only
-FLAV__GCA_003293845-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	replacement_only
-FLAV__GCA_011089875-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	replacement_only
-FLAV__GCA_029866485-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	replacement_only
-FLAV__GCA_000411115-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	combined
-FLAV__GCA_003268855-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	combined
-FLAV__GCA_004122165-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	combined
-FLAV__GCA_014643655-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	combined
-FLAV__GCA_015223105-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	combined
-FLAV__GCA_017565765-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	combined
-FLAV__GCA_022478115-1	flavo	1	0	1	1	0	flavo_large	Flavo Large	combined
-FLAV__GCA_027941775-1	flavo	2	2	0	2	0	flavo_large	Flavo Large	combined
-GAMMA__GCA-000021705-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	duplicate_only
-GAMMA__GCA-000147015-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	duplicate_only
-GAMMA__GCA-000441555-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	duplicate_only
-GAMMA__GCA-019278155-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	duplicate_only
-GAMMA__GCA-000441555-1	gamma	1	0	1	1	0	gamma_small	Gamma Small	replacement_only
-GAMMA__GCA-000471645-3	gamma	1	0	1	1	0	gamma_small	Gamma Small	replacement_only
-GAMMA__GCA-030525705-1	gamma	2	0	2	2	0	gamma_small	Gamma Small	replacement_only
-GAMMA__GCA-000147015-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-000441555-1	gamma	1	0	1	1	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-011754105-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-016593155-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-018260315-1	gamma	2	0	2	2	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-019278155-1	gamma	1	0	1	1	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-031960925-1	gamma	2	2	0	2	0	gamma_small	Gamma Small	combined
-GAMMA__GCA-000147015-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	duplicate_only
-GAMMA__GCA-000441555-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	duplicate_only
-GAMMA__GCA-018260315-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	duplicate_only
-GAMMA__GCA-030859305-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	duplicate_only
-GAMMA__GCA-001267175-1	gamma	1	0	1	1	0	gamma_large	Gamma Large	replacement_only
-GAMMA__GCA-002423905-1	gamma	1	0	1	1	0	gamma_large	Gamma Large	replacement_only
-GAMMA__GCA-003072465-1	gamma	1	0	1	1	0	gamma_large	Gamma Large	replacement_only
-GAMMA__GCA-029279945-1	gamma	1	0	1	1	0	gamma_large	Gamma Large	replacement_only
-GAMMA__GCA-000147015-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	combined
-GAMMA__GCA-000441555-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	combined
-GAMMA__GCA-002216855-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	combined
-GAMMA__GCA-002279005-1	gamma	2	0	2	2	0	gamma_large	Gamma Large	combined
-GAMMA__GCA-003987435-1	gamma	2	2	0	2	0	gamma_large	Gamma Large	combined
-GAMMA__GCA-018260315-1	gamma	1	0	1	1	0	gamma_large	Gamma Large	combined
-GAMMA__GCA-019278155-1	gamma	1	0	1	1	0	gamma_large	Gamma Large	combined
-FLAV__GCA_003054025-1	flavo	2	2	0	0	2	cross_small	Cross Small	duplicate_only
-FLAV__GCA_017565765-1	flavo	2	2	0	0	2	cross_small	Cross Small	duplicate_only
-GAMMA__GCA-000147015-1	gamma	2	2	0	0	2	cross_small	Cross Small	duplicate_only
-GAMMA__GCA-004124255-1	gamma	2	2	0	0	2	cross_small	Cross Small	duplicate_only
-FLAV__GCA_001553545-1	flavo	1	0	1	0	1	cross_small	Cross Small	replacement_only
-FLAV__GCA_002302565-1	flavo	1	0	1	0	1	cross_small	Cross Small	replacement_only
-GAMMA__GCA-000441555-1	gamma	1	0	1	0	1	cross_small	Cross Small	replacement_only
-GAMMA__GCA-004124255-1	gamma	1	0	1	0	1	cross_small	Cross Small	replacement_only
-FLAV__GCA_003054025-1	flavo	2	2	0	0	2	cross_small	Cross Small	combined
-FLAV__GCA_017565765-1	flavo	2	2	0	0	2	cross_small	Cross Small	combined
-FLAV__GCA_027941775-1	flavo	1	0	1	0	1	cross_small	Cross Small	combined
-GAMMA__GCA-000021705-1	gamma	1	0	1	0	1	cross_small	Cross Small	combined
-GAMMA__GCA-000147015-1	gamma	2	2	0	0	2	cross_small	Cross Small	combined
-GAMMA__GCA-004124255-1	gamma	2	2	0	0	2	cross_small	Cross Small	combined
-GAMMA__GCA-019278155-1	gamma	1	0	1	0	1	cross_small	Cross Small	combined
-GAMMA__GCA-031960925-1	gamma	1	0	1	0	1	cross_small	Cross Small	combined
-FLAV__GCA_006120725-1	flavo	2	2	0	0	2	cross_large	Cross Large	duplicate_only
-FLAV__GCA_010820555-1	flavo	2	2	0	0	2	cross_large	Cross Large	duplicate_only
-GAMMA__GCA-000147015-1	gamma	2	2	0	0	2	cross_large	Cross Large	duplicate_only
-GAMMA__GCA-000478685-1	gamma	2	2	0	0	2	cross_large	Cross Large	duplicate_only
-FLAV__GCA_000379185-1	flavo	1	0	1	0	1	cross_large	Cross Large	replacement_only
-FLAV__GCA_002302565-1	flavo	1	0	1	0	1	cross_large	Cross Large	replacement_only
-FLAV__GCA_003944795-1	flavo	1	0	1	0	1	cross_large	Cross Large	replacement_only
-FLAV__GCA_015223105-1	flavo	1	0	1	0	1	cross_large	Cross Large	replacement_only
-FLAV__GCA_002954325-1	flavo	1	0	1	0	1	cross_large	Cross Large	combined
-FLAV__GCA_006120725-1	flavo	2	2	0	0	2	cross_large	Cross Large	combined
-FLAV__GCA_010820555-1	flavo	2	2	0	0	2	cross_large	Cross Large	combined
-FLAV__GCA_019565505-1	flavo	1	0	1	0	1	cross_large	Cross Large	combined
-GAMMA__GCA-000147015-1	gamma	2	2	0	0	2	cross_large	Cross Large	combined
-GAMMA__GCA-000441555-1	gamma	1	0	1	0	1	cross_large	Cross Large	combined
-GAMMA__GCA-000478685-1	gamma	2	2	0	0	2	cross_large	Cross Large	combined
-GAMMA__GCA-018260315-1	gamma	1	0	1	0	1	cross_large	Cross Large	combined
+recipient_genome	recipient_group	contaminant_markers_added	duplicate_events	replacement_events	within_group_events	cross_group_events	panel_id	panel_label	dataset_id	dataset_label	lineage_label	taxonomic_scope	taxonomic_scope_label	scenario	donor_labels
+CHLAMYDIOTA__GCA-000007205-1	chlam	1	1	0	0	1	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-000454725-1	chlam	2	1	1	0	2	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-000750955-1	chlam	1	0	1	0	1	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-002817655-1	chlam	1	0	1	0	1	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-002895085-1	chlam	1	0	1	0	1	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-003164155-1	chlam	1	1	0	0	1	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-027451585-1	chlam	2	1	1	0	2	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+CHLAMYDIOTA__GCA-033977065-1	chlam	1	1	0	0	1	chlam_mixed_high_level	Chlam Mixed High Level	chlam_mixed_high_level	Chlam Mixed High Level	chlam	mixed_high_level	mixed_high_level	mixed_high_level	flavo,gamma
+FLAV__GCA_000174755-1	flavo	1	1	0	0	1	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_000797465-1	flavo	2	1	1	0	2	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_002217405-1	flavo	1	0	1	0	1	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_003344925-1	flavo	1	0	1	0	1	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_003634755-1	flavo	1	0	1	0	1	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_003688895-1	flavo	1	1	0	0	1	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_020911945-1	flavo	2	1	1	0	2	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+FLAV__GCA_032926325-1	flavo	1	1	0	0	1	flavo_mixed_high_level	Flavo Mixed High Level	flavo_mixed_high_level	Flavo Mixed High Level	flavo	mixed_high_level	mixed_high_level	mixed_high_level	chlam,gamma
+GAMMA__GCA-000147015-1	gamma	1	1	0	0	1	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-001874155-1	gamma	2	1	1	0	2	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-002381345-1	gamma	1	0	1	0	1	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-008017255-1	gamma	1	0	1	0	1	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-011754105-1	gamma	1	0	1	0	1	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-012513235-1	gamma	1	1	0	0	1	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-024642445-1	gamma	2	1	1	0	2	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+GAMMA__GCA-031960925-1	gamma	1	1	0	0	1	gamma_mixed_high_level	Gamma Mixed High Level	gamma_mixed_high_level	Gamma Mixed High Level	gamma	mixed_high_level	mixed_high_level	mixed_high_level	chlam,flavo
+CHLAMYDIOTA__GCA-000012125-1	chlam	2	2	0	2	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-000583875-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-001796285-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-015356765-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-018239665-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-027365315-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-027366035-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	duplicate_only	chlam
+CHLAMYDIOTA__GCA-000006685-1	chlam	1	0	1	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	replacement_only	chlam
+CHLAMYDIOTA__GCA-000454725-1	chlam	1	0	1	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	replacement_only	chlam
+CHLAMYDIOTA__GCA-021734805-1	chlam	1	0	1	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	replacement_only	chlam
+CHLAMYDIOTA__GCA-027316765-1	chlam	1	0	1	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	replacement_only	chlam
+CHLAMYDIOTA__GCA-000454725-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-001794905-1	chlam	2	1	1	2	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-013285585-1	chlam	1	0	1	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-019056535-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-021324995-1	chlam	2	1	1	2	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-021734805-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-022766545-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-027366035-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-027451825-1	chlam	1	1	0	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-031423235-1	chlam	1	0	1	1	0	chlam_family	Chlam Family	chlam_family	Chlam Family	chlam	family	same_order_different_family	combined	chlam
+CHLAMYDIOTA__GCA-000006685-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-000007205-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-018239665-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-018343815-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-019634675-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-022766545-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-027451585-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-027451825-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	duplicate_only	chlam
+CHLAMYDIOTA__GCA-000006685-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	replacement_only	chlam
+CHLAMYDIOTA__GCA-001796315-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	replacement_only	chlam
+CHLAMYDIOTA__GCA-017472245-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	replacement_only	chlam
+CHLAMYDIOTA__GCA-019745395-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	replacement_only	chlam
+CHLAMYDIOTA__GCA-001653975-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-002817655-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-018240065-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-018343815-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-021324995-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-023269355-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-027316765-1	chlam	1	0	1	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-027459365-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-028873375-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-030043495-1	chlam	1	1	0	1	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-031423235-1	chlam	2	2	0	2	0	chlam_genus	Chlam Genus	chlam_genus	Chlam Genus	chlam	genus	same_family_different_genus	combined	chlam
+CHLAMYDIOTA__GCA-001653975-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-001794905-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-001796315-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-019745395-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-021781995-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-023269355-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-028873375-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-030043815-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	duplicate_only	chlam
+CHLAMYDIOTA__GCA-018240065-1	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	replacement_only	chlam
+CHLAMYDIOTA__GCA-028873375-1	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	replacement_only	chlam
+CHLAMYDIOTA__GCA-030408475-1	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	replacement_only	chlam
+CHLAMYDIOTA__GCA-033977065-1	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	replacement_only	chlam
+CHLAMYDIOTA__GCA-000009945-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-000471025-2	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-000750955-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-001796285-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-018239725-1	chlam	3	2	1	3	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-018240065-1	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-018343815-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-021772235-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-027316765-1	chlam	1	1	0	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+CHLAMYDIOTA__GCA-030043495-1	chlam	1	0	1	1	0	chlam_order	Chlam Order	chlam_order	Chlam Order	chlam	order	same_class_different_order	combined	chlam
+FLAV__GCA_000425465-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_000498535-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_000797465-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_003148385-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_003344925-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_004797125-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_014486675-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_020552705-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	duplicate_only	flavo
+FLAV__GCA_008124875-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	replacement_only	flavo
+FLAV__GCA_013090115-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	replacement_only	flavo
+FLAV__GCA_014486675-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	replacement_only	flavo
+FLAV__GCA_029625335-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	replacement_only	flavo
+FLAV__GCA_000422365-1	flavo	2	1	1	2	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_002807055-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_003688895-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_004346845-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_011089875-1	flavo	2	2	0	2	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_013090115-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_014486675-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_019312585-1	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_028561565-1	flavo	1	0	1	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_028743515-2	flavo	1	1	0	1	0	flavo_family	Flavo Family	flavo_family	Flavo Family	flavo	family	same_order_different_family	combined	flavo
+FLAV__GCA_000425465-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_000498535-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_000797465-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_003148385-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_003344925-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_004797125-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_014486675-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_020552705-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	duplicate_only	flavo
+FLAV__GCA_008124875-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	replacement_only	flavo
+FLAV__GCA_013090115-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	replacement_only	flavo
+FLAV__GCA_014486675-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	replacement_only	flavo
+FLAV__GCA_029625335-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	replacement_only	flavo
+FLAV__GCA_000422365-1	flavo	2	1	1	2	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_002807055-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_003688895-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_004346845-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_011089875-1	flavo	2	2	0	2	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_013090115-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_014486675-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_019312585-1	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_028561565-1	flavo	1	0	1	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_028743515-2	flavo	1	1	0	1	0	flavo_genus	Flavo Genus	flavo_genus	Flavo Genus	flavo	genus	same_family_different_genus	combined	flavo
+FLAV__GCA_000425465-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_000498535-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_000797465-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_003148385-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_003344925-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_004797125-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_014486675-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_020552705-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	duplicate_only	flavo
+FLAV__GCA_000153225-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	replacement_only	flavo
+FLAV__GCA_000382125-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	replacement_only	flavo
+FLAV__GCA_011305415-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	replacement_only	flavo
+FLAV__GCA_014596945-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	replacement_only	flavo
+FLAV__GCA_000174755-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_000425465-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_000831385-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_002217405-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_002807055-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_011927795-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_014635865-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_014642915-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_015223105-1	flavo	2	1	1	2	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_016522065-1	flavo	1	0	1	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+FLAV__GCA_020552705-1	flavo	1	1	0	1	0	flavo_order	Flavo Order	flavo_order	Flavo Order	flavo	order	same_class_different_order	combined	flavo
+GAMMA__GCA-000021705-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-000478685-1	gamma	2	2	0	2	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-011754105-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-012513235-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-018883865-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-019278155-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-021299355-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	duplicate_only	gamma
+GAMMA__GCA-000021705-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	replacement_only	gamma
+GAMMA__GCA-000471645-3	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	replacement_only	gamma
+GAMMA__GCA-002216855-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	replacement_only	gamma
+GAMMA__GCA-020026075-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	replacement_only	gamma
+GAMMA__GCA-000478685-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-002216855-1	gamma	2	2	0	2	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-002381345-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-003072465-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-018059485-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-019278155-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-023394655-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-030528455-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-030531795-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-030859305-1	gamma	1	1	0	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-031960925-1	gamma	1	0	1	1	0	gamma_order	Gamma Order	gamma_order	Gamma Order	gamma	order	same_class_different_order	combined	gamma
+GAMMA__GCA-000478685-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-001874155-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-002216855-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-003251455-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-004124255-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-018883865-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-020026055-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-030525825-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	duplicate_only	gamma
+GAMMA__GCA-020026155-1	gamma	1	0	1	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	replacement_only	gamma
+GAMMA__GCA-029279945-1	gamma	1	0	1	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	replacement_only	gamma
+GAMMA__GCA-030525705-1	gamma	1	0	1	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	replacement_only	gamma
+GAMMA__GCA-031960925-1	gamma	1	0	1	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	replacement_only	gamma
+GAMMA__GCA-000471645-3	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-002279005-1	gamma	1	0	1	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-003251455-1	gamma	2	0	2	2	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-003987435-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-008017255-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-012518835-1	gamma	1	0	1	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-018883865-1	gamma	2	2	0	2	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-020026115-1	gamma	1	1	0	1	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-031960925-1	gamma	2	2	0	2	0	gamma_family	Gamma Family	gamma_family	Gamma Family	gamma	family	same_order_different_family	combined	gamma
+GAMMA__GCA-004124255-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-016864895-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-018260315-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-018384595-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-020026075-1	gamma	2	2	0	2	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-030150595-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-030525825-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	duplicate_only	gamma
+GAMMA__GCA-000441555-1	gamma	1	0	1	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	replacement_only	gamma
+GAMMA__GCA-001267175-1	gamma	1	0	1	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	replacement_only	gamma
+GAMMA__GCA-016593155-1	gamma	2	0	2	2	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	replacement_only	gamma
+GAMMA__GCA-000471645-3	gamma	2	1	1	2	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-001874155-1	gamma	1	0	1	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-011754105-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-012518835-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-018059485-1	gamma	2	1	1	2	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-018883865-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-021209335-1	gamma	1	1	0	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-021299355-1	gamma	2	2	0	2	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma
+GAMMA__GCA-029433345-1	gamma	1	0	1	1	0	gamma_genus	Gamma Genus	gamma_genus	Gamma Genus	gamma	genus	same_family_different_genus	combined	gamma

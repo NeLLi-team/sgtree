@@ -67,7 +67,7 @@ pixi run sgtree \
 ```
 
 `pixi run sgtree` and `pixi run sgtree-python` now invoke the same Python engine.
-Marker searches are run with `pyhmmer`. The default alignment mode is now `--aln mafft`; `--aln hmmalign` remains available for profile-guided marker alignment.
+Marker searches are run with `pyhmmer`. The default alignment mode is `--aln hmmalign`; `--aln mafft` and `--aln mafft-linsi` remain available for de novo marker alignment.
 Rendered PNG trees now use a headless-safe matplotlib/Biopython renderer.
 
 Example with IQ-TREE and explicit HMM threshold mode:
@@ -114,7 +114,7 @@ pixi run ./sgtree.py testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cp
 
 Core method controls:
 
-- `--aln`: `hmmalign`, `mafft`, or `mafft-linsi` (default `mafft`).
+- `--aln`: `hmmalign`, `mafft`, or `mafft-linsi` (default `hmmalign`).
 - `--tree_method`: `fasttree` or `iqtree` (default `fasttree`) for both species tree and per-marker trees.
 - `--iqtree_fast`: apply `-fast` when `--tree_method iqtree` (default `true`).
 - `--iqtree_model`: IQ-TREE model string (default `LG+F+I+G4`).
@@ -161,8 +161,8 @@ Practical selection guide:
 
 - Curated marker sets (for example UNI56): start with `--hmmsearch_cutoff cut_ga`.
 - Less curated/custom marker sets: start with `--hmmsearch_cutoff evalue --hmmsearch_evalue 1e-5`, then tighten if false positives appear.
-- `--aln mafft` is now the default. For alignments with fewer than 100 taxa, each MAFFT job runs single-threaded and SGTree parallelizes across markers; at 100 taxa or more, each MAFFT job uses 4 threads.
-- `--aln hmmalign` keeps alignment behavior tied to each profile HMM and remains the most profile-constrained option.
+- `--aln hmmalign` is the default. It keeps alignment behavior tied to each profile HMM and remains the most profile-constrained option.
+- `--aln mafft` remains available as a de novo alternative. For alignments with fewer than 100 taxa, each MAFFT job runs single-threaded and SGTree parallelizes across markers; at 100 taxa or more, each MAFFT job uses 4 threads.
 - `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
 - `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.

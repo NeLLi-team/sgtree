@@ -2415,8 +2415,9 @@ def build_benchmark_exports(benchmark_dirs: list[Path]) -> tuple[pd.DataFrame, p
                 }
             )
 
-            genome_summary_path = Path(scenario.get("genome_summary_path", ""))
-            if genome_summary_path:
+            genome_summary_value = scenario.get("genome_summary_path")
+            if genome_summary_value:
+                genome_summary_path = Path(genome_summary_value)
                 if not genome_summary_path.is_absolute():
                     genome_summary_path = PROJECT_ROOT / genome_summary_path
                 if genome_summary_path.exists():
@@ -2462,9 +2463,158 @@ def build_benchmark_exports(benchmark_dirs: list[Path]) -> tuple[pd.DataFrame, p
     return dataset_overview, genome_overview, benchmark_results
 
 
+def _latest_results_dir(benchmark_dir: Path, prefix: str) -> Path | None:
+    candidates: list[tuple[float, str, Path]] = []
+    for summary_path in benchmark_dir.glob(f"{prefix}*/summary.tsv"):
+        if summary_path.is_file():
+            results_dir = summary_path.parent
+            candidates.append((summary_path.stat().st_mtime, results_dir.name, results_dir))
+    if not candidates:
+        return None
+    return max(candidates)[2]
+
+
+def _frame_series(frame: pd.DataFrame, column: str, default: object = pd.NA) -> pd.Series:
+    if column in frame.columns:
+        return frame[column]
+    return pd.Series([default] * len(frame), index=frame.index)
+
+
+def build_alignment_comparison_exports(benchmark_dirs: list[Path]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    comparison_frames: list[pd.DataFrame] = []
+    for benchmark_dir in benchmark_dirs:
+        manifest_path = benchmark_dir / "benchmark_manifest.json"
+        baseline_summary_path = benchmark_dir / "results" / "summary.tsv"
+        comparison_results_dir = _latest_results_dir(benchmark_dir, "results_mafft_")
+        if not manifest_path.exists() or not baseline_summary_path.exists() or comparison_results_dir is None:
+            continue
+
+        comparison_summary_path = comparison_results_dir / "summary.tsv"
+        if not comparison_summary_path.exists():
+            continue
+
+        manifest = json.loads(manifest_path.read_text())
+        panel_id = _panel_id_from_manifest(manifest, benchmark_dir)
+        panel_label = _panel_label_from_manifest(manifest, benchmark_dir)
+        lineage_label = str(manifest.get("lineage_label", ""))
+        taxonomic_scope = str(manifest.get("taxonomic_scope", ""))
+        taxonomic_scope_label = str(manifest.get("taxonomic_rule", {}).get("scope_label", taxonomic_scope))
+
+        baseline_df = pd.read_csv(baseline_summary_path, sep="\t")
+        comparison_df = pd.read_csv(comparison_summary_path, sep="\t")
+        merged = baseline_df.merge(
+            comparison_df,
+            on="scenario",
+            how="inner",
+            suffixes=("_baseline", "_comparison"),
+            validate="one_to_one",
+        )
+        if merged.empty:
+            continue
+
+        baseline_tree_rf = pd.to_numeric(_frame_series(merged, "tree_rf_norm_baseline"), errors="coerce")
+        comparison_tree_rf = pd.to_numeric(_frame_series(merged, "tree_rf_norm_comparison"), errors="coerce")
+        baseline_removed_fraction = pd.to_numeric(
+            _frame_series(merged, "contaminant_markers_removed_fraction_baseline"),
+            errors="coerce",
+        )
+        comparison_removed_fraction = pd.to_numeric(
+            _frame_series(merged, "contaminant_markers_removed_fraction_comparison"),
+            errors="coerce",
+        )
+        baseline_runtime = pd.to_numeric(_frame_series(merged, "runtime_seconds_baseline"), errors="coerce")
+        comparison_runtime = pd.to_numeric(_frame_series(merged, "runtime_seconds_comparison"), errors="coerce")
+        runtime_ratio = comparison_runtime / baseline_runtime.replace(0, pd.NA)
+        rf_delta = comparison_tree_rf - baseline_tree_rf
+        removed_delta = comparison_removed_fraction - baseline_removed_fraction
+        rf_change_direction = pd.Series("unchanged", index=merged.index)
+        rf_change_direction.loc[rf_delta > 0] = "worse"
+        rf_change_direction.loc[rf_delta < 0] = "improved"
+
+        alignment_method = _frame_series(merged, "alignment_method_comparison", "mafft").fillna("mafft")
+        comparison_frames.append(
+            pd.DataFrame(
+                {
+                    "panel_id": panel_id,
+                    "panel_label": panel_label,
+                    "benchmark_dir": str(benchmark_dir),
+                    "lineage_label": lineage_label,
+                    "taxonomic_scope": taxonomic_scope,
+                    "taxonomic_scope_label": taxonomic_scope_label,
+                    "scenario": merged["scenario"],
+                    "baseline_results_tag": "results",
+                    "comparison_results_tag": comparison_results_dir.name,
+                    "comparison_alignment_method": alignment_method,
+                    "baseline_run_dir": _frame_series(merged, "run_dir_baseline", ""),
+                    "comparison_run_dir": _frame_series(merged, "run_dir_comparison", ""),
+                    "baseline_status": _frame_series(merged, "status_baseline", ""),
+                    "comparison_status": _frame_series(merged, "status_comparison", ""),
+                    "baseline_tree_rf_norm": baseline_tree_rf,
+                    "comparison_tree_rf_norm": comparison_tree_rf,
+                    "rf_delta_comparison_minus_baseline": rf_delta,
+                    "rf_change_direction": rf_change_direction,
+                    "baseline_contaminant_markers_removed_fraction": baseline_removed_fraction,
+                    "comparison_contaminant_markers_removed_fraction": comparison_removed_fraction,
+                    "removed_fraction_delta_comparison_minus_baseline": removed_delta,
+                    "baseline_runtime_seconds": baseline_runtime,
+                    "comparison_runtime_seconds": comparison_runtime,
+                    "runtime_ratio_comparison_over_baseline": runtime_ratio,
+                    "baseline_missing_taxa_count": pd.to_numeric(
+                        _frame_series(merged, "final_missing_taxa_count_baseline"),
+                        errors="coerce",
+                    ),
+                    "comparison_missing_taxa_count": pd.to_numeric(
+                        _frame_series(merged, "final_missing_taxa_count_comparison"),
+                        errors="coerce",
+                    ),
+                }
+            )
+        )
+
+    comparison_results = pd.concat(comparison_frames, ignore_index=True) if comparison_frames else pd.DataFrame()
+    if comparison_results.empty:
+        return comparison_results, pd.DataFrame()
+
+    comparison_summary = (
+        comparison_results.groupby(
+            [
+                "panel_id",
+                "panel_label",
+                "benchmark_dir",
+                "lineage_label",
+                "taxonomic_scope",
+                "taxonomic_scope_label",
+                "comparison_results_tag",
+                "comparison_alignment_method",
+            ],
+            dropna=False,
+        )
+        .agg(
+            scenario_count=("scenario", "count"),
+            improved_count=("rf_change_direction", lambda s: int((s == "improved").sum())),
+            unchanged_count=("rf_change_direction", lambda s: int((s == "unchanged").sum())),
+            worsened_count=("rf_change_direction", lambda s: int((s == "worse").sum())),
+            baseline_tree_rf_norm_mean=("baseline_tree_rf_norm", "mean"),
+            comparison_tree_rf_norm_mean=("comparison_tree_rf_norm", "mean"),
+            rf_delta_mean=("rf_delta_comparison_minus_baseline", "mean"),
+            rf_delta_min=("rf_delta_comparison_minus_baseline", "min"),
+            rf_delta_max=("rf_delta_comparison_minus_baseline", "max"),
+            baseline_removed_fraction_mean=("baseline_contaminant_markers_removed_fraction", "mean"),
+            comparison_removed_fraction_mean=("comparison_contaminant_markers_removed_fraction", "mean"),
+            removed_fraction_delta_mean=("removed_fraction_delta_comparison_minus_baseline", "mean"),
+            baseline_runtime_seconds_mean=("baseline_runtime_seconds", "mean"),
+            comparison_runtime_seconds_mean=("comparison_runtime_seconds", "mean"),
+            runtime_ratio_mean=("runtime_ratio_comparison_over_baseline", "mean"),
+        )
+        .reset_index()
+    )
+    return comparison_results, comparison_summary
+
+
 def export_benchmark_tables(benchmark_dirs: list[Path], outdir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     outdir.mkdir(parents=True, exist_ok=True)
     dataset_overview, genome_overview, benchmark_results = build_benchmark_exports(benchmark_dirs)
+    alignment_comparison, alignment_comparison_summary = build_alignment_comparison_exports(benchmark_dirs)
     dataset_overview.to_csv(outdir / "benchmark_dataset_overview.tsv", sep="\t", index=False)
     if not genome_overview.empty:
         genome_overview.to_csv(outdir / "benchmark_genome_contamination.tsv", sep="\t", index=False)
@@ -2474,6 +2624,22 @@ def export_benchmark_tables(benchmark_dirs: list[Path], outdir: Path) -> tuple[p
         benchmark_results.sort_values(["panel_label", "scenario"]).to_csv(outdir / "benchmark_summary_all.tsv", sep="\t", index=False)
     else:
         pd.DataFrame().to_csv(outdir / "benchmark_summary_all.tsv", sep="\t", index=False)
+    if not alignment_comparison.empty:
+        alignment_comparison.sort_values(["panel_label", "scenario"]).to_csv(
+            outdir / "benchmark_alignment_comparison.tsv",
+            sep="\t",
+            index=False,
+        )
+    else:
+        pd.DataFrame().to_csv(outdir / "benchmark_alignment_comparison.tsv", sep="\t", index=False)
+    if not alignment_comparison_summary.empty:
+        alignment_comparison_summary.sort_values(["panel_label"]).to_csv(
+            outdir / "benchmark_alignment_comparison_summary.tsv",
+            sep="\t",
+            index=False,
+        )
+    else:
+        pd.DataFrame().to_csv(outdir / "benchmark_alignment_comparison_summary.tsv", sep="\t", index=False)
     return dataset_overview, genome_overview, benchmark_results
 
 

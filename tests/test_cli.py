@@ -6,6 +6,12 @@ from sgtree.cli import parse_args
 
 
 class CliTests(unittest.TestCase):
+    def test_alignment_defaults_to_hmmalign(self):
+        argv = ["sgtree", "input_dir", "models.hmm"]
+        with patch.object(sys, "argv", argv):
+            cfg = parse_args()
+        self.assertEqual(cfg.aln_method, "hmmalign")
+
     def test_snp_defaults_to_disabled(self):
         argv = ["sgtree", "input_dir", "models.hmm"]
         with patch.object(sys, "argv", argv):
