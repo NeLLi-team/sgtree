@@ -4,10 +4,12 @@
 /work/
 /results_*/
 /sgtree_out/
+/.claude_resources.json
+/docs/.ipynb_checkpoints/
 
-# Standardized run outputs
-/runs/*
-!/runs/.gitkeep
+# Private manuscript/runtime artifacts
+/docs/
+/runs/
 
 # Local environments and caches
 /.pixi/
