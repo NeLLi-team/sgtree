@@ -179,39 +179,16 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(chosen.write(format=9), original.write(format=9))
 
-    def test_effective_singleton_mode_pins_runtime_cleanup_to_delta_rf(self):
-        self.assertEqual(
-            marker_selection.effective_singleton_mode(
-                "neighbor",
-                0.40,
-                duplicate_resolution_present=False,
-            ),
-            "delta_rf",
-        )
-        self.assertEqual(
-            marker_selection.effective_singleton_mode(
-                "neighbor",
-                0.20,
-                duplicate_resolution_present=False,
-            ),
-            "delta_rf",
-        )
-        self.assertEqual(
-            marker_selection.effective_singleton_mode(
-                "delta_rf",
-                0.40,
-                duplicate_resolution_present=False,
-            ),
-            "delta_rf",
-        )
-        self.assertEqual(
-            marker_selection.effective_singleton_mode(
-                "outlier",
-                0.40,
-                duplicate_resolution_present=True,
-            ),
-            "delta_rf",
-        )
+    def test_effective_singleton_mode_returns_requested_runtime_mode(self):
+        for mode in ("delta_rf", "composite", "contig_consensus", "recipient_consensus"):
+            self.assertEqual(
+                marker_selection.effective_singleton_mode(
+                    mode,
+                    0.40,
+                    duplicate_resolution_present=True,
+                ),
+                mode,
+            )
 
     def test_choose_singleton_prune_prefers_highest_delta_rf(self):
         species = Tree("((A,B),(C,(D,E)));")
@@ -245,6 +222,85 @@ class MarkerSelectionTests(unittest.TestCase):
                 species_tree=species,
                 working_tree=working,
                 mode="delta_rf",
+                k=3,
+            )
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["leaf_name"], "A")
+
+    def test_choose_singleton_prune_composite_abstains_on_low_signal(self):
+        species = Tree("((A,B),(C,(D,E)));")
+        working = Tree("((A,B),(C,(D,E)));")
+        candidate_a = Tree("(B,(C,(D,E)));")
+        candidate_c = Tree("((A,B),(D,E));")
+
+        with patch.object(
+            marker_selection,
+            "_score_singleton_candidates",
+            return_value=[
+                {
+                    "leaf_name": "A",
+                    "delta_rf": 0.02,
+                    "topoknn_score": 0.10,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "recipient_consensus_score": 0.0,
+                    "candidate_tree": candidate_a,
+                },
+                {
+                    "leaf_name": "C",
+                    "delta_rf": 0.01,
+                    "topoknn_score": 0.08,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "recipient_consensus_score": 0.0,
+                    "candidate_tree": candidate_c,
+                },
+            ],
+        ):
+            chosen = marker_selection.choose_singleton_prune(
+                species_tree=species,
+                working_tree=working,
+                mode="composite",
+                k=3,
+            )
+
+        self.assertIsNone(chosen)
+
+    def test_choose_singleton_prune_recipient_consensus_accepts_sequence_supported_outlier(self):
+        species = Tree("((A,B),(C,(D,E)));")
+        working = Tree("((A,B),(C,(D,E)));")
+        candidate_a = Tree("(B,(C,(D,E)));")
+        candidate_c = Tree("((A,B),(D,E));")
+
+        with patch.object(
+            marker_selection,
+            "_score_singleton_candidates",
+            return_value=[
+                {
+                    "leaf_name": "A",
+                    "delta_rf": 0.12,
+                    "topoknn_score": 1.8,
+                    "branch_outlier": 0.2,
+                    "bitscore_outlier": 1.4,
+                    "recipient_consensus_score": 3.8,
+                    "candidate_tree": candidate_a,
+                },
+                {
+                    "leaf_name": "C",
+                    "delta_rf": 0.1,
+                    "topoknn_score": 0.2,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "recipient_consensus_score": 0.3,
+                    "candidate_tree": candidate_c,
+                },
+            ],
+        ):
+            chosen = marker_selection.choose_singleton_prune(
+                species_tree=species,
+                working_tree=working,
+                mode="recipient_consensus",
                 k=3,
             )
 
@@ -404,6 +460,55 @@ class MarkerSelectionTests(unittest.TestCase):
             {proposal["singleton_class"] for proposal in classified},
             {"contamination_candidate"},
         )
+
+    def test_classify_singleton_proposals_contig_consensus_rescues_native_contig_contaminant(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "contig_id": "contig1",
+                "leaf_name": "Genome1|contig1|gene1",
+                "recipient_neighbor_overlap": 0.0,
+                "recipient_consensus_score": 4.0,
+            }
+        ]
+
+        classified = marker_selection.classify_singleton_proposals(
+            proposals,
+            contig_marker_context={("Genome1", "contig1"): {"MarkerA", "MarkerB", "MarkerC"}},
+            marker_neighbor_context={
+                ("Genome1", "contig1", "MarkerB"): {"recipient_neighbor_overlap": 0.9},
+                ("Genome1", "contig1", "MarkerC"): {"recipient_neighbor_overlap": 0.8},
+            },
+            mode="contig_consensus",
+        )
+
+        self.assertEqual(classified[0]["singleton_class"], "contamination_candidate")
+        self.assertGreaterEqual(classified[0]["contig_consensus_score"], 0.8)
+
+    def test_classify_singleton_proposals_contig_consensus_marks_fully_discordant_contig_ambiguous(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "contig_id": "contig1",
+                "leaf_name": "Genome1|contig1|gene1",
+                "recipient_neighbor_overlap": 0.1,
+                "recipient_consensus_score": 1.0,
+            }
+        ]
+
+        classified = marker_selection.classify_singleton_proposals(
+            proposals,
+            contig_marker_context={("Genome1", "contig1"): {"MarkerA", "MarkerB", "MarkerC"}},
+            marker_neighbor_context={
+                ("Genome1", "contig1", "MarkerB"): {"recipient_neighbor_overlap": 0.2},
+                ("Genome1", "contig1", "MarkerC"): {"recipient_neighbor_overlap": 0.3},
+            },
+            mode="contig_consensus",
+        )
+
+        self.assertEqual(classified[0]["singleton_class"], "ambiguous")
 
 
 if __name__ == "__main__":

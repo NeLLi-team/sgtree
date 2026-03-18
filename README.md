@@ -122,7 +122,7 @@ Core method controls:
 - `--selection_max_rounds`: maximum coordinate-descent rounds in `coordinate` mode (default `5`).
 - `--selection_global_rounds`: rebuild the guide species tree and rerun duplicate cleanup for a small fixed number of rounds (default `1`).
 - `--lock_references`: keep reference duplicate resolution score-locked instead of RF-updating them (default `false`).
-- `--singles_mode`: `neighbor`, `delta_rf`, `backbone`, or `ensemble` when singleton filtering is enabled.
+- `--singles_mode`: `delta_rf`, `composite`, `contig_consensus`, or `recipient_consensus` when singleton filtering is enabled.
 - `--singles_min_rfdist`: minimum marker/global RF distance required before singleton pruning activates (default `0.25`).
 - `--keep_intermediates`: keep intermediate alignments/tables for debugging and benchmarking (default `false`).
 - `--ani_cluster`: run pairwise ANI on the combined query+reference genome set and keep one representative per cluster for the main SGTree species tree.
@@ -167,7 +167,12 @@ Practical selection guide:
 - `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
 - `--selection_global_rounds 2` is the current practical setting for harder contamination benchmarks.
-- `--singles yes` is still heuristic. On the current hard small benchmark the best topology is obtained with iterative duplicate cleanup and singleton filtering off; on the larger Flavobacteriaceae prototype, `--singles_mode neighbor` is currently the strongest singleton-aware option.
+- `--singles yes` is still heuristic, but the singleton branch is now explicitly split into four strategies.
+- `--singles_mode delta_rf` is the pure topology baseline. It chooses the leaf whose removal most improves marker-vs-species RF and is mainly useful as the historical comparison point.
+- `--singles_mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
+- `--singles_mode contig_consensus` starts from the composite detector and then checks whether the candidate marker disagrees with the other markers on the same contig. It is only useful when contig IDs are reliable and multiple markers share a contig.
+- `--singles_mode recipient_consensus` requires positive RF/topology support and then scores the candidate sequence against the recipient genome's nearest species-tree neighborhood. This is currently the strongest calibrated singleton mode on the 50-gen replacement benchmarks because it preserves intended removals while sharply reducing collateral pruning.
+- When `contig_id` cannot be recovered from the input headers, SGTree falls back to RF/topology/recipient-consensus signal instead of treating every singleton proposal as automatically ambiguous.
 - Typical inclusion presets:
 - Balanced: `--percent_models 10 --max_sdup 2 --max_dupl 0.25`
 - Strict: `--percent_models 30 --max_sdup 1 --max_dupl 0.10`
