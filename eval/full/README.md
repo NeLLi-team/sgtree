@@ -19,3 +19,4 @@ Interpretation notes:
 - 50-gen event tables are exact copies from benchmark scenario definitions.
 - 100-gen event tables are reconstructed from contaminant headers preserved in the latest full run outputs because the original source benchmark directories were not available locally during this packaging pass.
 - In 100-gen `combined` runs, inserted contaminant headers do not always preserve enough information to label each row back to `duplicate` vs `replacement` with certainty. Those rows are kept as contaminant insertions with this limitation documented in the run manifests.
+- Exact per-marker reference-genome presence is available for 50-gen panels but not fully recoverable for 100-gen panels from the remaining local files.

@@ -11,6 +11,8 @@
         "chlam"
       ],
       "replicate_panels": 36,
+      "metadata_exactness": "exact",
+      "reference_marker_presence_exact": true,
       "source_root": "/home/fschulz/dev/software/sgtree_private_backup_20260316/runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus",
       "event_tables": "exact scenario events copied from benchmark manifests",
       "completeness_metric": "truth-marker panel completeness derived from scenario reference_run marker_count_matrix.csv"
@@ -22,6 +24,8 @@
       ],
       "panel_count": 24,
       "run_count": 144,
+      "metadata_exactness": "reconstructed_from_latest_full_rerun",
+      "reference_marker_presence_exact": false,
       "source_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318",
       "event_tables": "reconstructed from contaminant headers in retained run proteomes files",
       "completeness_metric": "truth-marker panel completeness derived from retained run marker_count_matrix.csv",
