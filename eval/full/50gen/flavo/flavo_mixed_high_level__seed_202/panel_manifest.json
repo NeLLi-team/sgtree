@@ -1,0 +1,16 @@
+{
+  "source_type": "exact_benchmark_manifest",
+  "lineage": "flavo",
+  "panel_id": "flavo_mixed_high_level",
+  "panel_label": "Flavo Mixed High Level",
+  "panel_name": "flavo_mixed_high_level__seed_202",
+  "replicate_seed": 202,
+  "taxonomic_scope": "mixed_high_level",
+  "selected_marker_count": 10,
+  "selected_genome_count": 50,
+  "scenarios": [
+    "mixed_high_level"
+  ],
+  "selected_markers_are_uni56_subset": true,
+  "notes": "Event tables are exact copies from benchmark scenario manifests. Completeness tables are derived from scenario reference_run marker_count_matrix.csv against the benchmark truth-marker panel."
+}

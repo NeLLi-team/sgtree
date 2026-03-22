@@ -1,0 +1,17 @@
+{
+  "lineage": "bacteroidota",
+  "panel": "genus__seed_303",
+  "scenario": "replacement_only",
+  "variant": "solo_contig",
+  "run_dir_source": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318/bacteroidota/genus__seed_303/replacement_only/solo_contig/replacement_only__singles_recipient_consensus",
+  "replacement_events": 8,
+  "duplicate_events": 0,
+  "replacement_contaminant_removed": 0,
+  "duplicate_contaminant_removed": 0,
+  "singleton_collateral_removed_count": 3,
+  "singleton_collateral_genome_count": 3,
+  "tree_rf_delta": -0.0319148936170212,
+  "introduced_marker_rows": 8,
+  "completeness_source": "retained_run_marker_count_matrix",
+  "event_source": "reconstructed_from_retained_proteomes_header_lines"
+}

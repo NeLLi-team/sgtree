@@ -180,7 +180,7 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertEqual(chosen.write(format=9), original.write(format=9))
 
     def test_effective_singleton_mode_returns_requested_runtime_mode(self):
-        for mode in ("delta_rf", "composite", "contig_consensus", "recipient_consensus"):
+        for mode in ("delta_rf", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml"):
             self.assertEqual(
                 marker_selection.effective_singleton_mode(
                     mode,
@@ -189,6 +189,11 @@ class MarkerSelectionTests(unittest.TestCase):
                 ),
                 mode,
             )
+
+    def test_neighbor_clade_mode_skips_global_rf_gate(self):
+        self.assertFalse(marker_selection.singleton_mode_uses_global_rf_gate("neighbor_clade"))
+        self.assertTrue(marker_selection.singleton_mode_uses_global_rf_gate("recipient_consensus"))
+        self.assertFalse(marker_selection.singleton_mode_uses_global_rf_gate("neighbor_ml"))
 
     def test_choose_singleton_prune_prefers_highest_delta_rf(self):
         species = Tree("((A,B),(C,(D,E)));")
@@ -307,6 +312,62 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertIsNotNone(chosen)
         self.assertEqual(chosen["leaf_name"], "A")
 
+    def test_choose_singleton_prune_neighbor_clade_accepts_local_outlier_without_positive_rf(self):
+        species = Tree("((A,B),(C,(D,E)));")
+        working = Tree("((A,B),(C,(D,E)));")
+        candidate_a = Tree("(B,(C,(D,E)));")
+        candidate_c = Tree("((A,B),(D,E));")
+
+        with patch.object(
+            marker_selection,
+            "_score_singleton_candidates",
+            return_value=[
+                {
+                    "leaf_name": "A",
+                    "delta_rf": 0.0,
+                    "topoknn_score": 0.2,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "recipient_consensus_score": 1.2,
+                    "species_anchor_score": 0.9,
+                    "neighbor_anchor_purity": 1.0,
+                    "join_purity": 0.4,
+                    "purity_drop": 0.6,
+                    "anchor_knn_agreement": 0.0,
+                    "attachment_gap": 1.5,
+                    "present_neighbor_count": 4,
+                    "neighbor_clade_score": 4.8,
+                    "candidate_tree": candidate_a,
+                },
+                {
+                    "leaf_name": "C",
+                    "delta_rf": -0.02,
+                    "topoknn_score": 0.1,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "recipient_consensus_score": 0.3,
+                    "species_anchor_score": 0.7,
+                    "neighbor_anchor_purity": 0.8,
+                    "join_purity": 0.7,
+                    "purity_drop": 0.1,
+                    "anchor_knn_agreement": 0.75,
+                    "attachment_gap": 0.1,
+                    "present_neighbor_count": 4,
+                    "neighbor_clade_score": 1.4,
+                    "candidate_tree": candidate_c,
+                },
+            ],
+        ):
+            chosen = marker_selection.choose_singleton_prune(
+                species_tree=species,
+                working_tree=working,
+                mode="neighbor_clade",
+                k=4,
+            )
+
+        self.assertIsNotNone(chosen)
+        self.assertEqual(chosen["leaf_name"], "A")
+
     def test_choose_singleton_prune_hybrid_requires_consistent_support(self):
         species = Tree("((A,B),(C,(D,E)));")
         working = Tree("((A,B),(C,(D,E)));")
@@ -418,6 +479,245 @@ class MarkerSelectionTests(unittest.TestCase):
             {"MarkerA", "MarkerC"},
         )
 
+    def test_singleton_proposals_from_results_neighbor_clade_keeps_all_candidates(self):
+        results = [
+            {
+                "marker_name": "MarkerA",
+                "chosen": {"leaf_name": "Genome1|contig1|gene1"},
+                "candidates": [
+                    {"leaf_name": "Genome1|contig1|gene1", "genome": "Genome1"},
+                    {"leaf_name": "Genome2|contig1|gene1", "genome": "Genome2"},
+                ],
+            }
+        ]
+
+        proposals, proposal_keys = marker_selection.singleton_proposals_from_results(
+            results,
+            mode="neighbor_clade",
+        )
+
+        self.assertEqual(
+            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in proposals},
+            {
+                ("MarkerA", "Genome1|contig1|gene1"),
+                ("MarkerA", "Genome2|contig1|gene1"),
+            },
+        )
+        self.assertEqual(
+            proposal_keys,
+            {
+                ("MarkerA", "Genome1|contig1|gene1"),
+                ("MarkerA", "Genome2|contig1|gene1"),
+            },
+        )
+
+    def test_singleton_proposals_from_results_legacy_keeps_only_chosen_candidate(self):
+        results = [
+            {
+                "marker_name": "MarkerA",
+                "chosen": {"leaf_name": "Genome1|contig1|gene1", "genome": "Genome1"},
+                "candidates": [
+                    {"leaf_name": "Genome1|contig1|gene1", "genome": "Genome1"},
+                    {"leaf_name": "Genome2|contig1|gene1", "genome": "Genome2"},
+                ],
+            }
+        ]
+
+        proposals, proposal_keys = marker_selection.singleton_proposals_from_results(
+            results,
+            mode="recipient_consensus",
+        )
+
+        self.assertEqual(
+            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in proposals},
+            {("MarkerA", "Genome1|contig1|gene1")},
+        )
+        self.assertEqual(
+            proposal_keys,
+            {("MarkerA", "Genome1|contig1|gene1")},
+        )
+
+    def test_singleton_proposals_from_results_legacy_with_refs_keeps_all_query_candidates(self):
+        results = [
+            {
+                "marker_name": "MarkerA",
+                "chosen": {"leaf_name": "Ref1|contig1|gene1", "genome": "Ref1"},
+                "candidates": [
+                    {
+                        "leaf_name": "Ref1|contig1|gene1",
+                        "genome": "Ref1",
+                        "delta_rf": 0.9,
+                        "topoknn_score": 2.0,
+                        "recipient_consensus_score": 2.5,
+                    },
+                    {
+                        "leaf_name": "Query1|contig1|gene1",
+                        "genome": "Query1",
+                        "delta_rf": 0.8,
+                        "topoknn_score": 1.9,
+                        "recipient_consensus_score": 2.1,
+                    },
+                    {
+                        "leaf_name": "Query2|contig1|gene1",
+                        "genome": "Query2",
+                        "delta_rf": 0.4,
+                        "topoknn_score": 1.6,
+                        "recipient_consensus_score": 1.7,
+                    },
+                ],
+            }
+        ]
+
+        proposals, proposal_keys = marker_selection.singleton_proposals_from_results(
+            results,
+            mode="recipient_consensus",
+            reference_genomes={"Ref1"},
+        )
+
+        self.assertEqual(
+            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in proposals},
+            {
+                ("MarkerA", "Query1|contig1|gene1"),
+                ("MarkerA", "Query2|contig1|gene1"),
+            },
+        )
+        self.assertEqual(
+            proposal_keys,
+            {
+                ("MarkerA", "Query1|contig1|gene1"),
+                ("MarkerA", "Query2|contig1|gene1"),
+            },
+        )
+        scores = {proposal["leaf_name"]: float(proposal["score"]) for proposal in proposals}
+        self.assertGreater(scores["Query1|contig1|gene1"], scores["Query2|contig1|gene1"])
+
+    def test_filter_reference_singleton_proposals_removes_reference_candidates(self):
+        proposals = [
+            {"marker_name": "MarkerA", "leaf_name": "Ref1|contig1|gene1", "genome": "Ref1"},
+            {"marker_name": "MarkerA", "leaf_name": "Query1|contig1|gene1", "genome": "Query1"},
+        ]
+        proposal_keys = {
+            ("MarkerA", "Ref1|contig1|gene1"),
+            ("MarkerA", "Query1|contig1|gene1"),
+        }
+
+        filtered, filtered_keys = marker_selection._filter_reference_singleton_proposals(
+            proposals,
+            proposal_keys,
+            reference_genomes={"Ref1"},
+        )
+
+        self.assertEqual(
+            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in filtered},
+            {("MarkerA", "Query1|contig1|gene1")},
+        )
+        self.assertEqual(filtered_keys, {("MarkerA", "Query1|contig1|gene1")})
+
+    def test_select_neighbor_ml_proposals_uses_genome_first_policy_for_small_panels(self):
+        scored = [
+            {
+                "marker_name": f"Marker{i:02d}",
+                "leaf_name": f"Genome{i:02d}|contig1|gene1",
+                "genome": f"Genome{i:02d}",
+                "taxa_count": 50,
+                "high_confidence": True,
+                "shape_penalized_score_v4": float(100 - i),
+                "genome_first_score_v8": float(100 - i),
+            }
+            for i in range(40)
+        ]
+
+        with patch.object(marker_selection, "score_neighbor_ml_proposals", return_value=scored):
+            proposals, accepted = marker_selection.select_neighbor_ml_proposals([{"marker_name": "unused"}])
+
+        self.assertTrue(all(proposal["policy_variant"] == "genome_first_score_v8" for proposal in proposals))
+        self.assertEqual(len(accepted), 40)
+        self.assertEqual(
+            {proposal["genome"] for proposal in accepted},
+            {f"Genome{i:02d}" for i in range(40)},
+        )
+
+    def test_select_neighbor_ml_proposals_uses_shape_policy_for_large_panels(self):
+        scored = [
+            {
+                "marker_name": f"Marker{i:03d}",
+                "leaf_name": f"Genome{i:03d}|contig1|gene1",
+                "genome": f"Genome{i:03d}",
+                "taxa_count": 100,
+                "high_confidence": True,
+                "shape_penalized_score_v4": float(200 - i),
+                "genome_first_score_v8": float(i),
+            }
+            for i in range(70)
+        ]
+
+        with patch.object(marker_selection, "score_neighbor_ml_proposals", return_value=scored):
+            proposals, accepted = marker_selection.select_neighbor_ml_proposals([{"marker_name": "unused"}])
+
+        self.assertTrue(all(proposal["policy_variant"] == "shape_penalized_score_v4" for proposal in proposals))
+        self.assertEqual(len(accepted), 70)
+        self.assertEqual(
+            {proposal["genome"] for proposal in accepted},
+            {f"Genome{i:03d}" for i in range(70)},
+        )
+
+    def test_prune_tree_to_query_genomes_removes_references(self):
+        tree = Tree("((Ref1|r1,Query1|q1),(Ref2|r2,Query2|q2));")
+
+        pruned = marker_selection._prune_tree_to_query_genomes(tree, {"Ref1", "Ref2"})
+
+        self.assertEqual(
+            sorted(leaf.name for leaf in pruned.iter_leaves()),
+            ["Query1|q1", "Query2|q2"],
+        )
+
+    def test_propose_singleton_prune_worker_keeps_references_in_scoring_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            marker_tree = tmp / "aln_MarkerA_out.nw"
+            species_tree = tmp / "species.nwk"
+            ref_dir = tmp / "refs"
+            ref_dir.mkdir()
+            (ref_dir / "Ref1.faa").write_text(">Ref1\nM\n")
+            marker_tree.write_text("((Ref1|r1,Query1|q1),(Query2|q2,Query3|q3));\n")
+            species_tree.write_text("((Ref1,Query1),(Query2,Query3));\n")
+
+            seen = {}
+
+            def _fake_score_singleton_candidates(species_tree, working_tree, **_kwargs):
+                seen["species_leaves"] = sorted(leaf.name for leaf in species_tree.iter_leaves())
+                seen["working_leaves"] = sorted(leaf.name for leaf in working_tree.iter_leaves())
+                return []
+
+            with patch.object(
+                marker_selection,
+                "_score_singleton_candidates",
+                side_effect=_fake_score_singleton_candidates,
+            ):
+                result = marker_selection._propose_singleton_prune_worker(
+                    (
+                        str(marker_tree),
+                        str(species_tree),
+                        0,
+                        0.25,
+                        "neighbor_ml",
+                        str(tmp / "missing_table.csv"),
+                        set(),
+                        str(tmp / "missing_alignment.faa"),
+                        str(ref_dir),
+                    )
+                )
+
+        self.assertEqual(
+            seen["species_leaves"],
+            ["Query1", "Query2", "Query3", "Ref1"],
+        )
+        self.assertEqual(
+            seen["working_leaves"],
+            ["Query1|q1", "Query2|q2", "Query3|q3", "Ref1|r1"],
+        )
+        self.assertEqual(result["candidates"], [])
+
     def test_classify_singleton_proposals_marks_hgt_when_contig_has_other_clean_markers(self):
         proposals = [
             {
@@ -506,6 +806,102 @@ class MarkerSelectionTests(unittest.TestCase):
                 ("Genome1", "contig1", "MarkerC"): {"recipient_neighbor_overlap": 0.3},
             },
             mode="contig_consensus",
+        )
+
+        self.assertEqual(classified[0]["singleton_class"], "ambiguous")
+
+    def test_build_singleton_output_tree_neighbor_clade_prunes_multiple_accepted_leaves(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            marker_tree = tmp / "marker.nwk"
+            species_tree = tmp / "species.nwk"
+            marker_tree.write_text("((A|a1,B|b1),(C|c1,D|d1));\n")
+            species_tree.write_text("((A,B),(C,D));\n")
+
+            chosen_tree, decision = marker_selection.build_singleton_output_tree(
+                marker_tree_path=str(marker_tree),
+                species_tree_path=str(species_tree),
+                accepted_leaf_names=["A|a1", "C|c1"],
+                mode="neighbor_clade",
+            )
+
+            self.assertEqual(
+                sorted(leaf.name for leaf in chosen_tree.iter_leaves()),
+                ["B|b1", "D|d1"],
+            )
+            self.assertEqual(decision, "pruned")
+
+    def test_build_singleton_output_tree_legacy_prunes_multiple_accepted_leaves(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            marker_tree = tmp / "marker.nwk"
+            species_tree = tmp / "species.nwk"
+            marker_tree.write_text("(((A|a1,B|b1),E|e1),(C|c1,D|d1));\n")
+            species_tree.write_text("((((B,E),D),A),C);\n")
+
+            chosen_tree, decision = marker_selection.build_singleton_output_tree(
+                marker_tree_path=str(marker_tree),
+                species_tree_path=str(species_tree),
+                accepted_leaf_names=["A|a1", "C|c1"],
+                mode="recipient_consensus",
+            )
+
+            self.assertEqual(
+                sorted(leaf.name for leaf in chosen_tree.iter_leaves()),
+                ["B|b1", "D|d1", "E|e1"],
+            )
+            self.assertEqual(decision, "pruned")
+
+    def test_classify_singleton_proposals_neighbor_clade_marks_high_confidence_candidate(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "contig_id": "unknown_contig",
+                "leaf_name": "Genome1|unknown_contig|gene1",
+                "species_anchor_score": 0.9,
+                "present_neighbor_count": 4,
+                "target_neighbor_count": 5,
+                "neighbor_anchor_purity": 1.0,
+                "join_purity": 0.4,
+                "purity_drop": 0.6,
+                "anchor_knn_agreement": 0.0,
+                "recipient_consensus_score": 1.4,
+                "neighbor_clade_score": 4.2,
+            }
+        ]
+
+        classified = marker_selection.classify_singleton_proposals(
+            proposals,
+            contig_marker_context={},
+            mode="neighbor_clade",
+        )
+
+        self.assertEqual(classified[0]["singleton_class"], "contamination_candidate")
+
+    def test_classify_singleton_proposals_neighbor_clade_marks_weak_anchor_ambiguous(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "contig_id": "unknown_contig",
+                "leaf_name": "Genome1|unknown_contig|gene1",
+                "species_anchor_score": 0.35,
+                "present_neighbor_count": 2,
+                "target_neighbor_count": 5,
+                "neighbor_anchor_purity": 1.0,
+                "join_purity": 0.5,
+                "purity_drop": 0.5,
+                "anchor_knn_agreement": 0.0,
+                "recipient_consensus_score": 1.8,
+                "neighbor_clade_score": 3.5,
+            }
+        ]
+
+        classified = marker_selection.classify_singleton_proposals(
+            proposals,
+            contig_marker_context={},
+            mode="neighbor_clade",
         )
 
         self.assertEqual(classified[0]["singleton_class"], "ambiguous")

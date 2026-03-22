@@ -1,0 +1,18 @@
+{
+  "source_type": "exact_benchmark_manifest",
+  "lineage": "chlam",
+  "panel_id": "chlam_family",
+  "panel_label": "Chlam Family",
+  "panel_name": "chlam_family__seed_101",
+  "replicate_seed": 101,
+  "taxonomic_scope": "family",
+  "selected_marker_count": 10,
+  "selected_genome_count": 50,
+  "scenarios": [
+    "duplicate_only",
+    "replacement_only",
+    "combined"
+  ],
+  "selected_markers_are_uni56_subset": true,
+  "notes": "Event tables are exact copies from benchmark scenario manifests. Completeness tables are derived from scenario reference_run marker_count_matrix.csv against the benchmark truth-marker panel."
+}

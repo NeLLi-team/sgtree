@@ -1,0 +1,25 @@
+{
+  "source_type": "reconstructed_from_latest_full_benchmark_run",
+  "lineage": "alpha",
+  "panel": "family__seed_303",
+  "scope": "family",
+  "seed": 303,
+  "run_count": 6,
+  "scenarios": [
+    "combined",
+    "replacement_only"
+  ],
+  "variants": [
+    "merged_contam",
+    "native_contig",
+    "solo_contig"
+  ],
+  "selected_marker_count": 10,
+  "selected_markers_are_uni56_subset": true,
+  "limitations": [
+    "The original 100-gen source benchmark directories had been deleted before this packaging pass.",
+    "Introduced-marker tables are reconstructed from contaminant headers in retained run inputs.",
+    "Combined-scenario contaminant insertions cannot always be separated back into duplicate vs replacement event types from retained headers alone.",
+    "Completeness tables are derived from retained run marker_count_matrix.csv against the benchmark truth-marker panel, not a fresh full UNI56 rerun."
+  ]
+}

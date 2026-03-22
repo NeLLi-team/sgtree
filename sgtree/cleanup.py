@@ -2,7 +2,17 @@ import os
 import glob
 import shutil
 import subprocess
+import tempfile
 import zipfile
+
+
+def _zip_file_in_place(filepath: str) -> None:
+    """Compress a single file into a zip archive, replacing the original."""
+    zip_path = filepath + ".zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(filepath, os.path.basename(filepath))
+    os.remove(filepath)
+    os.rename(zip_path, filepath)
 
 
 def cleanup_basic(outdir: str):
@@ -31,8 +41,7 @@ def cleanup_basic(outdir: str):
             )
             shutil.rmtree(filepath)
         else:
-            with zipfile.ZipFile(filepath, "w") as myzip:
-                myzip.write(filepath)
+            _zip_file_in_place(filepath)
 
     # organize into temp directories
     os.makedirs(os.path.join(outdir, "temp"), exist_ok=True)
@@ -79,8 +88,7 @@ def cleanup_marker_selection(outdir: str):
             )
             shutil.rmtree(filepath)
         else:
-            with zipfile.ZipFile(filepath, "w") as myzip:
-                myzip.write(filepath)
+            _zip_file_in_place(filepath)
 
     os.makedirs(os.path.join(outdir, "temp"), exist_ok=True)
     os.makedirs(os.path.join(outdir, "temp", "itol"), exist_ok=True)

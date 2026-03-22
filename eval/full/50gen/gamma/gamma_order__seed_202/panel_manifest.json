@@ -1,0 +1,18 @@
+{
+  "source_type": "exact_benchmark_manifest",
+  "lineage": "gamma",
+  "panel_id": "gamma_order",
+  "panel_label": "Gamma Order",
+  "panel_name": "gamma_order__seed_202",
+  "replicate_seed": 202,
+  "taxonomic_scope": "order",
+  "selected_marker_count": 10,
+  "selected_genome_count": 50,
+  "scenarios": [
+    "duplicate_only",
+    "replacement_only",
+    "combined"
+  ],
+  "selected_markers_are_uni56_subset": true,
+  "notes": "Event tables are exact copies from benchmark scenario manifests. Completeness tables are derived from scenario reference_run marker_count_matrix.csv against the benchmark truth-marker panel."
+}

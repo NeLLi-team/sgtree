@@ -1,0 +1,11 @@
+{
+  "created_on": "2026-03-22",
+  "selection_rule": {
+    "50gen": "combined genus__seed_101 for flavo, gamma, chlam",
+    "100gen": "combined__solo_contig genus__seed_101 for alpha and bacteroidota"
+  },
+  "limitations": [
+    "50-gen pilot ground truth is exact and includes per-marker reference-genome presence.",
+    "100-gen pilot ground truth is reconstructed from latest-run contaminant headers and includes genome-level truth-marker completeness, but not exact per-marker reference-genome presence."
+  ]
+}

@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from itertools import combinations
 from pathlib import Path
@@ -106,6 +107,11 @@ TAXONOMY_SCOPE_RULES = {
         "same_rank": "class",
         "different_rank": "order_name",
         "scope_label": "same_class_different_order",
+    },
+    "phylum": {
+        "same_rank": "domain",
+        "different_rank": "phylum",
+        "scope_label": "same_domain_different_phylum",
     },
 }
 
@@ -518,6 +524,7 @@ def _taxonomy_lookup(df: pd.DataFrame) -> dict[str, dict[str, str]]:
         str(row["genome_id"]): {
             "assembly_accession": str(row["assembly_accession"]),
             "organism_name": str(row["organism_name"]),
+            "domain": "Bacteria",
             "phylum": str(row["phylum"]),
             "class": str(row["class"]),
             "order_name": str(row["order_name"]),
@@ -808,6 +815,125 @@ def _stage_dir_complete(stage_dir: Path) -> bool:
         stage_dir / "tree.nwk",
     ]
     return all(path.exists() for path in required)
+
+
+def _resolve_project_path(value: str | Path | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _link_existing_path(source: Path, dest: Path) -> None:
+    if not source.exists():
+        raise FileNotFoundError(source)
+    if dest.is_symlink() or dest.exists():
+        if dest.is_dir() and not dest.is_symlink():
+            shutil.rmtree(dest)
+        else:
+            dest.unlink()
+    dest.symlink_to(source.resolve())
+
+
+def _taxonomy_map_from_manifest_rows(rows: list[dict]) -> dict[str, dict[str, str]]:
+    taxonomy: dict[str, dict[str, str]] = {}
+    for row in rows:
+        genome_id = str(row.get("genome_id", "")).strip()
+        if not genome_id:
+            continue
+        taxonomy[genome_id] = {
+            str(key): "" if value is None else str(value)
+            for key, value in row.items()
+        }
+    return taxonomy
+
+
+def _load_staged_records_and_native_map(
+    stage_dir: Path,
+    truth_markers: list[str],
+) -> tuple[dict[str, dict[str, SeqRecord]], dict[str, dict[str, str]]]:
+    if not _stage_dir_complete(stage_dir):
+        raise FileNotFoundError(f"Missing staged benchmark inputs: {stage_dir}")
+    records = _read_normalized_proteomes(stage_dir / "proteomes")
+    table = _load_table(stage_dir / "table_elim_dups")
+    native_map = _native_marker_map(table, sorted(records), truth_markers)
+    return records, native_map
+
+
+def _prepare_replicate_output_dir(
+    base_benchmark_dir: Path,
+    outdir: Path,
+) -> tuple[Path, Path, Path]:
+    if outdir.exists():
+        shutil.rmtree(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    truth_inputs_dir = outdir / "truth_inputs"
+    truth_run_dir = outdir / "truth_run"
+    truth_models = outdir / "truth_markers.hmm"
+    _link_existing_path(base_benchmark_dir / "truth_inputs", truth_inputs_dir)
+    _link_existing_path(base_benchmark_dir / "truth_run", truth_run_dir)
+    _link_existing_path(base_benchmark_dir / "truth_markers.hmm", truth_models)
+    scenarios_dir = outdir / "scenarios"
+    scenarios_dir.mkdir(exist_ok=True)
+    return truth_inputs_dir, truth_run_dir, scenarios_dir
+
+
+def _write_reference_state(
+    *,
+    scenario_dir: Path,
+    reference_records: dict[str, dict[str, SeqRecord]],
+    truth_inputs_dir: Path,
+    truth_run_dir: Path,
+    truth_models: Path,
+    num_cpus: int,
+    reuse_truth_panel: bool,
+) -> tuple[Path, Path]:
+    reference_inputs_dir = scenario_dir / "reference_inputs"
+    reference_run_dir = scenario_dir / "reference_run"
+    if reuse_truth_panel:
+        _link_existing_path(truth_inputs_dir, reference_inputs_dir)
+        _link_existing_path(truth_run_dir, reference_run_dir)
+        return reference_inputs_dir, reference_run_dir
+
+    _write_proteome_dir(reference_records, reference_inputs_dir)
+    _run_sgtree_python(
+        genomedir=reference_inputs_dir,
+        modeldir=truth_models,
+        outdir=reference_run_dir,
+        num_cpus=num_cpus,
+        percent_models=0,
+        marker_selection=False,
+        singles=False,
+        singles_mode="delta_rf",
+        selection_mode="coordinate",
+        selection_max_rounds=5,
+        selection_global_rounds=1,
+        keep_intermediates=True,
+    )
+    return reference_inputs_dir, reference_run_dir
+
+
+def _parallel_benchmark_jobs(
+    jobs: list[tuple[Path, callable]],
+    *,
+    max_parallel: int,
+) -> None:
+    if max_parallel <= 1:
+        for _benchmark_dir, fn in jobs:
+            fn()
+        return
+
+    with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+        future_to_dir = {
+            executor.submit(fn): benchmark_dir
+            for benchmark_dir, fn in jobs
+        }
+        for future in as_completed(future_to_dir):
+            benchmark_dir = future_to_dir[future]
+            try:
+                future.result()
+            except Exception as exc:
+                raise RuntimeError(f"Benchmark job failed for {benchmark_dir}") from exc
 
 
 def _donor_candidates_with_marker(
@@ -2015,6 +2141,28 @@ def _rf_norm(truth_tree_path: Path, observed_tree_path: Path) -> float:
     return rf / maxrf if maxrf else 0.0
 
 
+def _resolve_manifest_path(path_value: str | Path, benchmark_dir: Path) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    if path.exists():
+        return path
+
+    benchmark_relative = benchmark_dir / path
+    if benchmark_relative.exists():
+        return benchmark_relative
+
+    resolved_benchmark_dir = benchmark_dir.resolve()
+    if "runs" in resolved_benchmark_dir.parts:
+        runs_index = resolved_benchmark_dir.parts.index("runs")
+        root = Path(*resolved_benchmark_dir.parts[:runs_index])
+        rooted_candidate = root / path
+        if rooted_candidate.exists():
+            return rooted_candidate
+
+    return path
+
+
 def _replacement_outcome(run_dir: Path, recipient: str, marker: str) -> str:
     aligned_path = run_dir / "aligned_final" / f"{marker}.faa"
     if not aligned_path.exists():
@@ -2107,7 +2255,10 @@ def evaluate_benchmark_run(
     )
     if scenario_meta is None:
         raise KeyError(f"Scenario not found in manifest: {scenario_name}")
-    truth_tree = Path(scenario_meta.get("reference_tree_path", benchmark_dir / "truth_run" / "tree.nwk"))
+    truth_tree = _resolve_manifest_path(
+        scenario_meta.get("reference_tree_path", benchmark_dir / "truth_run" / "tree.nwk"),
+        benchmark_dir=benchmark_dir,
+    )
     events = _load_events(benchmark_dir / "scenarios" / scenario_name / "events.tsv")
     result_tree = run_dir / "tree_final.nwk"
     if not result_tree.exists():
@@ -2265,6 +2416,27 @@ def run_benchmark_suite(
         _write_report(ok_results, results_dir / "report.md")
 
 
+def run_benchmark_suites(
+    benchmark_dirs: list[Path],
+    *,
+    num_cpus: int,
+    selection_max_rounds: int,
+    max_parallel: int = 1,
+) -> None:
+    jobs = [
+        (
+            benchmark_dir,
+            lambda benchmark_dir=benchmark_dir: run_benchmark_suite(
+                benchmark_dir=benchmark_dir,
+                num_cpus=num_cpus,
+                selection_max_rounds=selection_max_rounds,
+            ),
+        )
+        for benchmark_dir in benchmark_dirs
+    ]
+    _parallel_benchmark_jobs(jobs, max_parallel=max_parallel)
+
+
 def aggregate_benchmark_runs(benchmark_dirs: list[Path], outdir: Path) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     frames = []
@@ -2273,6 +2445,11 @@ def aggregate_benchmark_runs(benchmark_dirs: list[Path], outdir: Path) -> None:
         if not summary_path.exists():
             continue
         df = pd.read_csv(summary_path, sep="\t")
+        manifest_path = benchmark_dir / "benchmark_manifest.json"
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text())
+            df["panel_id"] = _panel_id_from_manifest(manifest, benchmark_dir)
+            df["panel_label"] = _panel_label_from_manifest(manifest, benchmark_dir)
         df["benchmark_dir"] = str(benchmark_dir)
         frames.append(df)
     if not frames:
@@ -2280,8 +2457,11 @@ def aggregate_benchmark_runs(benchmark_dirs: list[Path], outdir: Path) -> None:
     combined = pd.concat(frames, ignore_index=True)
     combined.to_csv(outdir / "combined_summary.tsv", sep="\t", index=False)
     ok = combined[combined["status"] == "ok"].copy()
+    group_cols = ["strategy", "scenario"]
+    if "panel_id" in ok.columns:
+        group_cols = ["panel_id", "panel_label"] + group_cols
     agg = (
-        ok.groupby(["strategy", "scenario"], as_index=False)
+        ok.groupby(group_cols, as_index=False)
         .agg(
             n_runs=("strategy", "size"),
             mean_initial_rf=("initial_tree_rf_norm", "mean"),
@@ -2300,12 +2480,13 @@ def aggregate_benchmark_runs(benchmark_dirs: list[Path], outdir: Path) -> None:
     lines = [
         "# Aggregate Benchmark Report",
         "",
-        "| Strategy | Scenario | Runs | Initial RF | Final RF | RF Delta | Dup Removed | Native Retained | Replacement Dropped | Replacement Retained | Runtime (s) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Panel | Strategy | Scenario | Runs | Initial RF | Final RF | RF Delta | Dup Removed | Native Retained | Replacement Dropped | Replacement Retained | Runtime (s) |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in agg.sort_values(["strategy", "scenario"]).itertuples(index=False):
+        panel_label = getattr(row, "panel_label", "all_panels")
         lines.append(
-            f"| {row.strategy} | {row.scenario} | {row.n_runs} | "
+            f"| {panel_label} | {row.strategy} | {row.scenario} | {row.n_runs} | "
             f"{row.mean_initial_rf:.3f} | {row.mean_final_rf:.3f} | {row.mean_rf_delta:.3f} | "
             f"{row.mean_dup_removed:.1f}/{row.mean_dup_events:.1f} | "
             f"{row.mean_native_retained:.1f}/{row.mean_dup_events:.1f} | "
@@ -2335,6 +2516,8 @@ def discover_taxonomic_benchmark_dirs(benchmarks_root: Path) -> list[Path]:
         try:
             manifest = json.loads(manifest_path.read_text())
         except json.JSONDecodeError:
+            continue
+        if manifest.get("replicate_source_benchmark_dir"):
             continue
         if "lineage_label" not in manifest or "taxonomic_scope" not in manifest:
             continue
@@ -2611,10 +2794,230 @@ def build_alignment_comparison_exports(benchmark_dirs: list[Path]) -> tuple[pd.D
     return comparison_results, comparison_summary
 
 
+def _parse_singleton_result_file(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    for raw_line in path.read_text(errors="ignore").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("sin"):
+            continue
+        leaf_field, *fields = line.split("\t")
+        leaf_name = leaf_field[3:]
+        genome_id, contig_id, gene_id = parse_sequence_id(leaf_name)
+        row = {
+            "marker_name": path.name,
+            "leaf_name": leaf_name,
+            "genome": genome_id,
+            "contig_id": contig_id,
+            "gene_id": gene_id,
+            "is_contaminant_leaf": "contam__" in leaf_name,
+        }
+        for field in fields:
+            if "=" not in field:
+                continue
+            key, value = field.split("=", 1)
+            row[key] = value
+        rows.append(row)
+    return rows
+
+
+def build_singleton_classification_exports(
+    benchmark_dirs: list[Path],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    call_rows: list[dict] = []
+    summary_rows: list[dict] = []
+    for benchmark_dir in benchmark_dirs:
+        manifest_path = benchmark_dir / "benchmark_manifest.json"
+        summary_path = benchmark_dir / "results" / "summary.tsv"
+        if not manifest_path.exists() or not summary_path.exists():
+            continue
+
+        manifest = json.loads(manifest_path.read_text())
+        panel_id = _panel_id_from_manifest(manifest, benchmark_dir)
+        panel_label = _panel_label_from_manifest(manifest, benchmark_dir)
+        lineage_label = str(manifest.get("lineage_label", ""))
+        taxonomic_scope = str(manifest.get("taxonomic_scope", ""))
+        taxonomic_scope_label = str(manifest.get("taxonomic_rule", {}).get("scope_label", taxonomic_scope))
+        donor_labels = manifest.get("donor_labels")
+        if donor_labels is None:
+            donor_lineage_label = str(manifest.get("donor_lineage_label", lineage_label))
+            donor_labels = [donor_lineage_label] if donor_lineage_label else []
+        donor_labels_text = ",".join(str(label) for label in donor_labels)
+
+        result_df = pd.read_csv(summary_path, sep="\t")
+        for row in result_df.to_dict("records"):
+            scenario_name = str(row.get("scenario", ""))
+            replacement_events = int(row.get("replacement_events", 0) or 0)
+            if replacement_events <= 0:
+                continue
+
+            run_dir_value = row.get("run_dir", "")
+            if not run_dir_value:
+                continue
+            run_dir = Path(str(run_dir_value))
+            if not run_dir.is_absolute():
+                run_dir = PROJECT_ROOT / run_dir
+            removed_dir = run_dir / "removed"
+            scenario_calls: list[dict] = []
+            if removed_dir.exists():
+                for removed_path in sorted(path for path in removed_dir.iterdir() if path.is_file()):
+                    for call in _parse_singleton_result_file(removed_path):
+                        enriched = {
+                            **call,
+                            "panel_id": panel_id,
+                            "panel_label": panel_label,
+                            "benchmark_dir": str(benchmark_dir),
+                            "lineage_label": lineage_label,
+                            "taxonomic_scope": taxonomic_scope,
+                            "taxonomic_scope_label": taxonomic_scope_label,
+                            "scenario": scenario_name,
+                            "cleanup_profile": str(row.get("cleanup_profile", "")),
+                            "run_dir": str(run_dir),
+                            "donor_labels": donor_labels_text,
+                        }
+                        scenario_calls.append(enriched)
+                        call_rows.append(enriched)
+
+            scenario_call_df = pd.DataFrame(scenario_calls)
+            contamination_candidate_calls = (
+                scenario_call_df["singleton_class"].eq("contamination_candidate").sum()
+                if not scenario_call_df.empty and "singleton_class" in scenario_call_df.columns
+                else 0
+            )
+            true_contamination_candidate_calls = (
+                (
+                    scenario_call_df["singleton_class"].eq("contamination_candidate")
+                    & scenario_call_df["is_contaminant_leaf"]
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            false_contamination_candidate_calls = (
+                (
+                    scenario_call_df["singleton_class"].eq("contamination_candidate")
+                    & ~scenario_call_df["is_contaminant_leaf"]
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            hgt_candidate_kept_calls = (
+                (
+                    scenario_call_df["singleton_class"].eq("hgt_candidate")
+                    & scenario_call_df["decision"].eq("kept_hgt_candidate")
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            non_contaminant_proposals = (
+                (~scenario_call_df["is_contaminant_leaf"]).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            replacement_proposed_as_contamination = (
+                (
+                    scenario_call_df["is_contaminant_leaf"]
+                    & scenario_call_df["singleton_class"].eq("contamination_candidate")
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            replacement_proposed_as_hgt = (
+                (
+                    scenario_call_df["is_contaminant_leaf"]
+                    & scenario_call_df["singleton_class"].eq("hgt_candidate")
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            native_pruned_count = (
+                (
+                    ~scenario_call_df["is_contaminant_leaf"]
+                    & scenario_call_df["decision"].eq("pruned")
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            native_kept_hgt_candidate_count = (
+                (
+                    ~scenario_call_df["is_contaminant_leaf"]
+                    & scenario_call_df["decision"].eq("kept_hgt_candidate")
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            native_blocked_by_genome_budget_count = (
+                (
+                    ~scenario_call_df["is_contaminant_leaf"]
+                    & scenario_call_df["decision"].eq("blocked_by_genome_budget")
+                ).sum()
+                if not scenario_call_df.empty
+                else 0
+            )
+            replacement_not_proposed_count = max(
+                0,
+                replacement_events - int(scenario_call_df["is_contaminant_leaf"].sum() if not scenario_call_df.empty else 0),
+            )
+            precision = (
+                true_contamination_candidate_calls / contamination_candidate_calls
+                if contamination_candidate_calls
+                else pd.NA
+            )
+            specificity = (
+                hgt_candidate_kept_calls / non_contaminant_proposals
+                if non_contaminant_proposals
+                else pd.NA
+            )
+            recall = (
+                float(row.get("replacement_contaminant_removed", 0)) / replacement_events
+                if replacement_events
+                else pd.NA
+            )
+
+            summary_rows.append(
+                {
+                    "panel_id": panel_id,
+                    "panel_label": panel_label,
+                    "benchmark_dir": str(benchmark_dir),
+                    "lineage_label": lineage_label,
+                    "taxonomic_scope": taxonomic_scope,
+                    "taxonomic_scope_label": taxonomic_scope_label,
+                    "scenario": scenario_name,
+                    "cleanup_profile": str(row.get("cleanup_profile", "")),
+                    "run_dir": str(run_dir),
+                    "donor_labels": donor_labels_text,
+                    "replacement_events": replacement_events,
+                    "replacement_contaminant_removed": int(row.get("replacement_contaminant_removed", 0) or 0),
+                    "replacement_contaminant_retained": int(row.get("replacement_contaminant_retained", 0) or 0),
+                    "singleton_pruned_total_count": int(row.get("singleton_pruned_total_count", 0) or 0),
+                    "singleton_intended_removed_count": int(row.get("singleton_intended_removed_count", 0) or 0),
+                    "singleton_collateral_removed_count": int(row.get("singleton_collateral_removed_count", 0) or 0),
+                    "proposal_total_count": int(len(scenario_call_df)),
+                    "non_contaminant_proposal_count": int(non_contaminant_proposals),
+                    "contamination_candidate_call_count": int(contamination_candidate_calls),
+                    "true_contamination_candidate_call_count": int(true_contamination_candidate_calls),
+                    "false_contamination_candidate_call_count": int(false_contamination_candidate_calls),
+                    "hgt_candidate_kept_count": int(hgt_candidate_kept_calls),
+                    "replacement_proposed_as_contamination_count": int(replacement_proposed_as_contamination),
+                    "replacement_proposed_as_hgt_count": int(replacement_proposed_as_hgt),
+                    "replacement_not_proposed_count": int(replacement_not_proposed_count),
+                    "native_pruned_count": int(native_pruned_count),
+                    "native_kept_hgt_candidate_count": int(native_kept_hgt_candidate_count),
+                    "native_blocked_by_genome_budget_count": int(native_blocked_by_genome_budget_count),
+                    "replacement_contaminant_recall": recall,
+                    "contamination_candidate_precision": precision,
+                    "non_contaminant_hgt_keep_fraction": specificity,
+                }
+            )
+
+    call_df = pd.DataFrame(call_rows)
+    summary_df = pd.DataFrame(summary_rows)
+    return call_df, summary_df
+
+
 def export_benchmark_tables(benchmark_dirs: list[Path], outdir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     outdir.mkdir(parents=True, exist_ok=True)
     dataset_overview, genome_overview, benchmark_results = build_benchmark_exports(benchmark_dirs)
     alignment_comparison, alignment_comparison_summary = build_alignment_comparison_exports(benchmark_dirs)
+    singleton_calls, singleton_summary = build_singleton_classification_exports(benchmark_dirs)
     dataset_overview.to_csv(outdir / "benchmark_dataset_overview.tsv", sep="\t", index=False)
     if not genome_overview.empty:
         genome_overview.to_csv(outdir / "benchmark_genome_contamination.tsv", sep="\t", index=False)
@@ -2640,7 +3043,611 @@ def export_benchmark_tables(benchmark_dirs: list[Path], outdir: Path) -> tuple[p
         )
     else:
         pd.DataFrame().to_csv(outdir / "benchmark_alignment_comparison_summary.tsv", sep="\t", index=False)
+    if not singleton_calls.empty:
+        singleton_calls.sort_values(["panel_label", "scenario", "marker_name", "leaf_name"]).to_csv(
+            outdir / "benchmark_singleton_classification.tsv",
+            sep="\t",
+            index=False,
+        )
+    else:
+        pd.DataFrame().to_csv(outdir / "benchmark_singleton_classification.tsv", sep="\t", index=False)
+    if not singleton_summary.empty:
+        singleton_summary.sort_values(["panel_label", "scenario"]).to_csv(
+            outdir / "benchmark_singleton_classification_summary.tsv",
+            sep="\t",
+            index=False,
+        )
+    else:
+        pd.DataFrame().to_csv(outdir / "benchmark_singleton_classification_summary.tsv", sep="\t", index=False)
     return dataset_overview, genome_overview, benchmark_results
+
+
+def replicate_existing_taxonomic_benchmark_panel(
+    benchmark_dir: Path,
+    outdir: Path,
+    *,
+    seed: int,
+    num_cpus: int,
+) -> None:
+    base_manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
+    truth_markers = [str(marker) for marker in base_manifest.get("selected_markers", [])]
+    if not truth_markers:
+        raise ValueError(f"Benchmark manifest is missing selected markers: {benchmark_dir}")
+
+    truth_inputs_dir, truth_run_dir, scenarios_dir = _prepare_replicate_output_dir(benchmark_dir, outdir)
+    truth_models = outdir / "truth_markers.hmm"
+    truth_records = _read_normalized_proteomes(truth_inputs_dir)
+    truth_table = _load_table(truth_run_dir / "table_elim_dups")
+    truth_tree = _load_truth_tree(truth_run_dir / "tree.nwk")
+    selected_genomes = sorted(leaf.name for leaf in truth_tree.iter_leaves())
+    truth_records = {genome: truth_records[genome] for genome in selected_genomes}
+    native_map = _native_marker_map(truth_table, selected_genomes, truth_markers)
+    native_map = {genome: native_map.get(genome, {}) for genome in selected_genomes}
+
+    recipient_taxonomy = _taxonomy_map_from_manifest_rows(
+        list(base_manifest.get("selected_genome_taxonomy", []))
+    )
+    if set(selected_genomes) - set(recipient_taxonomy):
+        raise ValueError(f"Missing selected-genome taxonomy rows in manifest: {benchmark_dir}")
+
+    truth_source_dir = _resolve_project_path(base_manifest.get("truth_source_dir"))
+    donor_source_dir = _resolve_project_path(base_manifest.get("donor_source_dir")) or truth_source_dir
+    taxonomy_db_path = _resolve_project_path(base_manifest.get("taxonomy_db_path")) or DEFAULT_TAXONOMY_DB
+    donor_stage_dir = (
+        benchmark_dir / "stage_truth_full_model_clean"
+        if truth_source_dir is not None and donor_source_dir is not None and donor_source_dir.resolve() == truth_source_dir.resolve()
+        else benchmark_dir / "stage_donor_full_model_clean"
+    )
+    donor_records, donor_native_map = _load_staged_records_and_native_map(donor_stage_dir, truth_markers)
+    donor_taxonomy = _taxonomy_lookup(_load_source_taxonomy(donor_source_dir, taxonomy_db_path))
+
+    rng = Random(seed)
+    manifest = deepcopy(base_manifest)
+    manifest["seed"] = seed
+    manifest["replicate_seed"] = seed
+    manifest["replicate_source_benchmark_dir"] = str(benchmark_dir)
+    manifest["replicate_parent_panel_id"] = _panel_id_from_manifest(base_manifest, benchmark_dir)
+    manifest["replicate_parent_panel_label"] = _panel_label_from_manifest(base_manifest, benchmark_dir)
+    manifest["scenarios"] = []
+
+    taxonomic_scope = str(base_manifest["taxonomic_scope"])
+    lineage_label = str(base_manifest.get("lineage_label", ""))
+    donor_lineage_label = str(base_manifest.get("donor_lineage_label", lineage_label))
+
+    for scenario_name, spec in DEFAULT_SCENARIOS.items():
+        scenario_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+        reference_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+        used_pairs: set[tuple[str, str]] = set()
+        events: list[dict] = []
+        event_index = 1
+
+        duplicate_target = _duplicate_event_target(spec)
+        duplicate_candidates = [
+            (recipient, marker)
+            for recipient in selected_genomes
+            for marker in truth_markers
+            if marker in native_map.get(recipient, {})
+            and _taxonomic_donor_candidates(
+                recipient,
+                marker,
+                taxonomic_scope,
+                recipient_taxonomy,
+                donor_taxonomy,
+                donor_native_map,
+                truth_tree,
+            )
+        ]
+        rng.shuffle(duplicate_candidates)
+        for recipient, marker in duplicate_candidates:
+            if len(events) >= duplicate_target:
+                break
+            if (recipient, marker) in used_pairs:
+                continue
+            donor_candidates = _taxonomic_donor_candidates(
+                recipient,
+                marker,
+                taxonomic_scope,
+                recipient_taxonomy,
+                donor_taxonomy,
+                donor_native_map,
+                truth_tree,
+            )
+            if not donor_candidates:
+                continue
+            donor = rng.choice(donor_candidates)
+            donor_record = donor_records[donor][donor_native_map[donor][marker]]
+            _degrade_record_in_place(
+                scenario_records[recipient],
+                native_record_id=native_map[recipient][marker],
+                fraction=spec["native_degrade_fraction"],
+                rng=rng,
+            )
+            contaminant = make_contaminant_record(
+                recipient_genome=recipient,
+                donor_record=donor_record,
+                marker=marker,
+                donor_genome=donor,
+                event_index=event_index,
+            )
+            scenario_records[recipient][contaminant.id] = contaminant
+            used_pairs.add((recipient, marker))
+            events.append(
+                {
+                    "event_index": event_index,
+                    "scenario": scenario_name,
+                    "event_type": "duplicate",
+                    "taxonomic_scope": taxonomic_scope,
+                    "taxonomic_scope_label": TAXONOMY_SCOPE_RULES[taxonomic_scope]["scope_label"],
+                    "recipient_genome": recipient,
+                    "recipient_group": lineage_label,
+                    "marker": marker,
+                    "native_record_id": native_map[recipient][marker],
+                    "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                    "donor_genome": donor,
+                    "donor_group": donor_lineage_label,
+                    "source_relation": _source_relation(lineage_label, donor_lineage_label),
+                    "donor_record_id": donor_native_map[donor][marker],
+                    "donor_contig_id": parse_sequence_id(donor_native_map[donor][marker])[1],
+                    "contaminant_record_id": contaminant.id,
+                    "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                    "expected_duplicate_status": "Removed",
+                    "expected_native_status": "Kept",
+                    "native_degrade_fraction": spec["native_degrade_fraction"],
+                    **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
+                    **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                }
+            )
+            event_index += 1
+        if len([row for row in events if row["event_type"] == "duplicate"]) != duplicate_target:
+            raise ValueError(
+                f"Could not schedule {duplicate_target} duplicate events for scope '{taxonomic_scope}'"
+            )
+
+        replacement_pairs = [
+            (recipient, marker)
+            for recipient in selected_genomes
+            for marker in truth_markers
+            if (recipient, marker) not in used_pairs
+            and marker in native_map.get(recipient, {})
+            and _taxonomic_donor_candidates(
+                recipient,
+                marker,
+                taxonomic_scope,
+                recipient_taxonomy,
+                donor_taxonomy,
+                donor_native_map,
+                truth_tree,
+            )
+        ]
+        rng.shuffle(replacement_pairs)
+        replacement_events_written = 0
+        for recipient, marker in replacement_pairs:
+            if replacement_events_written >= spec["replacement_events"]:
+                break
+            donor_candidates = _taxonomic_donor_candidates(
+                recipient,
+                marker,
+                taxonomic_scope,
+                recipient_taxonomy,
+                donor_taxonomy,
+                donor_native_map,
+                truth_tree,
+            )
+            if not donor_candidates:
+                continue
+            donor = rng.choice(donor_candidates)
+            donor_record = donor_records[donor][donor_native_map[donor][marker]]
+            contaminant = make_contaminant_record(
+                recipient_genome=recipient,
+                donor_record=donor_record,
+                marker=marker,
+                donor_genome=donor,
+                event_index=event_index,
+            )
+            reference_records[recipient] = drop_native_marker(
+                reference_records[recipient],
+                native_record_id=native_map[recipient][marker],
+            )
+            scenario_records[recipient] = apply_replacement_event(
+                scenario_records[recipient],
+                native_record_id=native_map[recipient][marker],
+                contaminant_record=contaminant,
+            )
+            used_pairs.add((recipient, marker))
+            events.append(
+                {
+                    "event_index": event_index,
+                    "scenario": scenario_name,
+                    "event_type": "replacement",
+                    "taxonomic_scope": taxonomic_scope,
+                    "taxonomic_scope_label": TAXONOMY_SCOPE_RULES[taxonomic_scope]["scope_label"],
+                    "recipient_genome": recipient,
+                    "recipient_group": lineage_label,
+                    "marker": marker,
+                    "native_record_id": native_map[recipient][marker],
+                    "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                    "donor_genome": donor,
+                    "donor_group": donor_lineage_label,
+                    "source_relation": _source_relation(lineage_label, donor_lineage_label),
+                    "donor_record_id": donor_native_map[donor][marker],
+                    "donor_contig_id": parse_sequence_id(donor_native_map[donor][marker])[1],
+                    "contaminant_record_id": contaminant.id,
+                    "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                    "expected_replacement_outcome": "DropMarkerOrRemoveContaminant",
+                    "native_degrade_fraction": spec["native_degrade_fraction"],
+                    **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
+                    **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                }
+            )
+            replacement_events_written += 1
+            event_index += 1
+        if replacement_events_written != spec["replacement_events"]:
+            raise ValueError(
+                f"Could not schedule {spec['replacement_events']} replacement events for scope '{taxonomic_scope}'"
+            )
+
+        scenario_dir = scenarios_dir / scenario_name
+        scenario_dir.mkdir(exist_ok=True)
+        proteomes_dir = scenario_dir / "proteomes"
+        _write_proteome_dir(scenario_records, proteomes_dir)
+        _reference_inputs_dir, reference_run_dir = _write_reference_state(
+            scenario_dir=scenario_dir,
+            reference_records=reference_records,
+            truth_inputs_dir=truth_inputs_dir,
+            truth_run_dir=truth_run_dir,
+            truth_models=truth_models,
+            num_cpus=num_cpus,
+            reuse_truth_panel=spec["replacement_events"] == 0,
+        )
+        _write_events_tsv(scenario_dir / "events.tsv", events)
+        genome_summary = _write_genome_summary_tsv(scenario_dir / "genome_summary.tsv", events)
+        summary = _scenario_summary(events, genome_summary)
+        manifest["scenarios"].append(
+            {
+                "name": scenario_name,
+                "taxonomic_scope": taxonomic_scope,
+                "proteomes_dir": str(proteomes_dir),
+                "reference_inputs_dir": str(scenario_dir / "reference_inputs"),
+                "reference_tree_path": str(reference_run_dir / "tree.nwk"),
+                "reference_taxa": selected_genomes,
+                "events_path": str(scenario_dir / "events.tsv"),
+                "genome_summary_path": str(scenario_dir / "genome_summary.tsv"),
+                **summary,
+            }
+        )
+
+    _write_manifest_json(outdir / "benchmark_manifest.json", manifest)
+
+
+def replicate_existing_mixed_benchmark_panel(
+    benchmark_dir: Path,
+    outdir: Path,
+    *,
+    seed: int,
+    num_cpus: int,
+) -> None:
+    base_manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
+    truth_markers = [str(marker) for marker in base_manifest.get("selected_markers", [])]
+    if not truth_markers:
+        raise ValueError(f"Benchmark manifest is missing selected markers: {benchmark_dir}")
+
+    truth_inputs_dir, truth_run_dir, scenarios_dir = _prepare_replicate_output_dir(benchmark_dir, outdir)
+    truth_models = outdir / "truth_markers.hmm"
+    truth_records = _read_normalized_proteomes(truth_inputs_dir)
+    truth_table = _load_table(truth_run_dir / "table_elim_dups")
+    truth_tree = _load_truth_tree(truth_run_dir / "tree.nwk")
+    selected_genomes = sorted(leaf.name for leaf in truth_tree.iter_leaves())
+    truth_records = {genome: truth_records[genome] for genome in selected_genomes}
+    native_map = _native_marker_map(truth_table, selected_genomes, truth_markers)
+    native_map = {genome: native_map.get(genome, {}) for genome in selected_genomes}
+
+    recipient_taxonomy = _taxonomy_map_from_manifest_rows(
+        list(base_manifest.get("selected_genome_taxonomy", []))
+    )
+    if set(selected_genomes) - set(recipient_taxonomy):
+        raise ValueError(f"Missing selected-genome taxonomy rows in manifest: {benchmark_dir}")
+
+    taxonomy_db_path = _resolve_project_path(base_manifest.get("taxonomy_db_path")) or DEFAULT_TAXONOMY_DB
+    donor_source_dirs = {
+        str(label): _resolve_project_path(path)
+        for label, path in dict(base_manifest.get("donor_source_dirs", {})).items()
+    }
+    donor_bundles: dict[str, dict[str, object]] = {}
+    for donor_label, donor_source_dir in donor_source_dirs.items():
+        stage_dir = benchmark_dir / f"stage_donor_{sanitize_token(donor_label, donor_label)}"
+        donor_records, donor_native_map = _load_staged_records_and_native_map(stage_dir, truth_markers)
+        donor_bundles[donor_label] = {
+            "records": donor_records,
+            "native_map": donor_native_map,
+            "taxonomy": _taxonomy_lookup(_load_source_taxonomy(donor_source_dir, taxonomy_db_path)),
+            "source_dir": str(donor_source_dir),
+        }
+
+    rng = Random(seed)
+    manifest = deepcopy(base_manifest)
+    manifest["seed"] = seed
+    manifest["replicate_seed"] = seed
+    manifest["replicate_source_benchmark_dir"] = str(benchmark_dir)
+    manifest["replicate_parent_panel_id"] = _panel_id_from_manifest(base_manifest, benchmark_dir)
+    manifest["replicate_parent_panel_label"] = _panel_label_from_manifest(base_manifest, benchmark_dir)
+    manifest["scenarios"] = []
+
+    duplicate_recipients_list, replacement_recipients_list = _choose_recipient_sets(
+        selected_genomes,
+        duplicate_recipients=int(base_manifest.get("duplicate_recipients", 5)),
+        replacement_recipients=int(base_manifest.get("replacement_recipients", 5)),
+        overlap_recipients=int(base_manifest.get("overlap_recipients", 2)),
+        rng=rng,
+    )
+    donor_labels = sorted(donor_bundles)
+    duplicate_label_plan = _round_robin_labels(
+        donor_labels,
+        int(base_manifest.get("duplicate_recipients", 5)),
+    )
+    replacement_label_plan = _round_robin_labels(
+        list(reversed(donor_labels)),
+        int(base_manifest.get("replacement_recipients", 5)),
+    )
+
+    scenario_name = "mixed_high_level"
+    scenario_dir = scenarios_dir / scenario_name
+    scenario_dir.mkdir(exist_ok=True)
+    scenario_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+    reference_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+    used_pairs: set[tuple[str, str]] = set()
+    events: list[dict] = []
+    event_index = 1
+    lineage_label = str(base_manifest.get("lineage_label", ""))
+
+    for recipient, donor_label in zip(duplicate_recipients_list, duplicate_label_plan):
+        donor_bundle = donor_bundles[donor_label]
+        donor_records = donor_bundle["records"]
+        donor_native_map = donor_bundle["native_map"]
+        donor_taxonomy = donor_bundle["taxonomy"]
+        marker_candidates = [
+            marker
+            for marker in truth_markers
+            if (recipient, marker) not in used_pairs
+            and marker in native_map.get(recipient, {})
+            and any(marker in donor_native_map.get(donor_genome, {}) for donor_genome in donor_records)
+        ]
+        if not marker_candidates:
+            raise ValueError(f"No duplicate-event marker candidates for recipient {recipient} in mixed benchmark")
+        rng.shuffle(marker_candidates)
+        marker = marker_candidates[0]
+        donor_candidates = [
+            donor_genome
+            for donor_genome in donor_records
+            if marker in donor_native_map.get(donor_genome, {})
+        ]
+        donor = rng.choice(sorted(donor_candidates))
+        donor_record = donor_records[donor][donor_native_map[donor][marker]]
+        _degrade_record_in_place(
+            scenario_records[recipient],
+            native_record_id=native_map[recipient][marker],
+            fraction=0.12,
+            rng=rng,
+        )
+        contaminant = make_contaminant_record(
+            recipient_genome=recipient,
+            donor_record=donor_record,
+            marker=marker,
+            donor_genome=donor,
+            event_index=event_index,
+        )
+        scenario_records[recipient][contaminant.id] = contaminant
+        used_pairs.add((recipient, marker))
+        events.append(
+            {
+                "event_index": event_index,
+                "scenario": scenario_name,
+                "event_type": "duplicate",
+                "taxonomic_scope": "mixed_high_level",
+                "taxonomic_scope_label": f"{'+'.join(donor_labels)}_into_{lineage_label}",
+                "recipient_genome": recipient,
+                "recipient_group": lineage_label,
+                "marker": marker,
+                "native_record_id": native_map[recipient][marker],
+                "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                "donor_genome": donor,
+                "donor_group": donor_label,
+                "source_relation": _source_relation(lineage_label, donor_label),
+                "donor_record_id": donor_native_map[donor][marker],
+                "donor_contig_id": parse_sequence_id(donor_native_map[donor][marker])[1],
+                "contaminant_record_id": contaminant.id,
+                "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                "expected_duplicate_status": "Removed",
+                "expected_native_status": "Kept",
+                "native_degrade_fraction": 0.12,
+                **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
+                **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+            }
+        )
+        event_index += 1
+
+    for recipient, donor_label in zip(replacement_recipients_list, replacement_label_plan):
+        donor_bundle = donor_bundles[donor_label]
+        donor_records = donor_bundle["records"]
+        donor_native_map = donor_bundle["native_map"]
+        donor_taxonomy = donor_bundle["taxonomy"]
+        marker_candidates = [
+            marker
+            for marker in truth_markers
+            if (recipient, marker) not in used_pairs
+            and marker in native_map.get(recipient, {})
+            and any(marker in donor_native_map.get(donor_genome, {}) for donor_genome in donor_records)
+        ]
+        if not marker_candidates:
+            raise ValueError(f"No replacement-event marker candidates for recipient {recipient} in mixed benchmark")
+        rng.shuffle(marker_candidates)
+        marker = marker_candidates[0]
+        donor_candidates = [
+            donor_genome
+            for donor_genome in donor_records
+            if marker in donor_native_map.get(donor_genome, {})
+        ]
+        donor = rng.choice(sorted(donor_candidates))
+        donor_record = donor_records[donor][donor_native_map[donor][marker]]
+        contaminant = make_contaminant_record(
+            recipient_genome=recipient,
+            donor_record=donor_record,
+            marker=marker,
+            donor_genome=donor,
+            event_index=event_index,
+        )
+        reference_records[recipient] = drop_native_marker(
+            reference_records[recipient],
+            native_record_id=native_map[recipient][marker],
+        )
+        scenario_records[recipient] = apply_replacement_event(
+            scenario_records[recipient],
+            native_record_id=native_map[recipient][marker],
+            contaminant_record=contaminant,
+        )
+        used_pairs.add((recipient, marker))
+        events.append(
+            {
+                "event_index": event_index,
+                "scenario": scenario_name,
+                "event_type": "replacement",
+                "taxonomic_scope": "mixed_high_level",
+                "taxonomic_scope_label": f"{'+'.join(donor_labels)}_into_{lineage_label}",
+                "recipient_genome": recipient,
+                "recipient_group": lineage_label,
+                "marker": marker,
+                "native_record_id": native_map[recipient][marker],
+                "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                "donor_genome": donor,
+                "donor_group": donor_label,
+                "source_relation": _source_relation(lineage_label, donor_label),
+                "donor_record_id": donor_native_map[donor][marker],
+                "donor_contig_id": parse_sequence_id(donor_native_map[donor][marker])[1],
+                "contaminant_record_id": contaminant.id,
+                "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                "expected_replacement_outcome": "DropMarkerOrRemoveContaminant",
+                "native_degrade_fraction": 0.12,
+                **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
+                **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+            }
+        )
+        event_index += 1
+
+    proteomes_dir = scenario_dir / "proteomes"
+    _write_proteome_dir(scenario_records, proteomes_dir)
+    _reference_inputs_dir, reference_run_dir = _write_reference_state(
+        scenario_dir=scenario_dir,
+        reference_records=reference_records,
+        truth_inputs_dir=truth_inputs_dir,
+        truth_run_dir=truth_run_dir,
+        truth_models=truth_models,
+        num_cpus=num_cpus,
+        reuse_truth_panel=False,
+    )
+    _write_events_tsv(scenario_dir / "events.tsv", events)
+    genome_summary = _write_genome_summary_tsv(scenario_dir / "genome_summary.tsv", events)
+    summary = _scenario_summary(events, genome_summary)
+    manifest["scenarios"].append(
+        {
+            "name": scenario_name,
+            "taxonomic_scope": "mixed_high_level",
+            "proteomes_dir": str(proteomes_dir),
+            "reference_inputs_dir": str(scenario_dir / "reference_inputs"),
+            "reference_tree_path": str(reference_run_dir / "tree.nwk"),
+            "reference_taxa": selected_genomes,
+            "events_path": str(scenario_dir / "events.tsv"),
+            "genome_summary_path": str(scenario_dir / "genome_summary.tsv"),
+            **summary,
+        }
+    )
+    _write_manifest_json(outdir / "benchmark_manifest.json", manifest)
+
+
+def replicate_existing_benchmark_panel(
+    benchmark_dir: Path,
+    outdir: Path,
+    *,
+    seed: int,
+    num_cpus: int,
+) -> None:
+    manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
+    scope = str(manifest.get("taxonomic_scope", ""))
+    if scope == "mixed_high_level":
+        replicate_existing_mixed_benchmark_panel(
+            benchmark_dir=benchmark_dir,
+            outdir=outdir,
+            seed=seed,
+            num_cpus=num_cpus,
+        )
+        return
+    if scope in TAXONOMY_SCOPE_RULES:
+        replicate_existing_taxonomic_benchmark_panel(
+            benchmark_dir=benchmark_dir,
+            outdir=outdir,
+            seed=seed,
+            num_cpus=num_cpus,
+        )
+        return
+    raise ValueError(f"Unsupported benchmark replicate source: {benchmark_dir}")
+
+
+def generate_panel_replicates(
+    benchmark_dirs: list[Path],
+    outbase: Path,
+    replicate_seeds: list[int],
+    *,
+    num_cpus: int,
+    max_parallel: int = 1,
+) -> list[Path]:
+    outbase.mkdir(parents=True, exist_ok=True)
+    replicate_dirs: list[Path] = []
+    replicate_rows: list[dict] = []
+    jobs: list[tuple[Path, callable]] = []
+
+    for benchmark_dir in benchmark_dirs:
+        manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
+        panel_id = _panel_id_from_manifest(manifest, benchmark_dir)
+        panel_label = _panel_label_from_manifest(manifest, benchmark_dir)
+        for seed in replicate_seeds:
+            replicate_dir = outbase / f"{panel_id}__seed_{seed}"
+            replicate_dirs.append(replicate_dir)
+            replicate_rows.append(
+                {
+                    "panel_id": panel_id,
+                    "panel_label": panel_label,
+                    "source_benchmark_dir": str(benchmark_dir),
+                    "replicate_seed": seed,
+                    "replicate_dir": str(replicate_dir),
+                }
+            )
+            jobs.append(
+                (
+                    benchmark_dir,
+                    lambda benchmark_dir=benchmark_dir, replicate_dir=replicate_dir, seed=seed: replicate_existing_benchmark_panel(
+                        benchmark_dir=benchmark_dir,
+                        outdir=replicate_dir,
+                        seed=seed,
+                        num_cpus=num_cpus,
+                    ),
+                )
+            )
+
+    _parallel_benchmark_jobs(jobs, max_parallel=max_parallel)
+    _write_manifest_json(
+        outbase / "replicates_manifest.json",
+        {
+            "replicate_seeds": replicate_seeds,
+            "num_cpus": num_cpus,
+            "max_parallel_generation": max_parallel,
+            "source_benchmark_dirs": [str(path) for path in benchmark_dirs],
+            "replicates": replicate_rows,
+        },
+    )
+    return replicate_dirs
+
+
+def _benchmark_dirs_from_replicates_manifest(manifest_path: Path) -> list[Path]:
+    payload = json.loads(manifest_path.read_text())
+    return [Path(str(item["replicate_dir"])) for item in payload.get("replicates", []) if item.get("replicate_dir")]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -2742,10 +3749,20 @@ def _parse_args() -> argparse.Namespace:
     genrep.add_argument("--list-file", default=None)
     genrep.add_argument("--n-candidates", type=int, default=90)
 
+    genpanelrep = subparsers.add_parser("generate-panel-replicates", help="Generate replicate copies from existing benchmark panels")
+    genpanelrep.add_argument("--benchmark-dirs", nargs="+", default=None)
+    genpanelrep.add_argument("--benchmarks-root", default="runs/benchmarks")
+    genpanelrep.add_argument("--outbase", required=True)
+    genpanelrep.add_argument("--replicate-seeds", nargs="+", type=int, required=True)
+    genpanelrep.add_argument("--num-cpus", type=int, default=8)
+    genpanelrep.add_argument("--max-parallel", type=int, default=1)
+
     runrep = subparsers.add_parser("run-replicates", help="Run benchmark suite for multiple replicate dirs")
-    runrep.add_argument("--benchmark-dirs", nargs="+", required=True)
+    runrep.add_argument("--benchmark-dirs", nargs="+", default=None)
+    runrep.add_argument("--replicates-manifest", default=None)
     runrep.add_argument("--num-cpus", type=int, default=8)
     runrep.add_argument("--selection-max-rounds", type=int, default=5)
+    runrep.add_argument("--max-parallel", type=int, default=1)
 
     cross = subparsers.add_parser("generate-cross", help="Generate a cross-family benchmark from two benchmark dirs")
     cross.add_argument("--benchmark-a-dir", required=True)
@@ -2756,7 +3773,8 @@ def _parse_args() -> argparse.Namespace:
     cross.add_argument("--num-cpus", type=int, default=8)
 
     agg = subparsers.add_parser("aggregate-replicates", help="Aggregate multiple benchmark result directories")
-    agg.add_argument("--benchmark-dirs", nargs="+", required=True)
+    agg.add_argument("--benchmark-dirs", nargs="+", default=None)
+    agg.add_argument("--replicates-manifest", default=None)
     agg.add_argument("--outdir", required=True)
 
     exportdocs = subparsers.add_parser("export-docs", help="Export benchmark overview tables for docs/data")
@@ -2952,6 +3970,19 @@ def main() -> None:
             list_file=Path(args.list_file) if args.list_file else None,
             n_candidates=args.n_candidates,
         )
+    elif args.command == "generate-panel-replicates":
+        benchmark_dirs = (
+            [Path(item) for item in args.benchmark_dirs]
+            if args.benchmark_dirs
+            else discover_taxonomic_benchmark_dirs(Path(args.benchmarks_root))
+        )
+        generate_panel_replicates(
+            benchmark_dirs=benchmark_dirs,
+            outbase=Path(args.outbase),
+            replicate_seeds=args.replicate_seeds,
+            num_cpus=args.num_cpus,
+            max_parallel=args.max_parallel,
+        )
     elif args.command == "run":
         run_benchmark_suite(
             benchmark_dir=Path(args.benchmark_dir),
@@ -2968,15 +3999,25 @@ def main() -> None:
             num_cpus=args.num_cpus,
         )
     elif args.command == "run-replicates":
-        for benchmark_dir in [Path(item) for item in args.benchmark_dirs]:
-            run_benchmark_suite(
-                benchmark_dir=benchmark_dir,
-                num_cpus=args.num_cpus,
-                selection_max_rounds=args.selection_max_rounds,
-            )
+        benchmark_dirs = (
+            _benchmark_dirs_from_replicates_manifest(Path(args.replicates_manifest))
+            if args.replicates_manifest
+            else [Path(item) for item in args.benchmark_dirs or []]
+        )
+        run_benchmark_suites(
+            benchmark_dirs=benchmark_dirs,
+            num_cpus=args.num_cpus,
+            selection_max_rounds=args.selection_max_rounds,
+            max_parallel=args.max_parallel,
+        )
     elif args.command == "aggregate-replicates":
+        benchmark_dirs = (
+            _benchmark_dirs_from_replicates_manifest(Path(args.replicates_manifest))
+            if args.replicates_manifest
+            else [Path(item) for item in args.benchmark_dirs or []]
+        )
         aggregate_benchmark_runs(
-            benchmark_dirs=[Path(item) for item in args.benchmark_dirs],
+            benchmark_dirs=benchmark_dirs,
             outdir=Path(args.outdir),
         )
     elif args.command == "export-docs":

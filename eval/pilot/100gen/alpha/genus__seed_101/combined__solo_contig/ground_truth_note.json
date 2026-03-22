@@ -1,0 +1,8 @@
+{
+  "lineage": "alpha",
+  "panel": "genus__seed_101",
+  "run_name": "combined__solo_contig",
+  "ground_truth_source": "reconstructed_from_retained_proteomes_headers",
+  "marker_reference_presence_status": "not_fully_recoverable_from_compact_retained_metadata",
+  "note": "Introduced-marker rows are exact contaminant headers from the kept latest full run. Per-marker reference-genome presence was not preserved before the bulky run tree was deleted, so this pilot copy keeps the reconstructed events plus the genome-level truth-marker completeness table."
+}

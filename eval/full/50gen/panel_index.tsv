@@ -1,0 +1,37 @@
+lineage	panel_name	panel_id	panel_label	replicate_seed	taxonomic_scope	scenario_count	selected_genome_count	selected_marker_count
+chlam	chlam_mixed_high_level__seed_101	chlam_mixed_high_level	Chlam Mixed High Level	101	mixed_high_level	1	50	10
+chlam	chlam_mixed_high_level__seed_202	chlam_mixed_high_level	Chlam Mixed High Level	202	mixed_high_level	1	50	10
+chlam	chlam_mixed_high_level__seed_303	chlam_mixed_high_level	Chlam Mixed High Level	303	mixed_high_level	1	50	10
+flavo	flavo_mixed_high_level__seed_101	flavo_mixed_high_level	Flavo Mixed High Level	101	mixed_high_level	1	50	10
+flavo	flavo_mixed_high_level__seed_202	flavo_mixed_high_level	Flavo Mixed High Level	202	mixed_high_level	1	50	10
+flavo	flavo_mixed_high_level__seed_303	flavo_mixed_high_level	Flavo Mixed High Level	303	mixed_high_level	1	50	10
+gamma	gamma_mixed_high_level__seed_101	gamma_mixed_high_level	Gamma Mixed High Level	101	mixed_high_level	1	50	10
+gamma	gamma_mixed_high_level__seed_202	gamma_mixed_high_level	Gamma Mixed High Level	202	mixed_high_level	1	50	10
+gamma	gamma_mixed_high_level__seed_303	gamma_mixed_high_level	Gamma Mixed High Level	303	mixed_high_level	1	50	10
+chlam	chlam_family__seed_101	chlam_family	Chlam Family	101	family	3	50	10
+chlam	chlam_family__seed_202	chlam_family	Chlam Family	202	family	3	50	10
+chlam	chlam_family__seed_303	chlam_family	Chlam Family	303	family	3	50	10
+chlam	chlam_genus__seed_101	chlam_genus	Chlam Genus	101	genus	3	50	10
+chlam	chlam_genus__seed_202	chlam_genus	Chlam Genus	202	genus	3	50	10
+chlam	chlam_genus__seed_303	chlam_genus	Chlam Genus	303	genus	3	50	10
+chlam	chlam_order__seed_101	chlam_order	Chlam Order	101	order	3	50	10
+chlam	chlam_order__seed_202	chlam_order	Chlam Order	202	order	3	50	10
+chlam	chlam_order__seed_303	chlam_order	Chlam Order	303	order	3	50	10
+flavo	flavo_family__seed_101	flavo_family	Flavo Family	101	family	3	50	10
+flavo	flavo_family__seed_202	flavo_family	Flavo Family	202	family	3	50	10
+flavo	flavo_family__seed_303	flavo_family	Flavo Family	303	family	3	50	10
+flavo	flavo_genus__seed_101	flavo_genus	Flavo Genus	101	genus	3	50	10
+flavo	flavo_genus__seed_202	flavo_genus	Flavo Genus	202	genus	3	50	10
+flavo	flavo_genus__seed_303	flavo_genus	Flavo Genus	303	genus	3	50	10
+flavo	flavo_order__seed_101	flavo_order	Flavo Order	101	order	3	50	10
+flavo	flavo_order__seed_202	flavo_order	Flavo Order	202	order	3	50	10
+flavo	flavo_order__seed_303	flavo_order	Flavo Order	303	order	3	50	10
+gamma	gamma_order__seed_101	gamma_order	Gamma Order	101	order	3	50	10
+gamma	gamma_order__seed_202	gamma_order	Gamma Order	202	order	3	50	10
+gamma	gamma_order__seed_303	gamma_order	Gamma Order	303	order	3	50	10
+gamma	gamma_family__seed_101	gamma_family	Gamma Family	101	family	3	50	10
+gamma	gamma_family__seed_202	gamma_family	Gamma Family	202	family	3	50	10
+gamma	gamma_family__seed_303	gamma_family	Gamma Family	303	family	3	50	10
+gamma	gamma_genus__seed_101	gamma_genus	Gamma Genus	101	genus	3	50	10
+gamma	gamma_genus__seed_202	gamma_genus	Gamma Genus	202	genus	3	50	10
+gamma	gamma_genus__seed_303	gamma_genus	Gamma Genus	303	genus	3	50	10

@@ -1,0 +1,34 @@
+{
+  "package_name": "eval_datasets_latest",
+  "created_on": "2026-03-22",
+  "keep_intent": "Compact benchmark dataset package retaining only dataset definitions, introduced-marker provenance, genome membership, completeness metadata, and final summary tables.",
+  "latest_full_benchmark_source": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318",
+  "datasets": {
+    "50gen": {
+      "lineages": [
+        "flavo",
+        "gamma",
+        "chlam"
+      ],
+      "replicate_panels": 36,
+      "source_root": "/home/fschulz/dev/software/sgtree_private_backup_20260316/runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus",
+      "event_tables": "exact scenario events copied from benchmark manifests",
+      "completeness_metric": "truth-marker panel completeness derived from scenario reference_run marker_count_matrix.csv"
+    },
+    "100gen": {
+      "lineages": [
+        "alpha",
+        "bacteroidota"
+      ],
+      "panel_count": 24,
+      "run_count": 144,
+      "source_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318",
+      "event_tables": "reconstructed from contaminant headers in retained run proteomes files",
+      "completeness_metric": "truth-marker panel completeness derived from retained run marker_count_matrix.csv",
+      "limitations": [
+        "Original source benchmark manifests/events for the 100-gen proof suite were no longer present locally when this package was built.",
+        "Combined-scenario event type is not always recoverable per inserted contaminant from retained headers alone."
+      ]
+    }
+  }
+}

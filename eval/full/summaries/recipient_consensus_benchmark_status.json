@@ -1,0 +1,7 @@
+{
+  "status": "completed",
+  "completed_at": "2026-03-21 23:08:44",
+  "aggregate_dir": "/home/fschulz/dev/software/sgtree_private_backup_20260316/runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/aggregate",
+  "proof_of_concept_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318",
+  "mode": "recipient_consensus"
+}

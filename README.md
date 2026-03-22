@@ -122,7 +122,7 @@ Core method controls:
 - `--selection_max_rounds`: maximum coordinate-descent rounds in `coordinate` mode (default `5`).
 - `--selection_global_rounds`: rebuild the guide species tree and rerun duplicate cleanup for a small fixed number of rounds (default `1`).
 - `--lock_references`: keep reference duplicate resolution score-locked instead of RF-updating them (default `false`).
-- `--singles_mode`: `delta_rf`, `composite`, `contig_consensus`, or `recipient_consensus` when singleton filtering is enabled.
+- `--singles_mode`: `delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, or `neighbor_ml` when singleton filtering is enabled.
 - `--singles_min_rfdist`: minimum marker/global RF distance required before singleton pruning activates (default `0.25`).
 - `--keep_intermediates`: keep intermediate alignments/tables for debugging and benchmarking (default `false`).
 - `--ani_cluster`: run pairwise ANI on the combined query+reference genome set and keep one representative per cluster for the main SGTree species tree.
@@ -172,6 +172,8 @@ Practical selection guide:
 - `--singles_mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
 - `--singles_mode contig_consensus` starts from the composite detector and then checks whether the candidate marker disagrees with the other markers on the same contig. It is only useful when contig IDs are reliable and multiple markers share a contig.
 - `--singles_mode recipient_consensus` requires positive RF/topology support and then scores the candidate sequence against the recipient genome's nearest species-tree neighborhood. This is currently the strongest calibrated singleton mode on the 50-gen replacement benchmarks because it preserves intended removals while sharply reducing collateral pruning.
+- `--singles_mode neighbor_clade` ignores whole-tree RF as the primary trigger and instead asks whether a marker copy agrees with the copy positions from the genome's closest species-tree neighbors. It is intended to recover replacement events that are locally inconsistent with a compact neighborhood even when the whole marker tree RF barely changes.
+- `--singles_mode neighbor_ml` is an experimental mode that scores all singleton candidates with the sandbox-derived unsupervised local-neighborhood policy and then prunes a small top-ranked set of genomes. It is intended for benchmark validation only until collateral is under control.
 - When `contig_id` cannot be recovered from the input headers, SGTree falls back to RF/topology/recipient-consensus signal instead of treating every singleton proposal as automatically ambiguous.
 - Typical inclusion presets:
 - Balanced: `--percent_models 10 --max_sdup 2 --max_dupl 0.25`
@@ -244,9 +246,9 @@ sgtree/
   resources/
     models/               # combined marker-set HMM files
   testgenomes/            # example query/reference data
-  runs/                   # runtime outputs/work/logs (.gitkeep tracked)
+  eval/                   # committed benchmark/evaluation metadata packages
+  runs/                   # local scratch outputs and transient rerun logs
   pixi.toml               # reproducible environment + tasks
-  docs/BENCHMARKS.md      # synthetic contamination benchmark design
 ```
 
 ## Benchmarking
@@ -257,13 +259,13 @@ Generate the default low-runtime synthetic benchmark:
 pixi run benchmark-generate
 ```
 
-Run the current systematic benchmark suite:
+Run the built-in benchmark harness:
 
 ```bash
 pixi run benchmark-run
 ```
 
-The benchmark generator derives a clean truth panel automatically from the bundled Chloroflexi proteomes and `UNI56.hmm`, then creates duplicate, triplicate, and replacement scenarios against a fixed truth tree. Results are written under `runs/benchmarks/`. The canonical benchmark implementation now lives under `sgtree/benchmarks/`. See [docs/BENCHMARKS.md](/home/fschulz/dev/sgtree/docs/BENCHMARKS.md).
+The benchmark generator derives a clean truth panel automatically from the bundled Chloroflexi proteomes and `UNI56.hmm`, then creates duplicate, triplicate, and replacement scenarios against a fixed truth tree. The canonical benchmark implementation lives under `sgtree/benchmarks/`. Committed evaluation metadata and compact benchmark dataset descriptions now live under [`eval/`](/home/fschulz/dev/software/sgtree/eval), while `runs/` is treated as disposable local scratch.
 
 Burkholderiaceae benchmark assets:
 

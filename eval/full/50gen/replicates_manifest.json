@@ -1,0 +1,279 @@
+{
+  "max_parallel_generation": 4,
+  "num_cpus": 8,
+  "replicate_seeds": [
+    101,
+    202,
+    303
+  ],
+  "replicates": [
+    {
+      "panel_id": "chlam_mixed_high_level",
+      "panel_label": "Chlam Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_mixed_high_level__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/mixed_chlam_from_flavo_gamma_20260311"
+    },
+    {
+      "panel_id": "chlam_mixed_high_level",
+      "panel_label": "Chlam Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_mixed_high_level__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/mixed_chlam_from_flavo_gamma_20260311"
+    },
+    {
+      "panel_id": "chlam_mixed_high_level",
+      "panel_label": "Chlam Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_mixed_high_level__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/mixed_chlam_from_flavo_gamma_20260311"
+    },
+    {
+      "panel_id": "flavo_mixed_high_level",
+      "panel_label": "Flavo Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_mixed_high_level__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/mixed_flavo_from_gamma_chlam_20260311"
+    },
+    {
+      "panel_id": "flavo_mixed_high_level",
+      "panel_label": "Flavo Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_mixed_high_level__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/mixed_flavo_from_gamma_chlam_20260311"
+    },
+    {
+      "panel_id": "flavo_mixed_high_level",
+      "panel_label": "Flavo Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_mixed_high_level__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/mixed_flavo_from_gamma_chlam_20260311"
+    },
+    {
+      "panel_id": "gamma_mixed_high_level",
+      "panel_label": "Gamma Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_mixed_high_level__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/mixed_gamma_from_flavo_chlam_small_20260311"
+    },
+    {
+      "panel_id": "gamma_mixed_high_level",
+      "panel_label": "Gamma Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_mixed_high_level__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/mixed_gamma_from_flavo_chlam_small_20260311"
+    },
+    {
+      "panel_id": "gamma_mixed_high_level",
+      "panel_label": "Gamma Mixed High Level",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_mixed_high_level__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/mixed_gamma_from_flavo_chlam_small_20260311"
+    },
+    {
+      "panel_id": "chlam_family",
+      "panel_label": "Chlam Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_family__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "chlam_family",
+      "panel_label": "Chlam Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_family__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "chlam_family",
+      "panel_label": "Chlam Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_family__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "chlam_genus",
+      "panel_label": "Chlam Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_genus__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "chlam_genus",
+      "panel_label": "Chlam Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_genus__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "chlam_genus",
+      "panel_label": "Chlam Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_genus__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "chlam_order",
+      "panel_label": "Chlam Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_order__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/order_scope"
+    },
+    {
+      "panel_id": "chlam_order",
+      "panel_label": "Chlam Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_order__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/order_scope"
+    },
+    {
+      "panel_id": "chlam_order",
+      "panel_label": "Chlam Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/chlam_order__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_chlam_suite_20260311/order_scope"
+    },
+    {
+      "panel_id": "flavo_family",
+      "panel_label": "Flavo Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_family__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "flavo_family",
+      "panel_label": "Flavo Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_family__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "flavo_family",
+      "panel_label": "Flavo Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_family__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "flavo_genus",
+      "panel_label": "Flavo Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_genus__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "flavo_genus",
+      "panel_label": "Flavo Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_genus__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "flavo_genus",
+      "panel_label": "Flavo Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_genus__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "flavo_order",
+      "panel_label": "Flavo Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_order__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/order_scope"
+    },
+    {
+      "panel_id": "flavo_order",
+      "panel_label": "Flavo Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_order__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/order_scope"
+    },
+    {
+      "panel_id": "flavo_order",
+      "panel_label": "Flavo Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/flavo_order__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_flavo_suite_20260311/order_scope"
+    },
+    {
+      "panel_id": "gamma_order",
+      "panel_label": "Gamma Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_order__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_order_20260311"
+    },
+    {
+      "panel_id": "gamma_order",
+      "panel_label": "Gamma Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_order__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_order_20260311"
+    },
+    {
+      "panel_id": "gamma_order",
+      "panel_label": "Gamma Order",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_order__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_order_20260311"
+    },
+    {
+      "panel_id": "gamma_family",
+      "panel_label": "Gamma Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_family__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "gamma_family",
+      "panel_label": "Gamma Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_family__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "gamma_family",
+      "panel_label": "Gamma Family",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_family__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_suite_20260311/family_scope"
+    },
+    {
+      "panel_id": "gamma_genus",
+      "panel_label": "Gamma Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_genus__seed_101",
+      "replicate_seed": 101,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "gamma_genus",
+      "panel_label": "Gamma Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_genus__seed_202",
+      "replicate_seed": 202,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_suite_20260311/genus_scope"
+    },
+    {
+      "panel_id": "gamma_genus",
+      "panel_label": "Gamma Genus",
+      "replicate_dir": "runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus/gamma_genus__seed_303",
+      "replicate_seed": 303,
+      "source_benchmark_dir": "runs/benchmarks/taxonomic_gamma_suite_20260311/genus_scope"
+    }
+  ],
+  "source_benchmark_dirs": [
+    "runs/benchmarks/mixed_chlam_from_flavo_gamma_20260311",
+    "runs/benchmarks/mixed_flavo_from_gamma_chlam_20260311",
+    "runs/benchmarks/mixed_gamma_from_flavo_chlam_small_20260311",
+    "runs/benchmarks/taxonomic_chlam_suite_20260311/family_scope",
+    "runs/benchmarks/taxonomic_chlam_suite_20260311/genus_scope",
+    "runs/benchmarks/taxonomic_chlam_suite_20260311/order_scope",
+    "runs/benchmarks/taxonomic_flavo_suite_20260311/family_scope",
+    "runs/benchmarks/taxonomic_flavo_suite_20260311/genus_scope",
+    "runs/benchmarks/taxonomic_flavo_suite_20260311/order_scope",
+    "runs/benchmarks/taxonomic_gamma_order_20260311",
+    "runs/benchmarks/taxonomic_gamma_suite_20260311/family_scope",
+    "runs/benchmarks/taxonomic_gamma_suite_20260311/genus_scope"
+  ],
+  "source_replicate_root": "/home/fschulz/dev/software/sgtree_private_backup_20260316/runs/benchmarks/manuscript_panel_replicates_20260315",
+  "recipient_consensus_mode": "recipient_consensus"
+}

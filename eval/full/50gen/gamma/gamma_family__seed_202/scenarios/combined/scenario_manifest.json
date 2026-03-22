@@ -1,0 +1,11 @@
+{
+  "scenario": "combined",
+  "event_count": 12,
+  "duplicate_events": 8,
+  "replacement_events": 4,
+  "contaminant_markers_added": 12,
+  "affected_genome_count": 10,
+  "reference_taxa_count": 50,
+  "completeness_source": "scenario_reference_run_marker_count_matrix",
+  "event_source": "exact_scenario_events_tsv"
+}

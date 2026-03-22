@@ -1,6 +1,7 @@
 import os
 import glob
 import subprocess
+from pathlib import Path
 
 import pandas as pd
 from Bio import SeqIO
@@ -9,11 +10,40 @@ from sgtree.config import Config
 from sgtree.parallel import map_threaded
 
 
+def _trim_alignment_fallback(input_file: str, output_file: str, *, gap_threshold: float = 0.1) -> None:
+    records = list(SeqIO.parse(input_file, "fasta"))
+    if not records:
+        Path(output_file).write_text("")
+        return
+
+    sequences = [str(record.seq) for record in records]
+    width = min(len(sequence) for sequence in sequences)
+    keep_columns = []
+    for idx in range(width):
+        nongap_fraction = sum(sequence[idx] != "-" for sequence in sequences) / len(sequences)
+        if nongap_fraction >= gap_threshold:
+            keep_columns.append(idx)
+    if not keep_columns:
+        keep_columns = list(range(width))
+
+    with open(output_file, "w") as handle:
+        for record, sequence in zip(records, sequences):
+            trimmed = "".join(sequence[idx] for idx in keep_columns)
+            handle.write(f">{record.id}\n{trimmed}\n")
+
+
+def _run_trimal_or_fallback(input_file: str, output_file: str) -> None:
+    cmd = ["trimal", "-in", input_file, "-out", output_file, "-gt", "0.1"]
+    try:
+        subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    except FileNotFoundError:
+        _trim_alignment_fallback(input_file, output_file, gap_threshold=0.1)
+
+
 def _run_trimal_worker(args):
     """Run trimal on a single alignment file."""
     input_file, output_file = args
-    cmd = ["trimal", "-in", input_file, "-out", output_file, "-gt", "0.1"]
-    subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    _run_trimal_or_fallback(input_file, output_file)
     # clean up fasta headers in input without using global fileinput state.
     normalized_lines: list[str] = []
     with open(input_file) as handle:
@@ -45,8 +75,7 @@ def run_trimal(cfg: Config, input_dir: str, output_dir: str):
 def _trimal_simple_worker(args):
     """Worker: run trimal without header cleanup."""
     input_file, output_file = args
-    cmd = ["trimal", "-in", input_file, "-out", output_file, "-gt", "0.1"]
-    subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    _run_trimal_or_fallback(input_file, output_file)
 
 
 def run_trimal_simple(cfg: Config, input_dir: str, output_dir: str):
