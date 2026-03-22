@@ -122,6 +122,55 @@ class BenchmarkTests(unittest.TestCase):
             "GCF_123456789.3",
         )
 
+    def test_load_taxonomy_rows_handles_pandas_string_dtype_accessions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            db_path = root / "taxonomy.duckdb"
+            import duckdb
+            import pandas as pd
+
+            with duckdb.connect(str(db_path)) as con:
+                con.execute(
+                    """
+                    create table gtdb_genomes (
+                        assembly_accession varchar,
+                        organism_name varchar,
+                        phylum varchar,
+                        class varchar,
+                        order_name varchar,
+                        family varchar,
+                        genus varchar,
+                        species varchar
+                    )
+                    """
+                )
+                con.execute(
+                    """
+                    create table non_gtdb_genomes (
+                        assembly_accession varchar,
+                        organism_name varchar,
+                        phylum varchar,
+                        class varchar,
+                        order_name varchar,
+                        family varchar,
+                        genus varchar,
+                        species varchar
+                    )
+                    """
+                )
+                con.execute(
+                    """
+                    insert into gtdb_genomes values
+                    ('GCA_000009265.1', 'Genome A', 'P1', 'C1', 'O1', 'F1', 'G1', 'S1')
+                    """
+                )
+
+            accessions = pd.Series(["GCA_000009265.1"], dtype="string").tolist()
+            rows = benchmark._load_taxonomy_rows(accessions, db_path)
+
+        self.assertEqual(rows.loc[0, "assembly_accession"], "GCA_000009265.1")
+        self.assertEqual(rows.loc[0, "taxonomy_source"], "gtdb")
+
     def test_taxonomy_scope_matches_enforces_expected_rank_rules(self):
         recipient = {
             "class": "Gammaproteobacteria",
