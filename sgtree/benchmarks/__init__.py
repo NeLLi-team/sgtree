@@ -429,7 +429,11 @@ def _load_taxonomy_rows(
             "Taxonomic benchmark generation requires duckdb in the SGTree environment"
         ) from exc
 
-    request_df = pd.DataFrame({"assembly_accession": sorted(set(assembly_accessions))})
+    # Avoid pandas' nullable/string extension dtype here; DuckDB register()
+    # expects a plain object-backed string column.
+    request_df = pd.DataFrame(
+        {"assembly_accession": pd.Series(sorted(set(assembly_accessions)), dtype="object")}
+    )
     with duckdb.connect(str(taxonomy_db_path), read_only=True) as con:
         con.register("requested_accessions", request_df)
         rows = con.execute(
