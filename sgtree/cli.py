@@ -48,7 +48,7 @@ def parse_args() -> Config:
     parser.add_argument("--singles", type=str, default="no",
                         help="remove singleton markers (yes/no)")
     parser.add_argument("--singles_mode", type=str, default="delta_rf",
-                        choices=["delta_rf", "composite", "contig_consensus", "recipient_consensus"],
+                        choices=["delta_rf", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml"],
                         help="singleton filtering mode")
     parser.add_argument("--lflt", type=int, default=0,
                         help="remove sequences shorter than N%% of median length")

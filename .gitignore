@@ -10,6 +10,7 @@
 # Private manuscript/runtime artifacts
 /docs/
 /runs/
+/DEL/
 
 # Local environments and caches
 /.pixi/

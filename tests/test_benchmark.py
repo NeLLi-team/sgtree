@@ -523,6 +523,70 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["final_extra_taxa_count"], 0)
         self.assertEqual(result["final_missing_taxa_count"], 0)
 
+    def test_evaluate_benchmark_run_resolves_manifest_paths_relative_to_runs_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            backup_root = root / "backup_root"
+            benchmark_dir = backup_root / "runs" / "benchmarks" / "panel_a"
+            scenario_dir = benchmark_dir / "scenarios" / "replacement_only"
+            run_dir = root / "run"
+            scenario_dir.mkdir(parents=True)
+            run_dir.mkdir()
+            (run_dir / "aligned_final").mkdir()
+
+            relative_reference_tree = Path("runs/benchmarks/panel_a/scenarios/replacement_only/reference_tree.nwk")
+            reference_tree = backup_root / relative_reference_tree
+            reference_tree.write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree_final.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "marker_selection_rf_values.txt").write_text("ProteinID MarkerGene RFdistance Status\n")
+            (run_dir / "aligned_final" / "MarkerX.faa").write_text("")
+            (scenario_dir / "events.tsv").write_text(
+                "\t".join(
+                    [
+                        "event_index",
+                        "scenario",
+                        "event_type",
+                        "recipient_genome",
+                        "recipient_group",
+                        "marker",
+                        "native_record_id",
+                        "donor_genome",
+                        "donor_group",
+                        "source_relation",
+                        "donor_record_id",
+                        "contaminant_record_id",
+                        "expected_replacement_outcome",
+                        "native_degrade_fraction",
+                    ]
+                )
+                + "\n"
+            )
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "selected_genomes": ["GenomeA", "GenomeB", "GenomeC"],
+                        "scenarios": [
+                            {
+                                "name": "replacement_only",
+                                "reference_tree_path": str(relative_reference_tree),
+                                "reference_taxa": ["GenomeA", "GenomeB", "GenomeC"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            result = benchmark.evaluate_benchmark_run(
+                benchmark_dir=benchmark_dir,
+                scenario_name="replacement_only",
+                run_dir=run_dir,
+                runtime_seconds=1.0,
+            )
+
+        self.assertEqual(result["truth_tree_path"], str(reference_tree))
+        self.assertTrue(result["final_taxa_match_reference"])
+
     def test_evaluate_benchmark_run_reports_singleton_collateral_removals(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -669,6 +733,324 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(len(summary_df), 1)
         self.assertEqual(summary_df.loc[0, "worsened_count"], 1)
         self.assertAlmostEqual(summary_df.loc[0, "runtime_ratio_mean"], 1.2)
+
+    def test_export_benchmark_tables_writes_singleton_classification_tables(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            results_dir = benchmark_dir / "results"
+            scenario_dir = results_dir / "replacement_only__singles_delta_rf"
+            removed_dir = scenario_dir / "removed"
+            outdir = root / "docs_data"
+            removed_dir.mkdir(parents=True)
+
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "lineage_label": "gamma",
+                        "taxonomic_scope": "family",
+                        "scenarios": [{"name": "replacement_only"}],
+                    }
+                )
+            )
+            summary = (
+                "scenario\trun_dir\treplacement_events\treplacement_contaminant_removed\t"
+                "replacement_contaminant_retained\tsingleton_pruned_total_count\t"
+                "singleton_intended_removed_count\tsingleton_collateral_removed_count\tcleanup_profile\n"
+                f"replacement_only\t{scenario_dir}\t4\t2\t2\t2\t1\t1\tsingles_delta_rf\n"
+            )
+            (results_dir / "summary.tsv").write_text(summary)
+            (removed_dir / "MarkerX").write_text(
+                "\n".join(
+                    [
+                        "sinGenomeA|contig__contam__MarkerX__DonorA__e001|contam__MarkerX__DonorA__e001\t"
+                        "decision=pruned\tsingleton_class=contamination_candidate",
+                        "sinGenomeA|contigA|geneA\tdecision=kept_hgt_candidate\tsingleton_class=hgt_candidate",
+                        "sinGenomeB|contigB|geneB\tdecision=blocked_by_genome_budget\tsingleton_class=contamination_candidate",
+                    ]
+                )
+            )
+
+            benchmark.export_benchmark_tables([benchmark_dir], outdir)
+
+            calls_df = benchmark.pd.read_csv(outdir / "benchmark_singleton_classification.tsv", sep="\t")
+            summary_df = benchmark.pd.read_csv(
+                outdir / "benchmark_singleton_classification_summary.tsv",
+                sep="\t",
+            )
+
+        self.assertEqual(len(calls_df), 3)
+        self.assertEqual(int(calls_df["is_contaminant_leaf"].sum()), 1)
+        self.assertEqual(summary_df.loc[0, "replacement_events"], 4)
+        self.assertEqual(summary_df.loc[0, "replacement_contaminant_removed"], 2)
+        self.assertEqual(summary_df.loc[0, "contamination_candidate_call_count"], 2)
+        self.assertEqual(summary_df.loc[0, "true_contamination_candidate_call_count"], 1)
+        self.assertEqual(summary_df.loc[0, "false_contamination_candidate_call_count"], 1)
+        self.assertEqual(summary_df.loc[0, "hgt_candidate_kept_count"], 1)
+        self.assertEqual(summary_df.loc[0, "replacement_proposed_as_contamination_count"], 1)
+        self.assertEqual(summary_df.loc[0, "replacement_proposed_as_hgt_count"], 0)
+        self.assertEqual(summary_df.loc[0, "replacement_not_proposed_count"], 3)
+        self.assertEqual(summary_df.loc[0, "native_pruned_count"], 0)
+        self.assertEqual(summary_df.loc[0, "native_kept_hgt_candidate_count"], 1)
+        self.assertEqual(summary_df.loc[0, "native_blocked_by_genome_budget_count"], 1)
+        self.assertAlmostEqual(summary_df.loc[0, "replacement_contaminant_recall"], 0.5)
+        self.assertAlmostEqual(summary_df.loc[0, "contamination_candidate_precision"], 0.5)
+        self.assertAlmostEqual(summary_df.loc[0, "non_contaminant_hgt_keep_fraction"], 0.5)
+
+    def test_replicate_existing_taxonomic_benchmark_panel_reuses_truth_panel_links(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            (benchmark_dir / "truth_inputs").mkdir(parents=True)
+            (benchmark_dir / "truth_run").mkdir()
+            (benchmark_dir / "stage_truth_full_model_clean" / "proteomes").mkdir(parents=True)
+            (benchmark_dir / "stage_truth_full_model_clean" / "table_elim_dups").write_text("")
+            (benchmark_dir / "stage_truth_full_model_clean" / "tree.nwk").write_text("(GenomeA,GenomeB);\n")
+            (benchmark_dir / "truth_markers.hmm").write_text("HMM\n")
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "lineage_label": "flavo",
+                        "donor_lineage_label": "flavo",
+                        "taxonomic_scope": "genus",
+                        "truth_source_dir": str(root / "truth_source"),
+                        "donor_source_dir": str(root / "truth_source"),
+                        "taxonomy_db_path": str(root / "taxonomy.duckdb"),
+                        "selected_markers": ["Marker1"],
+                        "selected_genome_taxonomy": [
+                            {
+                                "genome_id": "GenomeA",
+                                "assembly_accession": "GCA_000000001.1",
+                                "organism_name": "Genome A",
+                                "phylum": "Bacteroidota",
+                                "class": "Bacteroidia",
+                                "order_name": "Flavobacteriales",
+                                "family": "Flavobacteriaceae",
+                                "genus": "GenusA",
+                                "species": "GenusA speciesA",
+                                "taxonomy": "p__Bacteroidota;c__Bacteroidia;o__Flavobacteriales;f__Flavobacteriaceae;g__GenusA;s__GenusA speciesA",
+                                "taxonomy_source": "gtdb",
+                                "source_file": "GenomeA.fna",
+                                "file_path": "/tmp/GenomeA.fna",
+                            },
+                            {
+                                "genome_id": "GenomeB",
+                                "assembly_accession": "GCA_000000002.1",
+                                "organism_name": "Genome B",
+                                "phylum": "Bacteroidota",
+                                "class": "Bacteroidia",
+                                "order_name": "Flavobacteriales",
+                                "family": "Flavobacteriaceae",
+                                "genus": "GenusB",
+                                "species": "GenusB speciesB",
+                                "taxonomy": "p__Bacteroidota;c__Bacteroidia;o__Flavobacteriales;f__Flavobacteriaceae;g__GenusB;s__GenusB speciesB",
+                                "taxonomy_source": "gtdb",
+                                "source_file": "GenomeB.fna",
+                                "file_path": "/tmp/GenomeB.fna",
+                            },
+                        ],
+                    }
+                )
+            )
+
+            truth_records = {
+                "GenomeA": {
+                    "GenomeA|contigA|geneA": SeqRecord(
+                        Seq("MPEPTIDE"),
+                        id="GenomeA|contigA|geneA",
+                        description="GenomeA|contigA|geneA",
+                    )
+                },
+                "GenomeB": {
+                    "GenomeB|contigB|geneB": SeqRecord(
+                        Seq("MSEQUENCE"),
+                        id="GenomeB|contigB|geneB",
+                        description="GenomeB|contigB|geneB",
+                    )
+                },
+            }
+            native_map = {
+                "GenomeA": {"Marker1": "GenomeA|contigA|geneA"},
+                "GenomeB": {"Marker1": "GenomeB|contigB|geneB"},
+            }
+            taxonomy_df = benchmark.pd.DataFrame(
+                [
+                    {
+                        "genome_id": "GenomeA",
+                        "assembly_accession": "GCA_000000001.1",
+                        "organism_name": "Genome A",
+                        "phylum": "Bacteroidota",
+                        "class": "Bacteroidia",
+                        "order_name": "Flavobacteriales",
+                        "family": "Flavobacteriaceae",
+                        "genus": "GenusA",
+                        "species": "GenusA speciesA",
+                        "taxonomy": "p__Bacteroidota;c__Bacteroidia;o__Flavobacteriales;f__Flavobacteriaceae;g__GenusA;s__GenusA speciesA",
+                        "taxonomy_source": "gtdb",
+                        "source_file": "GenomeA.fna",
+                        "file_path": "/tmp/GenomeA.fna",
+                    },
+                    {
+                        "genome_id": "GenomeB",
+                        "assembly_accession": "GCA_000000002.1",
+                        "organism_name": "Genome B",
+                        "phylum": "Bacteroidota",
+                        "class": "Bacteroidia",
+                        "order_name": "Flavobacteriales",
+                        "family": "Flavobacteriaceae",
+                        "genus": "GenusB",
+                        "species": "GenusB speciesB",
+                        "taxonomy": "p__Bacteroidota;c__Bacteroidia;o__Flavobacteriales;f__Flavobacteriaceae;g__GenusB;s__GenusB speciesB",
+                        "taxonomy_source": "gtdb",
+                        "source_file": "GenomeB.fna",
+                        "file_path": "/tmp/GenomeB.fna",
+                    },
+                ]
+            )
+            outdir = root / "replicate"
+            run_calls = []
+
+            def fake_run_sgtree(**kwargs):
+                run_calls.append(kwargs["outdir"])
+                kwargs["outdir"].mkdir(parents=True, exist_ok=True)
+                (kwargs["outdir"] / "tree.nwk").write_text("(GenomeA,GenomeB);\n")
+
+            with (
+                patch.object(
+                    benchmark,
+                    "DEFAULT_SCENARIOS",
+                    {
+                        "duplicate_only": {
+                            "pair_blocks": 0,
+                            "markers_per_block": 0,
+                            "replacement_events": 0,
+                            "native_degrade_fraction": 0.0,
+                        },
+                        "replacement_only": {
+                            "pair_blocks": 0,
+                            "markers_per_block": 0,
+                            "replacement_events": 1,
+                            "native_degrade_fraction": 0.0,
+                        },
+                        "combined": {
+                            "pair_blocks": 0,
+                            "markers_per_block": 0,
+                            "replacement_events": 1,
+                            "native_degrade_fraction": 0.0,
+                        },
+                    },
+                ),
+                patch.object(
+                    benchmark,
+                    "_read_normalized_proteomes",
+                    side_effect=[truth_records, truth_records],
+                ),
+                patch.object(
+                    benchmark,
+                    "_load_table",
+                    side_effect=[benchmark.pd.DataFrame(), benchmark.pd.DataFrame()],
+                ),
+                patch.object(
+                    benchmark,
+                    "_native_marker_map",
+                    side_effect=[native_map, native_map],
+                ),
+                patch.object(
+                    benchmark,
+                    "_load_truth_tree",
+                    return_value=benchmark.Tree("(GenomeA,GenomeB);"),
+                ),
+                patch.object(
+                    benchmark,
+                    "_load_source_taxonomy",
+                    return_value=taxonomy_df,
+                ),
+                patch.object(
+                    benchmark,
+                    "_run_sgtree_python",
+                    side_effect=fake_run_sgtree,
+                ),
+            ):
+                benchmark.replicate_existing_taxonomic_benchmark_panel(
+                    benchmark_dir=benchmark_dir,
+                    outdir=outdir,
+                    seed=101,
+                    num_cpus=8,
+                )
+            self.assertTrue((outdir / "truth_inputs").is_symlink())
+            self.assertTrue((outdir / "truth_run").is_symlink())
+            self.assertTrue((outdir / "scenarios" / "duplicate_only" / "reference_run").is_symlink())
+            self.assertEqual(len(run_calls), 2)
+
+    def test_generate_panel_replicates_writes_replicates_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_a = root / "benchmark_a"
+            benchmark_b = root / "benchmark_b"
+            outbase = root / "replicates"
+            benchmark_a.mkdir()
+            benchmark_b.mkdir()
+            (benchmark_a / "benchmark_manifest.json").write_text(
+                json.dumps({"lineage_label": "flavo", "taxonomic_scope": "genus"})
+            )
+            (benchmark_b / "benchmark_manifest.json").write_text(
+                json.dumps({"lineage_label": "gamma", "taxonomic_scope": "mixed_high_level"})
+            )
+
+            def fake_replicate(benchmark_dir, outdir, *, seed, num_cpus):
+                outdir.mkdir(parents=True, exist_ok=True)
+                (outdir / "benchmark_manifest.json").write_text("{}\n")
+
+            with patch.object(
+                benchmark,
+                "replicate_existing_benchmark_panel",
+                side_effect=fake_replicate,
+            ):
+                replicate_dirs = benchmark.generate_panel_replicates(
+                    benchmark_dirs=[benchmark_a, benchmark_b],
+                    outbase=outbase,
+                    replicate_seeds=[101, 202],
+                    num_cpus=8,
+                    max_parallel=1,
+                )
+
+            manifest = json.loads((outbase / "replicates_manifest.json").read_text())
+
+        self.assertEqual(len(replicate_dirs), 4)
+        self.assertEqual(len(manifest["replicates"]), 4)
+        self.assertEqual(manifest["replicates"][0]["panel_id"], "flavo_genus")
+        self.assertEqual(manifest["replicates"][2]["panel_id"], "gamma_mixed_high_level")
+
+    def test_aggregate_benchmark_runs_groups_by_panel(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_a = root / "rep_a"
+            benchmark_b = root / "rep_b"
+            outdir = root / "aggregate"
+            for benchmark_dir in (benchmark_a, benchmark_b):
+                (benchmark_dir / "results").mkdir(parents=True)
+                (benchmark_dir / "benchmark_manifest.json").write_text(
+                    json.dumps({"lineage_label": "flavo", "taxonomic_scope": "genus"})
+                )
+            (benchmark_a / "results" / "summary.tsv").write_text(
+                "strategy\tscenario\tstatus\tinitial_tree_rf_norm\ttree_rf_norm\ttree_rf_delta\t"
+                "duplicate_contaminant_removed\tduplicate_events\tduplicate_native_retained\t"
+                "replacement_marker_dropped\treplacement_contaminant_retained\truntime_seconds\n"
+                "duplicate_cleanup\tduplicate_only\tok\t0.2\t0.1\t0.1\t4\t8\t8\t0\t0\t10\n"
+            )
+            (benchmark_b / "results" / "summary.tsv").write_text(
+                "strategy\tscenario\tstatus\tinitial_tree_rf_norm\ttree_rf_norm\ttree_rf_delta\t"
+                "duplicate_contaminant_removed\tduplicate_events\tduplicate_native_retained\t"
+                "replacement_marker_dropped\treplacement_contaminant_retained\truntime_seconds\n"
+                "duplicate_cleanup\tduplicate_only\tok\t0.3\t0.2\t0.1\t5\t8\t8\t0\t0\t12\n"
+            )
+
+            benchmark.aggregate_benchmark_runs([benchmark_a, benchmark_b], outdir)
+            agg_df = benchmark.pd.read_csv(outdir / "aggregate_summary.tsv", sep="\t")
+
+        self.assertEqual(agg_df.loc[0, "panel_id"], "flavo_genus")
+        self.assertEqual(agg_df.loc[0, "panel_label"], "Flavo Genus")
+        self.assertEqual(agg_df.loc[0, "n_runs"], 2)
 
 
 if __name__ == "__main__":
