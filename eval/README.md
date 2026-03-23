@@ -9,7 +9,7 @@ Consistency status:
 
 - `50gen/` is exact benchmark metadata copied from the original manuscript-panel benchmark manifests and event tables.
 - `100gen/` is reconstructed from the latest full completed rerun because the original source benchmark directories were no longer present locally when this package was built.
-- For `100gen/`, genome membership, truth-marker sets, run summaries, and introduced-marker headers are retained, but exact per-marker reference-genome presence is not fully recoverable from the surviving files.
+- For `100gen/`, exact source manifests, exact scenario event tables, exact variant-specific contaminant placement, genome membership, and exact per-marker reference-genome presence are retained after regeneration.
 
 Why this directory is only about `19M`:
 

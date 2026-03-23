@@ -24,15 +24,12 @@
       ],
       "panel_count": 24,
       "run_count": 144,
-      "metadata_exactness": "reconstructed_from_latest_full_rerun",
-      "reference_marker_presence_exact": false,
-      "source_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318",
-      "event_tables": "reconstructed from contaminant headers in retained run proteomes files",
-      "completeness_metric": "truth-marker panel completeness derived from retained run marker_count_matrix.csv",
-      "limitations": [
-        "Original source benchmark manifests/events for the 100-gen proof suite were no longer present locally when this package was built.",
-        "Combined-scenario event type is not always recoverable per inserted contaminant from retained headers alone."
-      ]
+      "metadata_exactness": "exact",
+      "reference_marker_presence_exact": true,
+      "source_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_proof_of_concept/benchmarks",
+      "event_tables": "exact scenario events copied from regenerated source benchmark manifests",
+      "completeness_metric": "truth-marker panel completeness derived from exact source scenario reference_run marker_count_matrix.csv",
+      "limitations": []
     }
   }
 }

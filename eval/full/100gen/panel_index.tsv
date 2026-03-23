@@ -1,25 +1,25 @@
-lineage	panel	scope	seed	run_count	selected_marker_count
-alpha	family__seed_101	family	101	6	10
-alpha	family__seed_202	family	202	6	10
-alpha	family__seed_303	family	303	6	10
-alpha	genus__seed_101	genus	101	6	10
-alpha	genus__seed_202	genus	202	6	10
-alpha	genus__seed_303	genus	303	6	10
-alpha	order__seed_101	order	101	6	10
-alpha	order__seed_202	order	202	6	10
-alpha	order__seed_303	order	303	6	10
-alpha	phylum__seed_101	phylum	101	6	10
-alpha	phylum__seed_202	phylum	202	6	10
-alpha	phylum__seed_303	phylum	303	6	10
-bacteroidota	family__seed_101	family	101	6	10
-bacteroidota	family__seed_202	family	202	6	10
-bacteroidota	family__seed_303	family	303	6	10
-bacteroidota	genus__seed_101	genus	101	6	10
-bacteroidota	genus__seed_202	genus	202	6	10
-bacteroidota	genus__seed_303	genus	303	6	10
-bacteroidota	order__seed_101	order	101	6	10
-bacteroidota	order__seed_202	order	202	6	10
-bacteroidota	order__seed_303	order	303	6	10
-bacteroidota	phylum__seed_101	phylum	101	6	10
-bacteroidota	phylum__seed_202	phylum	202	6	10
-bacteroidota	phylum__seed_303	phylum	303	6	10
+lineage	panel	scope	seed	selected_marker_count	selected_genome_count	scenario_count
+alpha	family__seed_101	family	101	10	100	3
+alpha	family__seed_202	family	202	10	100	3
+alpha	family__seed_303	family	303	10	100	3
+alpha	genus__seed_101	genus	101	10	100	3
+alpha	genus__seed_202	genus	202	10	100	3
+alpha	genus__seed_303	genus	303	10	100	3
+alpha	order__seed_101	order	101	10	100	3
+alpha	order__seed_202	order	202	10	100	3
+alpha	order__seed_303	order	303	10	100	3
+alpha	phylum__seed_101	phylum	101	10	100	3
+alpha	phylum__seed_202	phylum	202	10	100	3
+alpha	phylum__seed_303	phylum	303	10	100	3
+bacteroidota	family__seed_101	family	101	10	100	3
+bacteroidota	family__seed_202	family	202	10	100	3
+bacteroidota	family__seed_303	family	303	10	100	3
+bacteroidota	genus__seed_101	genus	101	10	100	3
+bacteroidota	genus__seed_202	genus	202	10	100	3
+bacteroidota	genus__seed_303	genus	303	10	100	3
+bacteroidota	order__seed_101	order	101	10	100	3
+bacteroidota	order__seed_202	order	202	10	100	3
+bacteroidota	order__seed_303	order	303	10	100	3
+bacteroidota	phylum__seed_101	phylum	101	10	100	3
+bacteroidota	phylum__seed_202	phylum	202	10	100	3
+bacteroidota	phylum__seed_303	phylum	303	10	100	3

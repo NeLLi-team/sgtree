@@ -1,0 +1,19 @@
+{
+  "lineage": "alpha",
+  "panel": "order__seed_202",
+  "scenario": "duplicate_only",
+  "variant": "solo_contig",
+  "source_type": "exact_source_benchmark_plus_latest_full_run_summary",
+  "metadata_exactness": "exact",
+  "reference_marker_presence_exact": true,
+  "replacement_events": 0,
+  "duplicate_events": 0,
+  "replacement_contaminant_removed": 0,
+  "duplicate_contaminant_removed": 0,
+  "singleton_collateral_removed_count": 0,
+  "singleton_collateral_genome_count": 0,
+  "tree_rf_delta": 0.0,
+  "result_status": "not_run_in_latest_full_recipient_consensus",
+  "event_source": "exact_source_scenario_events_tsv",
+  "completeness_source": "exact_source_reference_run_marker_count_matrix"
+}

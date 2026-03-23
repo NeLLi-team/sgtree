@@ -3,7 +3,9 @@
   "panel": "phylum__seed_303",
   "scenario": "replacement_only",
   "variant": "native_contig",
-  "run_dir_source": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318/alpha/phylum__seed_303/replacement_only/native_contig/replacement_only__singles_recipient_consensus",
+  "source_type": "exact_source_benchmark_plus_latest_full_run_summary",
+  "metadata_exactness": "exact",
+  "reference_marker_presence_exact": true,
   "replacement_events": 8,
   "duplicate_events": 0,
   "replacement_contaminant_removed": 0,
@@ -11,7 +13,7 @@
   "singleton_collateral_removed_count": 3,
   "singleton_collateral_genome_count": 3,
   "tree_rf_delta": 0.0,
-  "introduced_marker_rows": 8,
-  "completeness_source": "retained_run_marker_count_matrix",
-  "event_source": "reconstructed_from_retained_proteomes_header_lines"
+  "result_status": "ok",
+  "event_source": "exact_source_scenario_events_tsv",
+  "completeness_source": "exact_source_reference_run_marker_count_matrix"
 }

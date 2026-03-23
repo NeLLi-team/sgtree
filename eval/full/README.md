@@ -17,6 +17,6 @@ Interpretation notes:
 - `introduced_markers.tsv` describes which contaminant marker was added to which recipient genome and, when recoverable, the donor genome and contaminant contig identifier.
 - `genome_truth_marker_completeness.tsv` reports completeness against the benchmark truth-marker panel used for that dataset panel. These truth-marker panels are subsets of UNI56-derived markers selected for the benchmark.
 - 50-gen event tables are exact copies from benchmark scenario definitions.
-- 100-gen event tables are reconstructed from contaminant headers preserved in the latest full run outputs because the original source benchmark directories were not available locally during this packaging pass.
-- In 100-gen `combined` runs, inserted contaminant headers do not always preserve enough information to label each row back to `duplicate` vs `replacement` with certainty. Those rows are kept as contaminant insertions with this limitation documented in the run manifests.
-- Exact per-marker reference-genome presence is available for 50-gen panels but not fully recoverable for 100-gen panels from the remaining local files.
+- 100-gen event tables are exact copies derived from regenerated source benchmark manifests and scenario event tables.
+- In 100-gen panels, variant-specific contaminant contig placement is computed exactly from the source scenario events plus the documented rewrite rules for `solo_contig`, `merged_contam`, and `native_contig`.
+- Exact per-marker reference-genome presence is available for both 50-gen and regenerated 100-gen panels.

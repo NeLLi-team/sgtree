@@ -6,6 +6,6 @@
   },
   "limitations": [
     "50-gen pilot ground truth is exact and includes per-marker reference-genome presence.",
-    "100-gen pilot ground truth is reconstructed from latest-run contaminant headers and includes genome-level truth-marker completeness, but not exact per-marker reference-genome presence."
+    "100-gen pilot ground truth is exact and includes per-marker reference-genome presence after source benchmark regeneration."
   ]
 }

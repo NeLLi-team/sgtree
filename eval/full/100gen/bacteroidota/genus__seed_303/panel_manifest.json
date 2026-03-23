@@ -1,25 +1,22 @@
 {
-  "source_type": "reconstructed_from_latest_full_benchmark_run",
+  "source_type": "exact_benchmark_manifest",
   "lineage": "bacteroidota",
   "panel": "genus__seed_303",
   "scope": "genus",
   "seed": 303,
-  "run_count": 6,
-  "scenarios": [
-    "combined",
-    "replacement_only"
-  ],
-  "variants": [
-    "merged_contam",
-    "native_contig",
-    "solo_contig"
-  ],
   "selected_marker_count": 10,
   "selected_markers_are_uni56_subset": true,
-  "limitations": [
-    "The original 100-gen source benchmark directories had been deleted before this packaging pass.",
-    "Introduced-marker tables are reconstructed from contaminant headers in retained run inputs.",
-    "Combined-scenario contaminant insertions cannot always be separated back into duplicate vs replacement event types from retained headers alone.",
-    "Completeness tables are derived from retained run marker_count_matrix.csv against the benchmark truth-marker panel, not a fresh full UNI56 rerun."
-  ]
+  "selected_genome_count": 100,
+  "scenarios": [
+    "duplicate_only",
+    "replacement_only",
+    "combined"
+  ],
+  "variants": [
+    "solo_contig",
+    "merged_contam",
+    "native_contig"
+  ],
+  "metadata_exactness": "exact",
+  "reference_marker_presence_exact": true
 }
