@@ -2,7 +2,14 @@
   "package_name": "eval_datasets_latest",
   "created_on": "2026-03-22",
   "keep_intent": "Compact benchmark dataset package retaining only dataset definitions, introduced-marker provenance, genome membership, completeness metadata, and final summary tables.",
-  "latest_full_benchmark_source": "/home/fschulz/dev/software/sgtree/runs/contig_variant_recipient_consensus_20260318",
+  "latest_full_benchmark_source": "deleted_after_packaging",
+  "retained_summary_root": "/home/fschulz/dev/software/sgtree/eval/full/summaries",
+  "results_provenance": {
+    "retained_summary_status": "completed",
+    "retained_summary_completed_at": "2026-03-21 23:08:44",
+    "retained_summary_note": "These summary tables are copied from the last fully completed recipient_consensus benchmark rerun before the later exact 100-gen source regeneration.",
+    "fresh_rerun_against_regenerated_exact_100gen_completed": false
+  },
   "datasets": {
     "50gen": {
       "lineages": [
@@ -14,6 +21,7 @@
       "metadata_exactness": "exact",
       "reference_marker_presence_exact": true,
       "source_root": "/home/fschulz/dev/software/sgtree_private_backup_20260316/runs/benchmarks/manuscript_panel_replicates_20260318_recipient_consensus",
+      "source_provenance_note": "Exact benchmark manifests, exact scenario events, and exact truth-marker completeness copied from the manuscript-panel benchmark root.",
       "event_tables": "exact scenario events copied from benchmark manifests",
       "completeness_metric": "truth-marker panel completeness derived from scenario reference_run marker_count_matrix.csv"
     },
@@ -26,10 +34,16 @@
       "run_count": 144,
       "metadata_exactness": "exact",
       "reference_marker_presence_exact": true,
-      "source_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_proof_of_concept/benchmarks",
+      "source_root": "deleted_after_packaging",
+      "original_source_root": "/home/fschulz/dev/software/sgtree/runs/contig_variant_proof_of_concept/benchmarks",
+      "source_provenance_note": "Exact 100-gen source manifests and scenario event tables were regenerated locally after the original bulky proof-of-concept benchmark tree had been removed.",
       "event_tables": "exact scenario events copied from regenerated source benchmark manifests",
       "completeness_metric": "truth-marker panel completeness derived from exact source scenario reference_run marker_count_matrix.csv",
-      "limitations": []
+      "limitations": [
+        "The bulky regenerated 100-gen source benchmark tree is expected to be deleted after this package is created.",
+        "The small source/recovery scripts are retained under eval/full/100gen/scripts/ for provenance.",
+        "The retained result summaries in eval/full/summaries are still from the earlier completed rerun and not from a fresh rerun against this regenerated exact 100-gen source set."
+      ]
     }
   }
 }
