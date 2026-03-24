@@ -158,7 +158,7 @@
     {
       "id": "US-006",
       "title": "Comparative evaluation on full benchmark suite",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-003", "US-004", "US-005"],
       "description": "As a researcher, I want a comprehensive comparative evaluation of all 3 new approaches against all existing modes across the full 50-genome and 100-genome benchmark suites, so that I can identify the best-performing approach with statistical confidence.",
       "acceptanceCriteria": [
