@@ -195,7 +195,7 @@
     {
       "id": "US-008",
       "title": "Final validation and documentation",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-007"],
       "description": "As a researcher, I want the integrated mode validated on the full benchmark suite through the standard SGTree pipeline (not standalone scripts), confirming that end-to-end performance matches the standalone evaluation.",
       "acceptanceCriteria": [
