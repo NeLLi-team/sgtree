@@ -177,7 +177,7 @@
     {
       "id": "US-007",
       "title": "Integrate winning approach into CLI as new singles_mode",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-006"],
       "description": "As a user, I want to run the best-performing contamination detection approach via sgtree --singles-mode <new_mode> so that I can use it in my phylogenomic workflows.",
       "acceptanceCriteria": [

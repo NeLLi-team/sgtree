@@ -41,6 +41,23 @@ UNKNOWN_CONTIG_DELTA_FLOOR = 0.05
 UNKNOWN_CONTIG_TOPOKNN_FLOOR = 1.5
 UNKNOWN_CONTIG_RECIPIENT_FLOOR = 1.5
 
+# GCP (Genome Consistency Profiling) constants
+GCP_KEY_FEATURES = [
+    "neighbor_overlap",
+    "delta_rf",
+    "attachment_gap",
+    "recipient_consensus_score",
+    "topoknn_score",
+    "anchor_knn_agreement",
+    "neighbor_clade_score",
+]
+GCP_COMBINED_THRESHOLD = 0.80
+GCP_OUTLIER_COUNT_THRESHOLD = 3
+GCP_IFOREST_THRESHOLD = 0.5
+GCP_Z_THRESHOLD = 1.5
+GCP_MIN_GENOMES = 3
+GCP_MIN_MARKERS = 3
+
 
 def choose_best_candidate(
     candidates: list[dict],
@@ -591,7 +608,7 @@ def _canonical_singleton_mode(mode: str) -> str:
 
 
 def singleton_mode_uses_global_rf_gate(mode: str) -> bool:
-    return _canonical_singleton_mode(mode) not in {"neighbor_clade", "neighbor_ml"}
+    return _canonical_singleton_mode(mode) not in {"neighbor_clade", "neighbor_ml", "gcp"}
 
 
 def _nearest_genome_neighbor_profile(
@@ -1263,6 +1280,10 @@ def choose_singleton_prune(
             return None
         return _finalize_singleton_choice(best, score_key="neighbor_clade_score")
 
+    if mode == "gcp":
+        # GCP does global cross-marker classification, not per-marker selection
+        return None
+
     raise ValueError(f"Unknown singleton mode: {mode}")
 
 
@@ -1500,6 +1521,140 @@ def _classify_neighbor_clade_proposals(proposals: list[dict]) -> list[dict]:
     return classified
 
 
+def _classify_gcp_proposals(proposals: list[dict]) -> list[dict]:
+    """Classify singleton proposals using Genome Consistency Profiling.
+
+    Computes per-genome z-scores across markers, then combines outlier count,
+    IsolationForest global anomaly, and HDBSCAN per-genome clustering to score
+    each marker. Only the single most deviant marker per genome can be flagged.
+
+    Falls back to recipient_consensus classification if the panel is too small.
+    """
+    if not proposals:
+        return []
+
+    df = pd.DataFrame(proposals)
+    genomes = df["genome"].nunique()
+    markers = df["marker_name"].nunique()
+
+    if genomes < GCP_MIN_GENOMES or markers < GCP_MIN_MARKERS:
+        import logging
+        logging.getLogger("sgtree").warning(
+            "GCP fallback: panel has %d genomes and %d markers (need >=%d and >=%d). "
+            "Using recipient_consensus classification.",
+            genomes, markers, GCP_MIN_GENOMES, GCP_MIN_MARKERS,
+        )
+        return _classify_singleton_proposals_legacy(
+            proposals,
+            contig_marker_context={},
+        )
+
+    feature_cols = [c for c in GCP_KEY_FEATURES if c in df.columns]
+    genome_z_cols = []
+    for col in feature_cols:
+        z_col = f"{col}_genome_z"
+        genome_means = df.groupby("genome")[col].transform("mean")
+        genome_stds = df.groupby("genome")[col].transform("std")
+        genome_stds = genome_stds.where(genome_stds > 0, 1.0)
+        df[z_col] = (df[col].astype(float) - genome_means) / genome_stds
+        df[z_col] = df[z_col].fillna(0.0)
+        genome_z_cols.append(z_col)
+
+    z_abs = df[genome_z_cols].abs()
+    df["gcp_outlier_count"] = (z_abs > GCP_Z_THRESHOLD).sum(axis=1)
+    df["gcp_maxz"] = z_abs.max(axis=1)
+    df["gcp_meanz"] = z_abs.mean(axis=1)
+
+    # HDBSCAN per-genome penalty
+    df["gcp_hdbscan_penalty"] = 0.0
+    try:
+        import hdbscan as _hdbscan_mod
+        _has_hdbscan = True
+    except ImportError:
+        _has_hdbscan = False
+
+    if _has_hdbscan:
+        feat_cols_present = [c for c in GCP_KEY_FEATURES[:7] if c in df.columns]
+        for genome, grp in df.groupby("genome"):
+            if len(grp) < 4:
+                continue
+            X = df.loc[grp.index, feat_cols_present].values.astype(float)
+            mu, std = X.mean(axis=0), X.std(axis=0)
+            std = np.where(std > 0, std, 1.0)
+            X_std = (X - mu) / std
+            min_cluster = max(2, len(grp) // 3)
+            clusterer = _hdbscan_mod.HDBSCAN(
+                min_cluster_size=min_cluster, min_samples=1, metric="euclidean",
+            )
+            labels = clusterer.fit_predict(X_std)
+            if not np.all(labels == -1):
+                unique, counts = np.unique(labels[labels >= 0], return_counts=True)
+                if len(unique) > 0:
+                    main_cluster = unique[np.argmax(counts)]
+                    penalty = np.where(labels == main_cluster, 0.0, 1.0)
+                    df.loc[grp.index, "gcp_hdbscan_penalty"] = penalty
+
+    # IsolationForest global anomaly
+    df["gcp_iforest_score"] = 0.0
+    if feature_cols and len(df) >= 10:
+        from sklearn.ensemble import IsolationForest
+        X_iso = df[feature_cols].values.astype(float)
+        mu, std = X_iso.mean(axis=0), X_iso.std(axis=0)
+        std = np.where(std > 0, std, 1.0)
+        X_iso_std = (X_iso - mu) / std
+        iforest = IsolationForest(n_estimators=200, contamination=0.05, random_state=42)
+        raw_scores = iforest.fit(X_iso_std).score_samples(X_iso_std)
+        score_range = raw_scores.max() - raw_scores.min() + 1e-10
+        df["gcp_iforest_score"] = 1 - (raw_scores - raw_scores.min()) / score_range
+
+    # Combine signals
+    df["gcp_outlier_count_pct"] = df["gcp_outlier_count"].rank(pct=True)
+    df["gcp_maxz_pct"] = df["gcp_maxz"].rank(pct=True)
+    df["gcp_meanz_pct"] = df["gcp_meanz"].rank(pct=True)
+    df["gcp_iforest_pct"] = df["gcp_iforest_score"].rank(pct=True)
+
+    genome_signal = (
+        0.35 * df["gcp_outlier_count_pct"]
+        + 0.35 * df["gcp_maxz_pct"]
+        + 0.30 * df["gcp_meanz_pct"]
+    )
+    global_signal = (
+        0.5 * df["gcp_iforest_pct"]
+        + 0.3 * df["gcp_hdbscan_penalty"]
+        + 0.2 * df["gcp_maxz_pct"]
+    )
+    df["gcp_combined"] = np.sqrt(genome_signal * global_signal)
+    df["gcp_score"] = df["gcp_combined"]
+
+    # Classify: only top-per-genome if it passes multi-gate thresholds
+    df["singleton_class"] = "clean"
+    for genome, grp in df.groupby("genome"):
+        if len(grp) <= 2:
+            df.loc[grp.index, "singleton_class"] = "ambiguous"
+            continue
+        top_loc = grp["gcp_combined"].idxmax()
+        top_score = df.loc[top_loc, "gcp_combined"]
+        top_outlier_count = df.loc[top_loc, "gcp_outlier_count"]
+        top_iforest = df.loc[top_loc, "gcp_iforest_score"]
+        if (
+            top_score >= GCP_COMBINED_THRESHOLD
+            and top_outlier_count >= GCP_OUTLIER_COUNT_THRESHOLD
+            and top_iforest >= GCP_IFOREST_THRESHOLD
+        ):
+            df.loc[top_loc, "singleton_class"] = "contamination_candidate"
+
+    classified = []
+    for idx, row in df.iterrows():
+        updated = dict(proposals[idx])
+        updated["singleton_class"] = row["singleton_class"]
+        updated["gcp_score"] = float(row["gcp_score"])
+        updated["gcp_combined"] = float(row["gcp_combined"])
+        updated["score"] = float(row["gcp_score"])
+        updated.setdefault("contig_consensus_score", 0.0)
+        classified.append(updated)
+    return classified
+
+
 def classify_singleton_proposals(
     proposals: list[dict],
     *,
@@ -1508,6 +1663,8 @@ def classify_singleton_proposals(
     mode: str = "delta_rf",
 ) -> list[dict]:
     mode = _canonical_singleton_mode(mode)
+    if mode == "gcp":
+        return _classify_gcp_proposals(proposals)
     if mode == "neighbor_clade":
         return _classify_neighbor_clade_proposals(proposals)
     if mode == "neighbor_ml":
@@ -1686,6 +1843,13 @@ def _independent_query_singleton_proposals(
             for candidate in _recipient_ranked_candidates(scoped_candidates)
         ]
 
+    if mode == "gcp":
+        # GCP needs all candidates; classification happens globally in _classify_gcp_proposals
+        return [
+            {**candidate, "score": 0.0}
+            for candidate in scoped_candidates
+        ]
+
     return []
 
 
@@ -1701,16 +1865,20 @@ def singleton_proposals_from_results(
     proposal_keys: set[tuple[str, str]] = set()
     for result in results:
         marker_name = str(result.get("marker_name", ""))
-        if mode in {"neighbor_clade", "neighbor_ml"}:
+        if mode in {"neighbor_clade", "neighbor_ml", "gcp"}:
+            score_key = "neighbor_clade_score" if mode != "gcp" else "delta_rf"
             for candidate in result.get("candidates", []):
                 leaf_name = str(candidate.get("leaf_name", ""))
                 if not leaf_name:
+                    continue
+                genome = str(candidate.get("genome", ""))
+                if reference_genomes and genome in reference_genomes:
                     continue
                 proposals.append(
                     {
                         **candidate,
                         "marker_name": marker_name,
-                        "score": float(candidate.get("neighbor_clade_score", 0.0)),
+                        "score": float(candidate.get(score_key, 0.0)),
                     }
                 )
                 proposal_keys.add((marker_name, leaf_name))
@@ -2430,18 +2598,26 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
         proposal_keys,
         reference_genomes=reference_genomes,
     )
-    if _canonical_singleton_mode(cfg.singles_mode) == "neighbor_ml":
+    if _canonical_singleton_mode(cfg.singles_mode) in {"neighbor_ml", "gcp"}:
         proposals = classify_singleton_proposals(
             proposals,
             contig_marker_context={},
             marker_neighbor_context=None,
             mode=cfg.singles_mode,
         )
-        accepted = [
+        accepted_proposals = [
             proposal
             for proposal in proposals
             if proposal.get("singleton_class") == "contamination_candidate"
         ]
+        if _canonical_singleton_mode(cfg.singles_mode) == "gcp":
+            accepted = select_singleton_proposals(
+                accepted_proposals,
+                genome_marker_counts=_count_genome_marker_support(files),
+                min_markers_per_genome=1,
+            )
+        else:
+            accepted = accepted_proposals
     else:
         proposals = classify_singleton_proposals(
             proposals,
