@@ -140,7 +140,7 @@
     {
       "id": "US-005",
       "title": "Approach 3: Pseudo-Label Iterative Ensemble (PLIE)",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-002"],
       "description": "As a researcher, I want an iterative pseudo-labeling approach that bootstraps contamination labels from high-confidence outlier detection, then trains a supervised XGBoost classifier on these soft labels, so that we get the power of supervised learning without requiring actual labels at runtime.",
       "acceptanceCriteria": [
