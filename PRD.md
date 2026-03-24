@@ -87,7 +87,7 @@
     {
       "id": "US-002",
       "title": "Build unified feature extraction framework",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-001"],
       "description": "As a developer, I want a feature extraction module that extracts per-leaf candidate metrics from SGTree marker selection outputs into a unified DataFrame, so that all ML approaches can share the same feature matrix.",
       "acceptanceCriteria": [
