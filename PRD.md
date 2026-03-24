@@ -104,7 +104,7 @@
     {
       "id": "US-003",
       "title": "Approach 1: Genome Consistency Profiling (GCP)",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-002"],
       "description": "As a researcher, I want a genome-consistency-based anomaly detector that scores each marker leaf by how inconsistent it is with the genome's other marker placements, so that replacement contaminants (which disrupt a genome's topological profile) are detected without explicit labels.",
       "acceptanceCriteria": [
