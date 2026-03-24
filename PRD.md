@@ -122,7 +122,7 @@
     {
       "id": "US-004",
       "title": "Approach 2: Cross-Marker Topology Voting (CMTV)",
-      "status": "open",
+      "status": "done",
       "dependsOn": ["US-002"],
       "description": "As a researcher, I want a cross-marker voting approach where each marker tree independently 'votes' on whether a genome's placement is consistent, so that a contaminated marker is outvoted by the genome's clean markers across other trees.",
       "acceptanceCriteria": [
