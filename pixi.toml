@@ -53,4 +53,3 @@ benchmark-generate-replicates = "python bin/sgtree_benchmark.py generate-replica
 benchmark-run-replicates = "python bin/sgtree_benchmark.py run-replicates"
 benchmark-aggregate-replicates = "python bin/sgtree_benchmark.py aggregate-replicates"
 benchmark-prepare-burkholderiaceae-local = "python bin/prepare_burkholderiaceae_panel.py"
-manuscript-docx = "bash -lc 'cd docs && quarto render MANUSCRIPT.qmd --to docx'"
