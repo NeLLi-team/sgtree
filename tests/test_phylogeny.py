@@ -25,18 +25,18 @@ class PhylogenyTests(unittest.TestCase):
     def test_run_fasttree_retries_without_threads_when_binary_rejects_flag(self):
         calls = []
 
-        def fake_run(cmd, stdout=None, stderr=None, check=None):
+        def fake_run(cmd, **kwargs):
             calls.append(cmd)
             if len(calls) == 1:
-                raise subprocess.CalledProcessError(
-                    returncode=1,
-                    cmd=cmd,
-                    stderr=b"Unknown or incorrect use of option -threads",
+                # First call: run_capture(capture_output=True, text=True, check=False).
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="", stderr="Unknown or incorrect use of option -threads"
                 )
+            # Second call: run_check(stdout=PIPE, stderr=PIPE, check=True).
             return subprocess.CompletedProcess(cmd, 0)
 
         with patch.object(phylogeny, "_fasttree_executable", return_value="FastTree"):
-            with patch("sgtree.phylogeny.subprocess.run", side_effect=fake_run):
+            with patch("sgtree._subprocess.subprocess.run", side_effect=fake_run):
                 phylogeny.run_fasttree("input.faa", "tree.nwk", threads=24)
 
         self.assertEqual(
@@ -50,18 +50,16 @@ class PhylogenyTests(unittest.TestCase):
     def test_build_tree_worker_retries_without_threads_when_binary_rejects_flag(self):
         calls = []
 
-        def fake_run(cmd, stdout=None, stderr=None, check=None):
+        def fake_run(cmd, **kwargs):
             calls.append(cmd)
             if len(calls) == 1:
-                raise subprocess.CalledProcessError(
-                    returncode=1,
-                    cmd=cmd,
-                    stderr=b"Unknown or incorrect use of option -threads",
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="", stderr="Unknown or incorrect use of option -threads"
                 )
             return subprocess.CompletedProcess(cmd, 0)
 
         with patch.object(phylogeny, "_fasttree_executable", return_value="FastTree"):
-            with patch("sgtree.phylogeny.subprocess.run", side_effect=fake_run):
+            with patch("sgtree._subprocess.subprocess.run", side_effect=fake_run):
                 phylogeny._build_tree_worker(("input.faa", "treeouts", "fasttree", "LG", False))
 
         self.assertEqual(
