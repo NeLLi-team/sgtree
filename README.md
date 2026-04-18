@@ -167,7 +167,7 @@ Practical selection guide:
 - `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
 - `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels (see `eval/full/50gen/`).
-- `--singles yes` is still heuristic, but the singleton branch is now explicitly split into four strategies.
+- `--singles yes` is still heuristic, but the singleton branch is now explicitly split into multiple named strategies (`delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`).
 - `--singles_mode delta_rf` is the pure topology baseline. It chooses the leaf whose removal most improves marker-vs-species RF and is mainly useful as the historical comparison point.
 - `--singles_mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
 - `--singles_mode contig_consensus` starts from the composite detector and then checks whether the candidate marker disagrees with the other markers on the same contig. It is only useful when contig IDs are reliable and multiple markers share a contig.
