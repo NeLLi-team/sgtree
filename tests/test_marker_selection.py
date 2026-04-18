@@ -969,6 +969,92 @@ class CachedLoaderTests(unittest.TestCase):
             )
 
 
+class BuildMarkerNeighborContextTests(unittest.TestCase):
+    """Cover serial- vs threaded-execution equivalence for neighbor context."""
+
+    def setUp(self):
+        marker_selection._SPECIES_TREE_CACHE.clear()
+
+    def tearDown(self):
+        marker_selection._SPECIES_TREE_CACHE.clear()
+
+    def _build_fixture(self, tmpdir: Path) -> dict:
+        species_tree = tmpdir / "species.nwk"
+        species_tree.write_text("(((A,B),C),(D,E));\n")
+
+        # Two marker trees: MarkerA (congruent with species), MarkerB (shuffled).
+        marker_a = tmpdir / "aln_MarkerA_out.nw"
+        marker_b = tmpdir / "aln_MarkerB_out.nw"
+        marker_a.write_text("(((A|contig1|g1,B|contig1|g1),C|contig1|g1),(D|contig1|g1,E|contig1|g1));\n")
+        marker_b.write_text("(((A|contig1|g2,D|contig1|g2),C|contig1|g2),(B|contig1|g2,E|contig1|g2));\n")
+
+        # Minimal table with the contig-hit rows for both markers. The
+        # marker id is the last '/'-separated segment of ``namemodel`` per
+        # _load_contig_marker_hit_map.
+        table = tmpdir / "table_elim_dups"
+        rows = []
+        for marker, suffix in [("MarkerA", "g1"), ("MarkerB", "g2")]:
+            for genome in ["A", "B", "C", "D", "E"]:
+                rows.append(
+                    {
+                        "savedname": f"{genome}/contig1/{suffix}",
+                        "score_bits": 100.0,
+                        "namemodel": f"pfam/{marker}",
+                    }
+                )
+        pd.DataFrame(rows).to_csv(table, index=False)
+
+        return {
+            "files": [str(marker_a), str(marker_b)],
+            "species_tree_path": str(species_tree),
+            "table_path": str(table),
+        }
+
+    def test_parallel_output_matches_serial(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = self._build_fixture(Path(tmpdir))
+
+            serial = marker_selection._build_marker_neighbor_context(
+                fixture["files"],
+                species_tree_path=fixture["species_tree_path"],
+                table_path=fixture["table_path"],
+                k=3,
+                num_cpus=1,
+            )
+            parallel = marker_selection._build_marker_neighbor_context(
+                fixture["files"],
+                species_tree_path=fixture["species_tree_path"],
+                table_path=fixture["table_path"],
+                k=3,
+                num_cpus=4,
+            )
+
+            self.assertEqual(set(serial.keys()), set(parallel.keys()))
+            self.assertGreater(len(serial), 0)
+            for key in serial:
+                self.assertAlmostEqual(
+                    serial[key]["recipient_neighbor_overlap"],
+                    parallel[key]["recipient_neighbor_overlap"],
+                    places=12,
+                )
+
+    def test_empty_hit_map_returns_empty_dict(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = self._build_fixture(Path(tmpdir))
+            # Drop the namemodel column so _load_contig_marker_hit_map
+            # returns an empty dict, short-circuiting the builder.
+            table = Path(fixture["table_path"])
+            pd.DataFrame([{"savedname": "A/contig1/g1", "score_bits": 100.0}]).to_csv(table, index=False)
+            result = marker_selection._build_marker_neighbor_context(
+                fixture["files"],
+                species_tree_path=fixture["species_tree_path"],
+                table_path=str(table),
+                k=3,
+                num_cpus=4,
+            )
+            self.assertEqual(result, {})
+
+
 def _synthetic_ml_proposals():
     proposals = []
     for g_idx in range(6):
