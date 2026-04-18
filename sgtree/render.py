@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 import matplotlib
@@ -8,6 +9,9 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from Bio import Phylo
+
+
+logger = logging.getLogger("sgtree")
 
 
 def load_colors(color_file: str) -> dict[str, str]:
@@ -28,8 +32,8 @@ def render_tree_file(tree_path: str, color_file: str, out_png: str) -> None:
     if len(terminals) > 2:
         try:
             tree.root_at_midpoint()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("midpoint rooting failed: %s", exc, exc_info=True)
 
     fig_height = max(2.5, min(0.32 * max(1, len(terminals)) + 1.5, 24))
     fig_width = 10

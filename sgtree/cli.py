@@ -3,6 +3,7 @@ import sys
 import glob
 import shutil
 import datetime
+import logging
 import time
 import argparse
 import shutil
@@ -13,6 +14,8 @@ from sgtree import render, sgtree_logging, cleanup, reference
 from sgtree import ani_clustering
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+logger = logging.getLogger("sgtree")
 
 
 def _parse_bool(value: str | bool, *, flag: str) -> bool:
@@ -340,6 +343,7 @@ def main():
         sgtree_logging.write_logfile(cfg, timings)
 
     except Exception as e:
+        logger.exception("sgtree basic pipeline failed")
         print(f"ERROR: {e.__doc__}\n {e}")
         import traceback
         traceback.print_exc()
@@ -449,6 +453,7 @@ def main():
             sgtree_logging.append_logfile(cfg, ms_timings)
 
         except Exception as e:
+            logger.exception("sgtree marker-selection phase failed")
             print(f"ERROR in marker selection: {e.__doc__}\n {e}")
             import traceback
             traceback.print_exc()
