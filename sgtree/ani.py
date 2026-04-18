@@ -724,7 +724,6 @@ def _run_mcl_binary(
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
     clusters: list[list[str]] = []
     seen: set[str] = set()
