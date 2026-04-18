@@ -3,6 +3,7 @@ import subprocess
 import glob
 import shutil
 
+from sgtree._subprocess import run_capture, run_check
 from sgtree.config import Config
 from sgtree.parallel import map_threaded
 
@@ -24,13 +25,18 @@ def _fasttree_executable() -> str:
 
 
 def _run_fasttree_with_optional_threads(threaded_cmd: list[str], fallback_cmd: list[str]) -> None:
-    try:
-        subprocess.run(threaded_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    except subprocess.CalledProcessError as exc:
-        message = ((exc.stderr or b"") + b"\n" + (exc.stdout or b"")).decode("utf-8", errors="ignore")
-        if "-threads" not in message:
-            raise
-        subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    threaded = run_capture(threaded_cmd)
+    if threaded.returncode == 0:
+        return
+    message = (threaded.stderr or "") + "\n" + (threaded.stdout or "")
+    if "-threads" not in message:
+        raise subprocess.CalledProcessError(
+            returncode=threaded.returncode,
+            cmd=threaded_cmd,
+            output=threaded.stdout,
+            stderr=threaded.stderr,
+        )
+    run_check(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def run_fasttree(input_fasta: str, output_tree: str, threads: int):
@@ -54,7 +60,7 @@ def _run_iqtree(input_fasta: str, output_tree: str, cpus: int, model: str, fast:
     if fast:
         cmd.append("-fast")
     cmd.extend(["-s", input_fasta])
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    run_check(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     treefile = prefix + ".treefile"
     if not os.path.exists(treefile):
@@ -85,7 +91,7 @@ def run_snp_tree(cfg: Config, input_fasta: str, output_tree: str):
         if cfg.iqtree_fast:
             cmd.append("-fast")
         cmd.extend(["-s", input_fasta])
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        run_check(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         treefile = prefix + ".treefile"
         if not os.path.exists(treefile):
             raise FileNotFoundError(f"IQ-TREE did not produce expected treefile: {treefile}")
