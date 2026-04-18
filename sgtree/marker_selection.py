@@ -1,6 +1,7 @@
 import os
 import glob
 import csv
+import logging
 import math
 import statistics
 import numpy as np
@@ -13,6 +14,8 @@ from sgtree.config import Config
 from sgtree.id_schema import parse_savedname, parse_sequence_id
 from sgtree.parallel import map_processed, map_threaded
 
+
+logger = logging.getLogger("sgtree")
 
 SCORE_COLUMNS = ("score_bits", "7")
 LEGACY_SINGLETON_MODE_ALIASES = {
@@ -2094,7 +2097,12 @@ def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
         mcd.fit(x_train)
         df["mahalanobis"] = 0.0
         df.loc[df["high_confidence"], "mahalanobis"] = mcd.mahalanobis(x_train)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "MinCovDet fit failed; falling back to mahalanobis=0.0 (%s)",
+            exc,
+            exc_info=True,
+        )
         df["mahalanobis"] = 0.0
 
     genome_score_cols = [f"zg_{feature}" for feature in raw_features]

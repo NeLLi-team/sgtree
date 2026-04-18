@@ -2,8 +2,12 @@ import os
 import sys
 import glob
 import datetime
+import logging
 
 from sgtree.config import Config
+
+
+logger = logging.getLogger("sgtree")
 
 
 def write_logfile(cfg: Config, timings: dict):
@@ -30,6 +34,7 @@ def write_logfile(cfg: Config, timings: dict):
             f.write(f"{cfg.genome_count} genomes\n{cfg.model_file_count} models\n")
             f.write(f"{cfg.start_time}\n{datetime.datetime.now()}\n{sep}\n")
     except Exception:
+        logger.exception("Error writing logfile")
         print("Error writing logfile", sys.exc_info())
 
 
@@ -50,4 +55,5 @@ def append_logfile(cfg: Config, timings: dict):
             f.write(f"Sgtree start, endtime (with marker selection): \n")
             f.write(f"{cfg.start_time}\n{datetime.datetime.now()}\n")
     except Exception:
+        logger.exception("Error writing logfile")
         print("Error writing logfile", sys.exc_info())
