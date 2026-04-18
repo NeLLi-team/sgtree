@@ -1428,32 +1428,43 @@ def _build_marker_neighbor_context(
     species_tree_path: str,
     table_path: str,
     k: int,
+    num_cpus: int = 1,
 ) -> dict[tuple[str, str, str], dict[str, float]]:
     hit_map = _load_contig_marker_hit_map(table_path)
     if not hit_map:
         return {}
     species_tree = _cached_species_tree(species_tree_path)
-    tree_cache: dict[str, tuple[Tree, set[str]]] = {}
     marker_paths = {
         _marker_name_from_tree_path(filepath): filepath
         for filepath in files
     }
-    context: dict[tuple[str, str, str], dict[str, float]] = {}
+    hits_by_marker: dict[str, list[tuple[tuple[str, str, str], str]]] = {}
     for key, leaf_name in hit_map.items():
-        genome, _contig, marker = key
+        _genome, _contig, marker = key
+        hits_by_marker.setdefault(marker, []).append((key, leaf_name))
+
+    def _process_marker(marker: str) -> list[tuple[tuple[str, str, str], dict[str, float]]]:
         filepath = marker_paths.get(marker)
         if filepath is None:
-            continue
-        if filepath not in tree_cache:
-            tree = Tree(filepath)
-            tree_cache[filepath] = (tree, {leaf.name for leaf in tree.iter_leaves()})
-        tree, leaves = tree_cache[filepath]
-        if leaf_name not in leaves:
-            continue
-        recipient_overlap = _leaf_neighbor_overlap(species_tree, tree, leaf_name, k)
-        context[key] = {
-            "recipient_neighbor_overlap": recipient_overlap,
-        }
+            return []
+        tree = Tree(filepath)
+        leaves = {leaf.name for leaf in tree.iter_leaves()}
+        results: list[tuple[tuple[str, str, str], dict[str, float]]] = []
+        for key, leaf_name in hits_by_marker[marker]:
+            if leaf_name not in leaves:
+                continue
+            overlap = _leaf_neighbor_overlap(species_tree, tree, leaf_name, k)
+            results.append((key, {"recipient_neighbor_overlap": overlap}))
+        return results
+
+    markers = sorted(hits_by_marker.keys())
+    workers = max(1, min(int(num_cpus), len(markers)))
+    marker_results = map_threaded(_process_marker, markers, workers)
+
+    context: dict[tuple[str, str, str], dict[str, float]] = {}
+    for per_marker in marker_results:
+        for key, value in per_marker:
+            context[key] = value
     return context
 
 
@@ -2733,6 +2744,7 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
                 species_tree_path=species_tree_path,
                 table_path=os.path.join(cfg.outdir, "table_elim_dups"),
                 k=max(2, cfg.num_nei or 5),
+                num_cpus=cfg.num_cpus,
             ),
             mode=cfg.singles_mode,
         )
