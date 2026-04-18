@@ -43,7 +43,8 @@ def _process_file_worker(args):
     """Worker: eliminate duplicates for one aligned marker file."""
     filepath, aln_spectree_dir, score_lookup = args
     try:
-        record_dict = SeqIO.to_dict(SeqIO.parse(filepath, "fasta"))
+        with open(filepath) as handle:
+            record_dict = SeqIO.to_dict(SeqIO.parse(handle, "fasta"))
         all_ids = list(record_dict.keys())
 
         # Find duplicates (same genome, multiple hits) in one O(n) pass.
