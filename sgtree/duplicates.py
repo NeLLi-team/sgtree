@@ -20,12 +20,6 @@ def _resolve_score_column(df_fordups) -> str:
     return score_col
 
 
-def _is_duplicate(seq_id, all_ids):
-    """Check if a genome (first part of ID before |) appears more than once."""
-    genome = seq_id.split("|")[0]
-    return sum(1 for x in all_ids if x.split("|")[0] == genome) > 1
-
-
 def _build_score_lookup(df_fordups, score_col: str) -> dict[str, str]:
     lookup: dict[str, str] = {}
     for row in df_fordups.reset_index(drop=True).itertuples(index=False):

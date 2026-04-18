@@ -6,7 +6,6 @@ import datetime
 import logging
 import time
 import argparse
-import shutil
 
 from sgtree.config import Config
 from sgtree import search, extract, align, duplicates, supermatrix, phylogeny
@@ -339,7 +338,6 @@ def main():
             itol.write_heatmap(cfg, tree_path, "marker_count.txt")
 
         # Write logfile
-        print(sys.argv[:])
         sgtree_logging.write_logfile(cfg, timings)
 
     except Exception as e:
