@@ -139,30 +139,28 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
 
 
 def _fill_nan_gaps(df_conc: pd.DataFrame):
-    """Replace NaN cells with X characters matching the alignment width of that column."""
-    # forward pass: fill NaN cells using known lengths from previous rows
-    for j in range(1, df_conc.shape[1]):
-        len_string = 0
-        for i in range(df_conc.shape[0]):
-            val = df_conc.iloc[i, j]
-            if isinstance(val, float):  # NaN
-                if len_string > 0:
-                    df_conc.iloc[i, j] = "X" * len_string
-            else:
-                len_string = len(str(val).replace("\n", ""))
+    """Replace NaN cells with synthetic gap strings matching each column's alignment width.
 
-    # backward pass: fill leading NaN rows (where first rows had no data)
+    Vectorized: for every marker column (all columns except the first), compute
+    the width of each non-NaN cell, then fill NaN cells in place with ``"X" * w``
+    where ``w`` is the per-row width from a forward-filled width series. Leading
+    NaN rows (NaN runs that precede any non-NaN cell) are filled using the
+    bottom-most non-NaN width in the column — a semantic quirk preserved from
+    the legacy implementation and pinned by
+    ``test_fill_nan_gaps_uses_last_non_nan_width_for_leading_gaps``.
+    """
     for j in range(1, df_conc.shape[1]):
-        if isinstance(df_conc.iloc[0, j], float):
-            # find reference length from last non-NaN value
-            ref_len = 0
-            for k in range(df_conc.shape[0] - 1, -1, -1):
-                val = df_conc.iloc[k, j]
-                if not isinstance(val, float):
-                    ref_len = len(str(val).replace("\n", ""))
-                    break
-            for i in range(df_conc.shape[0]):
-                if isinstance(df_conc.iloc[i, j], float):
-                    df_conc.iloc[i, j] = "X" * ref_len
-                else:
-                    break
+        col = df_conc.columns[j]
+        series = df_conc[col]
+        nan_mask = series.isna()
+        if not nan_mask.any():
+            continue
+
+        known = series[~nan_mask].map(lambda v: len(str(v).replace("\n", "")))
+        if known.empty:
+            # Whole column is NaN — legacy backward pass fills with "X" * 0 = "".
+            df_conc[col] = series.fillna("")
+            continue
+
+        widths = known.reindex(series.index).ffill().fillna(known.iloc[-1]).astype(int)
+        df_conc.loc[nan_mask, col] = widths.loc[nan_mask].map(lambda n: "X" * n)
