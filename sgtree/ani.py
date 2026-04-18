@@ -13,6 +13,7 @@ import numpy as np
 from Bio import SeqIO
 import pandas as pd
 
+from sgtree._subprocess import run_capture, run_check
 from sgtree.id_schema import build_sequence_id, parse_sequence_id, sanitize_token
 
 
@@ -536,7 +537,18 @@ def resolve_ani_backend(requested: str) -> str:
 
 
 def _run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, check=True, capture_output=True, text=True)
+    """Run ``cmd`` with captured text output, raising on non-zero exit.
+
+    Thin wrapper around :func:`sgtree._subprocess.run_capture` that preserves
+    the legacy ``check=True`` behavior shared across ANI call sites
+    (minimap2, skani, fasttree) which all need ``stdout`` text.
+    """
+    result = run_capture(cmd)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, output=result.stdout, stderr=result.stderr
+        )
+    return result
 
 
 def _minimap2_direction(target: GenomeRecord, query: GenomeRecord) -> DirectionalAni:
@@ -700,7 +712,7 @@ def _run_mcl_binary(
         out_path.write_text("")
         return [[label] for label in labels]
 
-    subprocess.run(
+    run_check(
         [
             "mcl",
             str(graph_path),
@@ -710,7 +722,6 @@ def _run_mcl_binary(
             "-o",
             str(out_path),
         ],
-        check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
