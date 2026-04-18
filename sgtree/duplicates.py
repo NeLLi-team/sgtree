@@ -1,5 +1,6 @@
 import os
 import glob
+from collections import Counter
 
 import pandas as pd
 from Bio import SeqIO
@@ -45,21 +46,15 @@ def _process_file_worker(args):
         record_dict = SeqIO.to_dict(SeqIO.parse(filepath, "fasta"))
         all_ids = list(record_dict.keys())
 
-        # find duplicates (same genome, multiple hits)
-        dups = {}
+        # Find duplicates (same genome, multiple hits) in one O(n) pass.
+        # The legacy implementation rebuilt `other_genomes` per row with a
+        # list comprehension — O(n^2) and slow on 500-genome panels.
+        genome_counts = Counter(key.split("|")[0] for key in all_ids)
+        dups: dict[str, list[str]] = {}
         for key in all_ids:
             genome = key.split("|")[0]
-            other_genomes = [k.split("|")[0] for k in all_ids if k != key]
-            if genome in other_genomes:
-                if genome in dups:
-                    dups[genome] = dups[genome] + "," + key
-                else:
-                    dups[genome] = key
-
-        # split comma-separated values and get scores
-        for key in dups:
-            dups[key] = dups[key].split(",")
-            dups[key] = [score_lookup[v] for v in dups[key]]
+            if genome_counts[genome] > 1:
+                dups.setdefault(genome, []).append(score_lookup[key])
 
         # for each set of duplicates, remove the best score from the "to-remove" list
         ids_to_remove = set()
