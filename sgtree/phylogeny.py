@@ -24,10 +24,22 @@ def _fasttree_executable() -> str:
     raise FileNotFoundError("Could not find VeryFastTree/FastTree in PATH")
 
 
+# Per-executable cache of whether the binary accepts the `-threads` flag.
+# Populated lazily from the first real run; subsequent calls skip the probe.
+_THREADS_SUPPORT: dict[str, bool] = {}
+
+
 def _run_fasttree_with_optional_threads(threaded_cmd: list[str], fallback_cmd: list[str]) -> None:
+    executable = threaded_cmd[0]
+    if _THREADS_SUPPORT.get(executable) is False:
+        run_check(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return
+
     threaded = run_capture(threaded_cmd)
     if threaded.returncode == 0:
+        _THREADS_SUPPORT[executable] = True
         return
+
     message = (threaded.stderr or "") + "\n" + (threaded.stdout or "")
     if "-threads" not in message:
         raise subprocess.CalledProcessError(
@@ -36,6 +48,7 @@ def _run_fasttree_with_optional_threads(threaded_cmd: list[str], fallback_cmd: l
             output=threaded.stdout,
             stderr=threaded.stderr,
         )
+    _THREADS_SUPPORT[executable] = False
     run_check(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
