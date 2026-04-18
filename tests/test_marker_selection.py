@@ -907,5 +907,175 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertEqual(classified[0]["singleton_class"], "ambiguous")
 
 
+def _synthetic_ml_proposals():
+    proposals = []
+    for g_idx in range(6):
+        for m_idx in range(3):
+            is_outlier_genome = g_idx == 0
+            is_outlier_marker = g_idx == 1 and m_idx == 0
+            base = 2.0 if (is_outlier_genome or is_outlier_marker) else 0.3
+            proposals.append(
+                {
+                    "genome": f"G{g_idx:02d}",
+                    "marker_name": f"Marker{m_idx:02d}",
+                    "leaf_name": f"G{g_idx:02d}|c1|gene{m_idx}",
+                    "delta_rf": base * 0.1,
+                    "neighbor_overlap": 0.5,
+                    "topoknn_score": base * 0.5,
+                    "branch_outlier": 0.0,
+                    "bitscore_outlier": 0.0,
+                    "recipient_consensus_score": base,
+                    "species_anchor_score": 0.8,
+                    "species_anchor_purity": 0.9,
+                    "species_anchor_compactness_score": 0.5,
+                    "species_long_branch_z": 0.0,
+                    "species_long_branch_support": 0.0,
+                    "present_neighbor_count": 5,
+                    "present_neighbor_fraction": 0.7,
+                    "neighbor_anchor_purity": 1.0,
+                    "join_purity": 0.3 if is_outlier_genome else 0.8,
+                    "purity_drop": base * 0.4,
+                    "anchor_knn_agreement": 0.1 if is_outlier_genome else 0.7,
+                    "attachment_gap": base,
+                    "taxa_count": 6,
+                }
+            )
+    return proposals
+
+
+_ML_GOLDEN_ROWS = {
+    ("Marker00", "G00|c1|gene0"): {
+        "iforest_anomaly": 0.6907509445465396,
+        "mahalanobis": 0.0,
+        "ensemble_score_v1": 0.7152777777777778,
+        "shape_penalized_score_v4": 0.3088352623456791,
+        "genome_first_score_v8": 1.0833333333333335,
+    },
+    ("Marker00", "G01|c1|gene0"): {
+        "iforest_anomaly": 0.7651128938196522,
+        "mahalanobis": 0.0,
+        "ensemble_score_v1": 0.8402777777777778,
+        "shape_penalized_score_v4": 0.405994212962963,
+        "genome_first_score_v8": 1.2083333333333333,
+    },
+    ("Marker00", "G02|c1|gene0"): {
+        "iforest_anomaly": 0.42462132004490966,
+        "mahalanobis": 0.0,
+        "ensemble_score_v1": 0.4652777777777778,
+        "shape_penalized_score_v4": 0.17977314814814815,
+        "genome_first_score_v8": 0.5208333333333334,
+    },
+    ("Marker01", "G00|c1|gene1"): {
+        "iforest_anomaly": 0.6168607356912175,
+        "mahalanobis": 0.0,
+        "ensemble_score_v1": 0.7152777777777778,
+        "shape_penalized_score_v4": 0.2983780864197531,
+        "genome_first_score_v8": 0.0,
+    },
+    ("Marker01", "G02|c1|gene1"): {
+        "iforest_anomaly": 0.42462132004490966,
+        "mahalanobis": 0.0,
+        "ensemble_score_v1": 0.4652777777777778,
+        "shape_penalized_score_v4": 0.17977314814814815,
+        "genome_first_score_v8": 0.0,
+    },
+    ("Marker02", "G00|c1|gene2"): {
+        "iforest_anomaly": 0.6168607356912175,
+        "mahalanobis": 0.0,
+        "ensemble_score_v1": 0.7152777777777778,
+        "shape_penalized_score_v4": 0.2983780864197531,
+        "genome_first_score_v8": 0.0,
+    },
+}
+
+
+class ScoreNeighborMlProposalsRegression(unittest.TestCase):
+    """Pin score_neighbor_ml_proposals outputs on a fixed synthetic panel.
+
+    Guards against behavior drift when score_neighbor_ml_proposals is
+    decomposed into helpers (Task 4.3 of the code-review remediation plan).
+    Uses a 6-genome x 3-marker fixture with G00 as a global outlier and
+    G01 as a single-marker outlier on Marker00. IsolationForest's
+    random_state=42 and MinCovDet's support_fraction=0.8 make the output
+    deterministic. MinCovDet is expected to fail on this rank-deficient
+    fixture, exercising the mahalanobis=0.0 fallback.
+    """
+
+    def test_pinned_columns_match_golden_snapshot(self):
+        scored = marker_selection.score_neighbor_ml_proposals(
+            _synthetic_ml_proposals()
+        )
+        self.assertEqual(len(scored), 18)
+
+        df = (
+            pd.DataFrame(scored)
+            .sort_values(["marker_name", "leaf_name"])
+            .reset_index(drop=True)
+        )
+        self.assertTrue(df["high_confidence"].all())
+
+        for (marker, leaf), expected in _ML_GOLDEN_ROWS.items():
+            mask = (df["marker_name"] == marker) & (df["leaf_name"] == leaf)
+            self.assertEqual(int(mask.sum()), 1, f"row for {marker}/{leaf}")
+            row = df.loc[mask].iloc[0]
+            for col, value in expected.items():
+                self.assertAlmostEqual(
+                    float(row[col]),
+                    value,
+                    places=10,
+                    msg=f"{col} mismatch for {marker}/{leaf}",
+                )
+
+    def test_genome_first_score_identifies_global_outlier(self):
+        scored = marker_selection.score_neighbor_ml_proposals(
+            _synthetic_ml_proposals()
+        )
+        df = pd.DataFrame(scored)
+        # genome_first_score_v8 is assigned per genome on the top row; look
+        # at the maximum value across all rows of a genome.
+        by_genome = df.groupby("genome")["genome_first_score_v8"].max()
+        self.assertEqual(by_genome.idxmax(), "G01")  # strongest single-marker signal
+        self.assertGreater(by_genome["G00"], by_genome["G02"])
+
+    def test_returns_zeros_when_no_high_confidence_rows(self):
+        proposals = [
+            {
+                "genome": "G01",
+                "marker_name": "MarkerA",
+                "leaf_name": "G01|c1|gene1",
+                "delta_rf": 0.1,
+                "neighbor_overlap": 0.5,
+                "topoknn_score": 0.1,
+                "branch_outlier": 0.0,
+                "bitscore_outlier": 0.0,
+                "recipient_consensus_score": 0.3,
+                "species_anchor_score": 0.8,
+                "species_anchor_purity": 0.9,
+                "species_anchor_compactness_score": 0.5,
+                "species_long_branch_z": 0.0,
+                "species_long_branch_support": 0.0,
+                # Drop below NEIGHBOR_ML_HIGH_CONF_MIN_PRESENT=3 to force empty train.
+                "present_neighbor_count": 0,
+                "present_neighbor_fraction": 0.0,
+                "neighbor_anchor_purity": 1.0,
+                "join_purity": 0.8,
+                "purity_drop": 0.2,
+                "anchor_knn_agreement": 0.7,
+                "attachment_gap": 0.3,
+                "taxa_count": 3,
+            }
+        ]
+        scored = marker_selection.score_neighbor_ml_proposals(proposals)
+        self.assertEqual(len(scored), 1)
+        for col in (
+            "iforest_anomaly",
+            "mahalanobis",
+            "ensemble_score_v1",
+            "shape_penalized_score_v4",
+            "genome_first_score_v8",
+        ):
+            self.assertEqual(scored[0][col], 0.0, f"{col} should be zero on empty-train path")
+
+
 if __name__ == "__main__":
     unittest.main()
