@@ -383,14 +383,20 @@ def _load_kept_assignments(rf_outfile: str) -> dict[tuple[str, str], str]:
 
 
 def _process_tree_worker(args):
-    """Worker: RF-distance based duplicate resolution for one marker tree."""
+    """Worker: RF-distance based duplicate resolution for one marker tree.
+
+    Returns ``records`` for the marker. The parent process aggregates and
+    writes ``marker_selection_rf_values.txt`` once to avoid the concurrent
+    append race the legacy code had when many workers appended to the
+    shared file in parallel (nondeterministic ordering; potential write
+    interleaving for payloads > ``PIPE_BUF`` on Linux).
+    """
     (
         filepath,
         table_path,
         species_tree_path,
         outdir,
         ls_refs,
-        rf_outfile,
         selection_mode,
         max_rounds,
         lock_references,
@@ -418,13 +424,6 @@ def _process_tree_worker(args):
             f.write(f"{item}\n")
         f.write(f"{len(removed)} {len(cleaned_nodes) + len(removed)}\n{'*' * 80}\n")
 
-    with open(rf_outfile, "a") as f:
-        for record in records:
-            f.write(
-                f"{record['protein_id']} {record['marker']} "
-                f"{record['rf_distance']:.6f} {record['status']}\n"
-            )
-
     t = Tree(filepath)
     t_final = t.copy()
     t_final.prune(cleaned_nodes)
@@ -435,6 +434,7 @@ def _process_tree_worker(args):
             f"_no_dups_{marker_name}_.nw",
         ),
     )
+    return records
 
 
 def run_noperm(
@@ -462,8 +462,6 @@ def run_noperm(
         os.makedirs(d, exist_ok=True)
 
     rf_outfile = os.path.join(cfg.outdir, "marker_selection_rf_values.txt")
-    with open(rf_outfile, "w") as f:
-        f.write("ProteinID MarkerGene RFdistance Status\n")
 
     if species_tree_path is None:
         species_tree_path = os.path.join(cfg.outdir, "tree.nwk")
@@ -475,7 +473,6 @@ def run_noperm(
             species_tree_path,
             cfg.outdir,
             ls_refs,
-            rf_outfile,
             getattr(cfg, "selection_mode", "coordinate"),
             getattr(cfg, "selection_max_rounds", 5),
             getattr(cfg, "lock_references", False),
@@ -484,8 +481,30 @@ def run_noperm(
         for f in ls_of_files
     ]
 
-    map_processed(_process_tree_worker, args, cfg.num_cpus)
+    worker_results = map_processed(_process_tree_worker, args, cfg.num_cpus)
+
+    _write_rf_values_file(rf_outfile, worker_results)
     return _load_kept_assignments(rf_outfile)
+
+
+def _write_rf_values_file(path: str, worker_results: list[list[dict]] | None) -> None:
+    """Write ``marker_selection_rf_values.txt`` deterministically.
+
+    Flattens per-marker record lists, sorts by ``(marker, protein_id)``, and
+    writes once from the parent process. Replaces the legacy concurrent
+    append-per-worker pattern that produced nondeterministic ordering and
+    could interleave writes on Linux when records exceeded ``PIPE_BUF``.
+    """
+    worker_results = worker_results or []
+    all_records = [rec for records in worker_results if records for rec in records]
+    all_records.sort(key=lambda r: (str(r["marker"]), str(r["protein_id"])))
+    with open(path, "w") as f:
+        f.write("ProteinID MarkerGene RFdistance Status\n")
+        for record in all_records:
+            f.write(
+                f"{record['protein_id']} {record['marker']} "
+                f"{record['rf_distance']:.6f} {record['status']}\n"
+            )
 
 
 def _tree_to_genome_level(tree: Tree) -> Tree:
