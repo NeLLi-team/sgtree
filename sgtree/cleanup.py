@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import zipfile
 
+from sgtree._subprocess import run_check
+
 
 def _zip_file_in_place(filepath: str) -> None:
     """Compress a single file into a zip archive, replacing the original."""
@@ -35,7 +37,7 @@ def cleanup_basic(outdir: str):
             continue
 
         if os.path.isdir(filepath):
-            subprocess.run(
+            run_check(
                 ["zip", filepath] + glob.glob(os.path.join(filepath, "*")),
                 stdout=subprocess.DEVNULL,
             )
@@ -82,7 +84,7 @@ def cleanup_marker_selection(outdir: str):
             continue
 
         if os.path.isdir(filepath):
-            subprocess.run(
+            run_check(
                 ["zip", filepath] + glob.glob(os.path.join(filepath, "*")),
                 stdout=subprocess.DEVNULL,
             )
