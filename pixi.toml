@@ -1,6 +1,6 @@
 [workspace]
 name = "sgtree"
-version = "2.0.0"
+version = "1.1.0"
 description = "Species tree construction from marker gene phylogenies"
 channels = ["conda-forge", "bioconda"]
 platforms = ["linux-64", "osx-64", "osx-arm64"]
