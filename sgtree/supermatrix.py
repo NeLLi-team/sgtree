@@ -95,47 +95,40 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # build dataframe with all trimmed alignments
-    df_conc = pd.DataFrame(columns=["SeqID"])
+    marker_frames: list[pd.DataFrame] = []
     for filepath in sorted(glob.glob(os.path.join(trimmed_dir, "*.faa"))):
+        marker_name = os.path.basename(filepath)
         with open(filepath) as handle:
             record_dict = SeqIO.to_dict(SeqIO.parse(handle, "fasta"))
-        record_dict = {k: v.format("fasta").split("\n", 1)[1] for k, v in record_dict.items()}
-        new_dict = {}
-        for key in record_dict:
+        seqs: dict[str, str] = {}
+        for key, rec in record_dict.items():
             genome_id = key.split("|")[0]
-            if genome_id in new_dict:
+            if genome_id in seqs:
                 raise ValueError(
-                    f"Duplicate genome id '{genome_id}' remains in alignment {os.path.basename(filepath)}"
+                    f"Duplicate genome id '{genome_id}' remains in alignment {marker_name}"
                 )
-            new_dict[genome_id] = record_dict[key]
-        new_df = pd.DataFrame(
-            list(new_dict.items()),
-            columns=["SeqID", os.path.basename(filepath)],
-        )
-        df_conc = pd.merge(new_df, df_conc, how="outer")
+            seqs[genome_id] = rec.format("fasta").split("\n", 1)[1]
+        marker_frames.append(pd.DataFrame({marker_name: pd.Series(seqs)}))
 
-    marker_cols = sorted(col for col in df_conc.columns if col != "SeqID")
-    df_conc = df_conc[["SeqID"] + marker_cols].sort_values("SeqID")
+    if not marker_frames:
+        raise ValueError(f"build_supermatrix: no marker alignments found in {trimmed_dir}")
 
-    # fill NaN cells with X characters of appropriate length
+    # One outer join across all markers in a single pass (O(markers), not O(markers^2)).
+    df_conc = pd.concat(marker_frames, axis=1, join="outer").sort_index(axis=1).sort_index()
+    df_conc.index.name = "SeqID"
+    df_conc = df_conc.reset_index()
+
     _fill_nan_gaps(df_conc)
 
-    # save intermediate table
     df_conc.to_csv(table_path)
 
-    # rebuild from saved CSV and write concatenated FASTA
-    df_conc = pd.read_csv(table_path)
-    df_conc = df_conc.set_index("SeqID").sort_index()
-    record_dict = df_conc.T.to_dict("list")
-    record_dict = {k: v[1:] for k, v in record_dict.items()}
-    record_dict = {k: "".join(str(x) for x in v) for k, v in record_dict.items()}
-    record_dict = {k: v.replace("\n", "") for k, v in record_dict.items()}
-
-    with open(concat_path, "w") as f:
-        for k in sorted(record_dict):
-            v = record_dict[k]
-            f.write(f">{k}\n{v}\n")
+    # Build the concatenated FASTA directly from the in-memory DataFrame.
+    marker_cols = [c for c in df_conc.columns if c != "SeqID"]
+    with open(concat_path, "w") as fp:
+        for seq_id in sorted(df_conc["SeqID"]):
+            row = df_conc.loc[df_conc["SeqID"] == seq_id, marker_cols].iloc[0]
+            seq = "".join(str(v).replace("\n", "") for v in row.values)
+            fp.write(f">{seq_id}\n{seq}\n")
 
 
 def _fill_nan_gaps(df_conc: pd.DataFrame):
