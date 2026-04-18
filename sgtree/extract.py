@@ -1,10 +1,29 @@
 import os
 import glob
+import shutil
 
 import pandas as pd
 from Bio import SeqIO
 
 from sgtree.config import Config
+
+
+_COPY_CHUNK = 1 << 20
+
+
+def _concat_proteomes(source_paths: list[str], dest_path: str) -> None:
+    """Concatenate proteome FASTA files into dest_path by streaming.
+
+    A newline byte is written between consecutive sources so that a source
+    which omits its trailing newline does not glue its last sequence to the
+    next file's first header.
+    """
+    with open(dest_path, "wb") as dst:
+        for i, src_path in enumerate(source_paths):
+            if i > 0:
+                dst.write(b"\n")
+            with open(src_path, "rb") as src:
+                shutil.copyfileobj(src, dst, _COPY_CHUNK)
 
 
 def extract_hits(cfg: Config, df: pd.DataFrame):
@@ -38,17 +57,10 @@ def write_extracted_sequences(cfg: Config):
     """Retrieve actual protein sequences from proteome FASTA files, write per-model FASTAs."""
     os.makedirs(cfg.extracted_seqs_dir, exist_ok=True)
 
-    # build combined proteomes file (query + reference)
-    with open(cfg.proteomes_path) as fp:
-        data = fp.read()
-
+    sources = [cfg.proteomes_path]
     if cfg.ref is not None:
-        ref_proteomes = os.path.join(cfg.ref_dir_path(), "proteomes")
-        with open(ref_proteomes) as fp:
-            data += "\n" + fp.read()
-
-    with open(cfg.ref_proteomes_path, "w") as fp:
-        fp.write(data)
+        sources.append(os.path.join(cfg.ref_dir_path(), "proteomes"))
+    _concat_proteomes(sources, cfg.ref_proteomes_path)
 
     # Build id->models mapping from extracted marker ID lists.
     ls_of_files = glob.glob(os.path.join(cfg.extracted_dir, "*"))
