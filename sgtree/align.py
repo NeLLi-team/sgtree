@@ -5,6 +5,7 @@ import shutil
 
 from pyhmmer import easel, hmmer, plan7
 
+from sgtree._subprocess import run_capture
 from sgtree.config import Config
 from sgtree.parallel import map_processed, map_threaded
 
@@ -29,23 +30,17 @@ def _alignment_taxa_count(filepath: str) -> int:
 
 
 def _run_mafft(args):
-    extracted_seqs_dir, aligned_dir, filename, threads = args
+    binary, extracted_seqs_dir, aligned_dir, filename, threads = args
     filepath = os.path.join(extracted_seqs_dir, filename)
     aligned_dest = os.path.join(aligned_dir, filename)
-    cmd = ["mafft", "--auto", "--thread", str(threads), "--quiet", filepath]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True, env=_clean_subprocess_env())
+    cmd = [binary, "--auto", "--thread", str(threads), "--quiet", filepath]
+    result = run_capture(cmd, env=_clean_subprocess_env())
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, output=result.stdout, stderr=result.stderr
+        )
     with open(aligned_dest, "w") as f:
-        f.write(result.stdout.decode("utf-8") + "\n")
-
-
-def _run_mafft_linsi(args):
-    extracted_seqs_dir, aligned_dir, filename, threads = args
-    filepath = os.path.join(extracted_seqs_dir, filename)
-    aligned_dest = os.path.join(aligned_dir, filename)
-    cmd = ["mafft-linsi", "--auto", "--thread", str(threads), "--quiet", filepath]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True, env=_clean_subprocess_env())
-    with open(aligned_dest, "w") as f:
-        f.write(result.stdout.decode("utf-8") + "\n")
+        f.write(result.stdout + "\n")
 
 
 def _run_hmmalign(args):
@@ -127,7 +122,7 @@ def run_alignment(
 
     print(f"- ...running {cfg.aln_method}")
 
-    if cfg.aln_method == "mafft":
+    if cfg.aln_method in ("mafft", "mafft-linsi"):
         small = []
         large = []
         large_threads = max(1, min(4, cfg.num_cpus))
@@ -135,24 +130,11 @@ def run_alignment(
             filepath = os.path.join(extracted_seqs_dir, filename)
             taxa = _alignment_taxa_count(filepath)
             if taxa < 100:
-                small.append((extracted_seqs_dir, aligned_dir, filename, 1))
+                small.append((cfg.aln_method, extracted_seqs_dir, aligned_dir, filename, 1))
             else:
-                large.append((extracted_seqs_dir, aligned_dir, filename, large_threads))
+                large.append((cfg.aln_method, extracted_seqs_dir, aligned_dir, filename, large_threads))
         map_threaded(_run_mafft, large, max(1, min(len(large), cfg.num_cpus // large_threads if large else 1)))
         map_threaded(_run_mafft, small, cfg.num_cpus)
-    elif cfg.aln_method == "mafft-linsi":
-        small = []
-        large = []
-        large_threads = max(1, min(4, cfg.num_cpus))
-        for filename in files:
-            filepath = os.path.join(extracted_seqs_dir, filename)
-            taxa = _alignment_taxa_count(filepath)
-            if taxa < 100:
-                small.append((extracted_seqs_dir, aligned_dir, filename, 1))
-            else:
-                large.append((extracted_seqs_dir, aligned_dir, filename, large_threads))
-        map_threaded(_run_mafft_linsi, large, max(1, min(len(large), cfg.num_cpus // large_threads if large else 1)))
-        map_threaded(_run_mafft_linsi, small, cfg.num_cpus)
     else:
         split_dir = os.path.join(cfg.outdir, "models_split")
         _split_models(cfg.models_path, split_dir)
