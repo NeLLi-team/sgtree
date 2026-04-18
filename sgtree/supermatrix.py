@@ -123,10 +123,11 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
     df_conc.to_csv(table_path)
 
     # Build the concatenated FASTA directly from the in-memory DataFrame.
+    # Index once by SeqID + sort, then iterate rows — avoids O(n^2) boolean mask lookups.
     marker_cols = [c for c in df_conc.columns if c != "SeqID"]
+    indexed = df_conc.set_index("SeqID").sort_index()
     with open(concat_path, "w") as fp:
-        for seq_id in sorted(df_conc["SeqID"]):
-            row = df_conc.loc[df_conc["SeqID"] == seq_id, marker_cols].iloc[0]
+        for seq_id, row in indexed[marker_cols].iterrows():
             seq = "".join(str(v).replace("\n", "") for v in row.values)
             fp.write(f">{seq_id}\n{seq}\n")
 
