@@ -1541,10 +1541,9 @@ def _classify_gcp_proposals(proposals: list[dict]) -> list[dict]:
     markers = df["marker_name"].nunique()
 
     if genomes < GCP_MIN_GENOMES or markers < GCP_MIN_MARKERS:
-        import logging
-        logging.getLogger("sgtree").warning(
+        logger.warning(
             "GCP fallback: panel has %d genomes and %d markers (need >=%d and >=%d). "
-            "Using recipient_consensus classification.",
+            "Using legacy classification (_classify_singleton_proposals_legacy).",
             genomes, markers, GCP_MIN_GENOMES, GCP_MIN_MARKERS,
         )
         return _classify_singleton_proposals_legacy(
