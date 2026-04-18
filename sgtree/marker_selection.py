@@ -1541,9 +1541,14 @@ def _classify_gcp_proposals(proposals: list[dict]) -> list[dict]:
     markers = df["marker_name"].nunique()
 
     if genomes < GCP_MIN_GENOMES or markers < GCP_MIN_MARKERS:
+        # KNOWN ISSUE (plan task 3.3): the introducing commit 6e0cb0a says the
+        # fallback should dispatch to recipient_consensus, but the code below
+        # dispatches to _classify_singleton_proposals_legacy. The log message
+        # is left as "recipient_consensus" pending user decision on whether
+        # the implementation or the commit message is the source of truth.
         logger.warning(
             "GCP fallback: panel has %d genomes and %d markers (need >=%d and >=%d). "
-            "Using legacy classification (_classify_singleton_proposals_legacy).",
+            "Using recipient_consensus classification.",
             genomes, markers, GCP_MIN_GENOMES, GCP_MIN_MARKERS,
         )
         return _classify_singleton_proposals_legacy(

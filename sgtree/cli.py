@@ -467,6 +467,7 @@ def main():
             itol.write_heatmap(cfg, tree_final_path, "marker_counts.txt")
 
         except Exception as e:
+            logger.exception("sgtree final-tree/render phase failed")
             print(f"ERROR in final tree: {e.__doc__}\n {e}")
             import traceback
             traceback.print_exc()
