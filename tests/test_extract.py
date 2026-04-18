@@ -1,8 +1,8 @@
 import io
-import os
 import shutil
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from Bio import SeqIO
@@ -15,7 +15,8 @@ def _write(path: Path, text: str) -> None:
 
 
 def _records(path: Path) -> list[tuple[str, str]]:
-    return [(r.id, str(r.seq)) for r in SeqIO.parse(str(path), "fasta")]
+    with open(path) as handle:
+        return [(r.id, str(r.seq)) for r in SeqIO.parse(handle, "fasta")]
 
 
 class ConcatProteomesTests(unittest.TestCase):
@@ -26,17 +27,20 @@ class ConcatProteomesTests(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self._tmp, ignore_errors=True)
 
-    def test_concat_preserves_all_records_when_both_have_trailing_newline(self) -> None:
+    def test_concat_preserves_record_multiset_across_newline_variants(self) -> None:
+        # Inputs vary trailing newlines and include an intentional duplicate
+        # header across files. A multiset (Counter) assertion pins multiplicity
+        # so a silent dedup would fail.
         a = self.tmp / "a.faa"
         b = self.tmp / "b.faa"
         out = self.tmp / "combined.faa"
-        _write(a, ">g1|p1\nMKT\n>g1|p2\nAAA\n")
-        _write(b, ">g2|p1\nCCC\n>g2|p2\nDDD\n")
+        _write(a, ">g1|p1\nMKT\n>g1|p2\nAAA")         # no trailing newline
+        _write(b, ">g1|p1\nMKT\n>g2|p1\nCCC\n\n")     # dup header + extra blank
 
         _concat_proteomes([str(a), str(b)], str(out))
 
-        expected = set(_records(a)) | set(_records(b))
-        self.assertEqual(set(_records(out)), expected)
+        expected = Counter(_records(a)) + Counter(_records(b))
+        self.assertEqual(Counter(_records(out)), expected)
 
     def test_concat_inserts_separator_when_first_file_lacks_trailing_newline(self) -> None:
         # This is the protective behavior the legacy implementation relied on:
