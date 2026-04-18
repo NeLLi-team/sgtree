@@ -9,6 +9,43 @@ from sgtree import ani
 
 
 class AniTests(unittest.TestCase):
+    def test_minimap2_threads_scale_when_pair_count_is_below_cpu_budget(self):
+        # 3-genome input with cpus=16 -> 3 pairs, 3 workers, 5 threads each.
+        records = [
+            ani.GenomeRecord(
+                genome_id=f"G{i}",
+                source_role="query",
+                input_format="fna",
+                source_file=f"/tmp/G{i}.fna",
+                assembly_path=f"/tmp/G{i}.fna",
+                staged_proteome_path=None,
+                total_bases=1000,
+                contigs=1,
+            )
+            for i in range(3)
+        ]
+
+        # Capture the -t value passed to minimap2 via _run_cmd.
+        threads_seen: list[str] = []
+
+        def fake_run_cmd(cmd: list[str]):
+            # cmd like: ["minimap2","-x","asm5","-c","-t","<N>", target, query]
+            if cmd and cmd[0] == "minimap2":
+                t_index = cmd.index("-t")
+                threads_seen.append(cmd[t_index + 1])
+            import subprocess as _sp
+            return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with patch.object(ani, "_run_cmd", side_effect=fake_run_cmd):
+            # Force serial fallback so we observe every call in this process.
+            with patch.object(ani, "_map_with_fallback", side_effect=lambda fn, args, n: [fn(a) for a in args]):
+                ani.compute_pairwise_ani(records, backend="minimap2", cpus=16)
+
+        # 3 pairs x 2 directions = 6 minimap2 calls; all should use -t 5.
+        self.assertEqual(len(threads_seen), 6)
+        for t in threads_seen:
+            self.assertEqual(t, "5")
+
     def test_python_mcl_clusters_thresholded_pairs(self):
         labels = ["A", "B", "C"]
         rows = [

@@ -551,7 +551,9 @@ def _run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return result
 
 
-def _minimap2_direction(target: GenomeRecord, query: GenomeRecord) -> DirectionalAni:
+def _minimap2_direction(
+    target: GenomeRecord, query: GenomeRecord, threads: int = 1
+) -> DirectionalAni:
     if not target.assembly_path or not query.assembly_path:
         raise RuntimeError("minimap2 ANI requires assembly paths for both genomes")
     result = _run_cmd(
@@ -561,7 +563,7 @@ def _minimap2_direction(target: GenomeRecord, query: GenomeRecord) -> Directiona
             "asm5",
             "-c",
             "-t",
-            "1",
+            str(max(1, threads)),
             target.assembly_path,
             query.assembly_path,
         ]
@@ -606,10 +608,12 @@ def _symmetrize_ani(a_to_b: DirectionalAni, b_to_a: DirectionalAni) -> tuple[flo
     return ani, aligned_fraction
 
 
-def _pairwise_minimap2(args: tuple[GenomeRecord, GenomeRecord]) -> dict[str, object]:
-    genome_a, genome_b = args
-    a_to_b = _minimap2_direction(genome_a, genome_b)
-    b_to_a = _minimap2_direction(genome_b, genome_a)
+def _pairwise_minimap2(
+    args: tuple[GenomeRecord, GenomeRecord, int],
+) -> dict[str, object]:
+    genome_a, genome_b, threads = args
+    a_to_b = _minimap2_direction(genome_a, genome_b, threads)
+    b_to_a = _minimap2_direction(genome_b, genome_a, threads)
     ani, aligned_fraction = _symmetrize_ani(a_to_b, b_to_a)
     return {
         "genome_a": genome_a.genome_id,
@@ -754,12 +758,16 @@ def compute_pairwise_ani(
         )
     if backend == "skani":
         return _compute_skani_pairs(records, cpus)
-    pair_args = [
+    pair_args_raw = [
         (records[idx], records[jdx])
         for idx in range(len(records))
         for jdx in range(idx + 1, len(records))
     ]
-    return _map_with_fallback(_pairwise_minimap2, pair_args, cpus)
+    n_pairs = len(pair_args_raw)
+    workers = max(1, min(cpus, n_pairs)) if n_pairs else 1
+    threads_per_call = max(1, cpus // workers)
+    pair_args = [(a, b, threads_per_call) for a, b in pair_args_raw]
+    return _map_with_fallback(_pairwise_minimap2, pair_args, workers)
 
 
 def _run_python_mcl(
