@@ -8,6 +8,7 @@ import pandas as pd
 from Bio import SeqIO
 
 from sgtree import ani as ani_core
+from sgtree._fasta_utils import fasta_contig_bases_stats
 from sgtree.config import Config
 from sgtree.id_schema import sanitize_token
 from sgtree.input_stage import NUCLEOTIDE_EXTENSIONS, detect_input_format
@@ -18,13 +19,7 @@ REF_MANIFEST_NAME = "ref_manifest.tsv"
 
 
 def _fasta_stats(path: Path) -> tuple[int, int]:
-    contigs = 0
-    total_bases = 0
-    with path.open() as handle:
-        for record in SeqIO.parse(handle, "fasta"):
-            contigs += 1
-            total_bases += len(record.seq)
-    return contigs, total_bases
+    return fasta_contig_bases_stats(path)
 
 
 def _list_nucleotide_files(input_dir: str) -> list[Path]:

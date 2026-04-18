@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from Bio import SeqIO
 
+from sgtree._fasta_utils import fasta_contig_bases_stats
 from sgtree.id_schema import build_sequence_id, sanitize_token
 
 
@@ -23,13 +24,7 @@ class InputStageStats:
 
 
 def _fasta_size_stats(path: str) -> tuple[int, int]:
-    contigs = 0
-    total_bases = 0
-    with open(path) as handle:
-        for record in SeqIO.parse(handle, "fasta"):
-            contigs += 1
-            total_bases += len(record.seq)
-    return contigs, total_bases
+    return fasta_contig_bases_stats(path)
 
 
 def _list_files(input_path: str) -> list[str]:
