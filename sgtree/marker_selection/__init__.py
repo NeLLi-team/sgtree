@@ -2024,36 +2024,52 @@ def _group_robust_zscores(
     )
 
 
-def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
-    if not proposals:
-        return []
+_ML_NUMERIC_COLS = [
+    "delta_rf",
+    "neighbor_overlap",
+    "topoknn_score",
+    "branch_outlier",
+    "bitscore_outlier",
+    "recipient_consensus_score",
+    "species_anchor_score",
+    "species_anchor_purity",
+    "species_anchor_compactness_score",
+    "species_long_branch_z",
+    "species_long_branch_support",
+    "present_neighbor_count",
+    "present_neighbor_fraction",
+    "neighbor_anchor_purity",
+    "join_purity",
+    "purity_drop",
+    "anchor_knn_agreement",
+    "attachment_gap",
+]
 
-    from sklearn.covariance import MinCovDet
-    from sklearn.ensemble import IsolationForest
-    from sklearn.preprocessing import RobustScaler
+_ML_EMPTY_TRAIN_SCORE_COLUMNS = [
+    "iforest_anomaly",
+    "mahalanobis",
+    "genome_outlier_score",
+    "marker_outlier_score",
+    "ensemble_score_v1",
+    "genome_shape_signal",
+    "shape_support",
+    "anchor_support",
+    "genome_focus_score_v2",
+    "marker_top1_frequency",
+    "marker_rarity_weight",
+    "marker_penalized_score_v3",
+    "shape_penalized_score_v4",
+    "directed_support_v7",
+    "genome_gap_v8",
+    "genome_first_score_v8",
+]
 
+
+def _prepare_ml_features(
+    proposals: list[dict],
+) -> tuple[pd.DataFrame, list[str], list[str]]:
     df = pd.DataFrame(proposals).copy()
-    numeric_cols = [
-        "delta_rf",
-        "neighbor_overlap",
-        "topoknn_score",
-        "branch_outlier",
-        "bitscore_outlier",
-        "recipient_consensus_score",
-        "species_anchor_score",
-        "species_anchor_purity",
-        "species_anchor_compactness_score",
-        "species_long_branch_z",
-        "species_long_branch_support",
-        "present_neighbor_count",
-        "present_neighbor_fraction",
-        "neighbor_anchor_purity",
-        "join_purity",
-        "purity_drop",
-        "anchor_knn_agreement",
-        "attachment_gap",
-    ]
-    for col in numeric_cols:
+    for col in _ML_NUMERIC_COLS:
         df[col] = pd.to_numeric(df.get(col, 0.0), errors="coerce").fillna(0.0)
 
     df["panel_id"] = "runtime_panel"
@@ -2067,7 +2083,7 @@ def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
         & (df["species_anchor_score"] >= NEIGHBOR_ML_HIGH_CONF_MIN_ANCHOR)
     )
 
-    raw_features = numeric_cols + [
+    raw_features = _ML_NUMERIC_COLS + [
         "knn_disagreement",
         "join_impurity",
         "neighbor_impurity",
@@ -2081,28 +2097,30 @@ def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
     feature_cols.extend(f"zg_{feature}" for feature in raw_features)
     feature_cols.extend(f"zm_{feature}" for feature in raw_features)
 
-    train = df.loc[df["high_confidence"], feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return df, feature_cols, raw_features
+
+
+def _fit_anomaly_models(df: pd.DataFrame, feature_cols: list[str]) -> bool:
+    """Fit IsolationForest + MinCovDet on high-confidence rows.
+
+    Mutates df with ``iforest_anomaly`` and ``mahalanobis``. Returns True
+    if models were fit, False if the high-confidence slice was empty; in
+    the empty case, also writes zeros for every downstream score column so
+    the orchestrator can return early without calling the ranking stage.
+    """
+    from sklearn.covariance import MinCovDet
+    from sklearn.ensemble import IsolationForest
+    from sklearn.preprocessing import RobustScaler
+
+    train = (
+        df.loc[df["high_confidence"], feature_cols]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
     if train.empty:
-        for col in [
-            "iforest_anomaly",
-            "mahalanobis",
-            "genome_outlier_score",
-            "marker_outlier_score",
-            "ensemble_score_v1",
-            "genome_shape_signal",
-            "shape_support",
-            "anchor_support",
-            "genome_focus_score_v2",
-            "marker_top1_frequency",
-            "marker_rarity_weight",
-            "marker_penalized_score_v3",
-            "shape_penalized_score_v4",
-            "directed_support_v7",
-            "genome_gap_v8",
-            "genome_first_score_v8",
-        ]:
+        for col in _ML_EMPTY_TRAIN_SCORE_COLUMNS:
             df[col] = 0.0
-        return df.to_dict("records")
+        return False
 
     scaler = RobustScaler()
     x_train = scaler.fit_transform(train)
@@ -2127,7 +2145,18 @@ def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
             exc_info=True,
         )
         df["mahalanobis"] = 0.0
+    return True
 
+
+def _rank_genome_proposals(
+    df: pd.DataFrame, raw_features: list[str]
+) -> pd.DataFrame:
+    """Derive ensemble score, shape signal, marker-rarity penalty, and
+    per-genome top-row rankings from the fitted anomaly columns.
+
+    Returns a (possibly new) DataFrame because the genome_first_score_v8
+    back-merge replaces ``df``.
+    """
     genome_score_cols = [f"zg_{feature}" for feature in raw_features]
     marker_score_cols = [f"zm_{feature}" for feature in raw_features]
     df["genome_outlier_score"] = df[genome_score_cols].abs().mean(axis=1)
@@ -2231,6 +2260,17 @@ def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
     df["genome_first_score_v8"] = df["genome_first_score_v8_top"].fillna(df["genome_first_score_v8"])
     df = df.drop(columns=["genome_gap_v8_top", "genome_first_score_v8_top"])
     df.loc[~df["high_confidence"], "genome_first_score_v8"] = 0.0
+    return df
+
+
+def score_neighbor_ml_proposals(proposals: list[dict]) -> list[dict]:
+    if not proposals:
+        return []
+
+    df, feature_cols, raw_features = _prepare_ml_features(proposals)
+    if not _fit_anomaly_models(df, feature_cols):
+        return df.to_dict("records")
+    df = _rank_genome_proposals(df, raw_features)
     return df.to_dict("records")
 
 
