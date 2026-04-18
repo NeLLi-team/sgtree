@@ -4,6 +4,60 @@ import datetime
 from dataclasses import dataclass, field
 
 
+@dataclass(frozen=True)
+class SingletonThresholds:
+    """Immutable bundle of the singleton-classifier tunable constants.
+
+    Centralizes the ~30 numeric thresholds that currently live as module-level
+    globals in ``sgtree/marker_selection/__init__.py``. New code paths should
+    accept a ``SingletonThresholds`` argument and default to
+    ``DEFAULT_SINGLETON_THRESHOLDS`` instead of reading the globals directly,
+    which makes panel-specific overrides tractable without touching CLI.
+
+    Phase 6 deliberately does not replace the existing module-level constants;
+    those are kept for backward compatibility and grep-ability. Migration is
+    opt-in on a per-call-site basis.
+    """
+
+    composite_score_threshold: float = 2.0
+    composite_score_margin: float = 0.35
+
+    recipient_consensus_z_threshold: float = 3.0
+    recipient_consensus_min_score: float = 1.5
+    recipient_consensus_rank_margin: float = 0.15
+
+    contig_consensus_high_overlap: float = 0.6
+    contig_consensus_low_overlap: float = 0.2
+    contig_consensus_min_support: int = 2
+
+    neighbor_clade_min_present: int = 3
+    neighbor_clade_min_present_fraction: float = 0.6
+    neighbor_clade_min_species_anchor: float = 0.65
+    neighbor_clade_min_neighbor_purity: float = 0.75
+    neighbor_clade_min_purity_drop: float = 0.35
+    neighbor_clade_max_knn_agreement: float = 0.4
+    neighbor_clade_min_score: float = 2.0
+    neighbor_clade_min_recipient_support: float = 1.0
+
+    neighbor_ml_high_conf_min_present: int = 3
+    neighbor_ml_high_conf_min_fraction: float = 0.6
+    neighbor_ml_high_conf_min_anchor: float = 0.35
+
+    unknown_contig_delta_floor: float = 0.05
+    unknown_contig_topoknn_floor: float = 1.5
+    unknown_contig_recipient_floor: float = 1.5
+
+    gcp_combined_threshold: float = 0.80
+    gcp_outlier_count_threshold: int = 3
+    gcp_iforest_threshold: float = 0.5
+    gcp_z_threshold: float = 1.5
+    gcp_min_genomes: int = 3
+    gcp_min_markers: int = 3
+
+
+DEFAULT_SINGLETON_THRESHOLDS = SingletonThresholds()
+
+
 @dataclass
 class Config:
     genomedir: str
