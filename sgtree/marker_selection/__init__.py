@@ -117,6 +117,41 @@ def _load_score_table(table_path: str) -> tuple[pd.DataFrame, str]:
     return dfa, score_col
 
 
+_SCORE_TABLE_CACHE: dict[str, tuple[pd.DataFrame, str]] = {}
+_SPECIES_TREE_CACHE: dict[str, Tree] = {}
+
+
+def _cached_score_table(table_path: str) -> tuple[pd.DataFrame, str]:
+    """Return ``(score_table, score_col)`` for ``table_path``.
+
+    The parsed DataFrame is loaded once per process and reused; callers
+    treat the DataFrame as read-only. Workers dispatched via
+    ``map_processed`` populate the cache lazily on first hit and reuse it
+    across subsequent marker tasks in the same worker lifetime.
+    """
+    cached = _SCORE_TABLE_CACHE.get(table_path)
+    if cached is None:
+        cached = _load_score_table(table_path)
+        _SCORE_TABLE_CACHE[table_path] = cached
+    return cached
+
+
+def _cached_species_tree(species_tree_path: str) -> Tree:
+    """Return a *copy* of the parsed species tree at ``species_tree_path``.
+
+    The underlying ``ete3.Tree`` is parsed once per process. Each caller
+    gets a defensive copy because several callers mutate their local tree
+    (e.g. ``_propose_singleton_prune_worker`` and
+    ``build_singleton_output_tree`` call ``.prune(...)``). Tree.copy() is
+    O(nodes) but orders of magnitude cheaper than Newick parsing.
+    """
+    cached = _SPECIES_TREE_CACHE.get(species_tree_path)
+    if cached is None:
+        cached = Tree(species_tree_path)
+        _SPECIES_TREE_CACHE[species_tree_path] = cached
+    return cached.copy()
+
+
 def _get_ascore(identifier: str, score_table: pd.DataFrame, score_col: str) -> str:
     row = score_table.loc[identifier.replace("|", "/")]
     return row.name + ":" + str(float(row[score_col]))
@@ -301,12 +336,12 @@ def resolve_marker_tree(
     lock_references: bool,
     initial_kept: dict[tuple[str, str], str] | None = None,
 ) -> tuple[list[str], list[dict]]:
-    score_table, score_col = _load_score_table(table_path)
+    score_table, score_col = _cached_score_table(table_path)
     marker_tree = Tree(marker_tree_path)
     lst_nodes = [leaf.name for leaf in marker_tree.iter_leaves()]
     dups = _build_duplicate_map(lst_nodes, score_table, score_col)
     contig_support_map = _build_contig_support_map(score_table)
-    species_tree = Tree(species_tree_path)
+    species_tree = _cached_species_tree(species_tree_path)
 
     locked_genomes = set()
     if lock_references and ls_refs is not None:
@@ -1397,7 +1432,7 @@ def _build_marker_neighbor_context(
     hit_map = _load_contig_marker_hit_map(table_path)
     if not hit_map:
         return {}
-    species_tree = Tree(species_tree_path)
+    species_tree = _cached_species_tree(species_tree_path)
     tree_cache: dict[str, tuple[Tree, set[str]]] = {}
     marker_paths = {
         _marker_name_from_tree_path(filepath): filepath
@@ -2335,7 +2370,7 @@ def build_singleton_output_tree(
     candidate_tree.prune(remaining)
     if singleton_mode_uses_global_rf_gate(mode):
         td = _tree_to_genome_level(tf)
-        ti = Tree(species_tree_path)
+        ti = _cached_species_tree(species_tree_path)
         ti.prune([leaf.name for leaf in td.iter_leaves()])
         chosen_tree = choose_tree_by_rf(ti, tf, candidate_tree)
         if sorted(leaf.name for leaf in chosen_tree.iter_leaves()) == sorted(leaf.name for leaf in tf.iter_leaves()):
@@ -2369,7 +2404,7 @@ def _propose_singleton_prune_worker(args):
     tf = Tree(filepath)
     td = _tree_to_genome_level(tf)
     td_leaves = list(td.iter_leaves())
-    ti = Tree(species_tree_path)
+    ti = _cached_species_tree(species_tree_path)
     ti.prune([n.name for n in td_leaves])
 
     rf, maxrf, *_ = ti.robinson_foulds(td, unrooted_trees=True)
@@ -2389,7 +2424,7 @@ def _propose_singleton_prune_worker(args):
     score_table = None
     score_col = None
     if os.path.exists(table_path):
-        score_table, score_col = _load_score_table(table_path)
+        score_table, score_col = _cached_score_table(table_path)
     candidates = _score_singleton_candidates(
         species_tree=ti,
         working_tree=tf,

@@ -907,6 +907,68 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertEqual(classified[0]["singleton_class"], "ambiguous")
 
 
+class CachedLoaderTests(unittest.TestCase):
+    """Cover the process-local caches used by RF-distance workers."""
+
+    def setUp(self):
+        marker_selection._SCORE_TABLE_CACHE.clear()
+        marker_selection._SPECIES_TREE_CACHE.clear()
+
+    def tearDown(self):
+        marker_selection._SCORE_TABLE_CACHE.clear()
+        marker_selection._SPECIES_TREE_CACHE.clear()
+
+    def test_cached_score_table_parses_once_and_returns_same_object(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "table.csv")
+            pd.DataFrame(
+                [
+                    {"savedname": "A/p1", "score_bits": 100.0},
+                    {"savedname": "B/p1", "score_bits": 150.0},
+                ]
+            ).to_csv(path, index=False)
+
+            with patch.object(
+                marker_selection,
+                "_load_score_table",
+                wraps=marker_selection._load_score_table,
+            ) as wrapped_load:
+                first_df, first_col = marker_selection._cached_score_table(path)
+                second_df, second_col = marker_selection._cached_score_table(path)
+
+            self.assertEqual(wrapped_load.call_count, 1)
+            self.assertIs(first_df, second_df)
+            self.assertEqual(first_col, second_col)
+
+    def test_cached_species_tree_parses_once_and_returns_fresh_copies(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = str(Path(tmpdir) / "species.nwk")
+            Path(path).write_text("((A,B),(C,D));\n")
+
+            self.assertNotIn(path, marker_selection._SPECIES_TREE_CACHE)
+            first = marker_selection._cached_species_tree(path)
+            self.assertIn(path, marker_selection._SPECIES_TREE_CACHE)
+            cached_ref = marker_selection._SPECIES_TREE_CACHE[path]
+
+            second = marker_selection._cached_species_tree(path)
+            # Same underlying cached object, but distinct copies returned.
+            self.assertIs(marker_selection._SPECIES_TREE_CACHE[path], cached_ref)
+            self.assertIsNot(first, second)
+            self.assertIsNot(first, cached_ref)
+            self.assertIsNot(second, cached_ref)
+
+            # Mutating one copy does not affect the other or the cache.
+            first.prune(["A", "B"])
+            self.assertEqual(
+                sorted(leaf.name for leaf in second.iter_leaves()),
+                ["A", "B", "C", "D"],
+            )
+            self.assertEqual(
+                sorted(leaf.name for leaf in cached_ref.iter_leaves()),
+                ["A", "B", "C", "D"],
+            )
+
+
 def _synthetic_ml_proposals():
     proposals = []
     for g_idx in range(6):
