@@ -48,6 +48,7 @@ def run_check(
             "subprocess '%s' exited with code %s", cmd[0], exc.returncode
         )
         raise
+    logger.info("subprocess '%s' completed with code 0", cmd[0])
 
 
 def run_capture(
@@ -71,7 +72,15 @@ def run_capture(
         cwd=cwd,
         check=False,
     )
-    logger.info(
-        "subprocess '%s' completed with code %s", cmd[0], result.returncode
-    )
+    if result.returncode == 0:
+        logger.info(
+            "subprocess '%s' completed with code 0", cmd[0]
+        )
+    else:
+        logger.error(
+            "subprocess '%s' exited with code %s\nstderr:\n%s",
+            cmd[0],
+            result.returncode,
+            (result.stderr or "").rstrip(),
+        )
     return result

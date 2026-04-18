@@ -62,6 +62,24 @@ class RunCaptureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "hello")
 
+    def test_logs_stderr_on_non_zero_exit(self):
+        with patch("sgtree._subprocess.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["x"], returncode=2, stdout="", stderr="boom details"
+            )
+            with self.assertLogs("sgtree", level="ERROR") as cm:
+                run_capture(["x"])
+            self.assertTrue(any("boom details" in m for m in cm.output))
+
+    def test_forwards_env_and_cwd(self):
+        with patch("sgtree._subprocess.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(args=["x"], returncode=0)
+            env = {"FOO": "bar"}
+            run_capture(["x"], env=env, cwd="/tmp")
+            kwargs = mock_run.call_args.kwargs
+            self.assertEqual(kwargs["env"], env)
+            self.assertEqual(kwargs["cwd"], "/tmp")
+
 
 if __name__ == "__main__":
     unittest.main()
