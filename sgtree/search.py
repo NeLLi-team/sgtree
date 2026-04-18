@@ -13,6 +13,42 @@ from sgtree.id_schema import parse_savedname
 from sgtree.input_stage import detect_input_format, gene_call_inputs, write_genome_manifest
 
 
+def _count_proteins_per_marker(finaldf: pd.DataFrame) -> dict[str, dict[str, int]]:
+    """Count unique (proteinid, model) pairs per genome.
+
+    Returns a nested dict ``{genome_id: {model: count}}`` where count is the
+    number of distinct proteins from that genome that hit the model. Multi-domain
+    hits of the same ``(proteinid, model)`` pair collapse to one, preserving the
+    legacy dedup semantics pinned at ``sgtree/search.py::parse_hmmsearch`` before
+    vectorization.
+    """
+    if finaldf.empty:
+        return {}
+    df = finaldf[[0, 3]].copy()
+    df["_name"] = df[0].astype(str).str.split("|").str[0]
+    df["_key"] = df[0].astype(str) + "_" + df[3].astype(str)
+    unique = df.drop_duplicates("_key")
+    counts = unique.groupby(["_name", 3]).size()
+    result: dict[str, dict[str, int]] = {}
+    for (name, model), cnt in counts.items():
+        result.setdefault(str(name), {})[str(model)] = int(cnt)
+    return result
+
+
+def _drop_rows_for_genomes(finaldf: pd.DataFrame, genomes: set[str]) -> tuple[pd.DataFrame, int]:
+    """Drop rows whose ``row[0].split("|")[0]`` is in ``genomes``.
+
+    Returns the filtered DataFrame and the number of rows dropped. The scan is
+    a single vectorized boolean mask, replacing the legacy row-by-row iterrows
+    loop in ``parse_hmmsearch``.
+    """
+    if finaldf.empty or not genomes:
+        return finaldf, 0
+    names = finaldf[0].astype(str).str.split("|").str[0]
+    mask = names.isin(genomes)
+    return finaldf.loc[~mask], int(mask.sum())
+
+
 def _cap_namemodel_duplicates(df: pd.DataFrame, max_per_group: int = 5) -> pd.DataFrame:
     if df.empty:
         return df.copy()
@@ -170,22 +206,7 @@ def parse_hmmsearch(cfg: Config) -> tuple[pd.DataFrame, dict]:
     # read domtblout as whitespace-separated, all strings
     finaldf = pd.read_csv(cfg.hitsoutdir, comment="#", sep=r'\s+', header=None, dtype=str)
 
-    # count markers per genome
-    seen = set()
-    for _, row in finaldf.iterrows():
-        name = row[0].split("|")[0]
-        model = row[3]
-        proteinid = row[0]
-        key = f"{proteinid}_{model}"
-
-        if key not in seen:
-            seen.add(key)
-            if name not in dict_counts:
-                dict_counts[name] = {}
-            if model in dict_counts[name]:
-                dict_counts[name][model] += 1
-            else:
-                dict_counts[name][model] = 1
+    dict_counts = _count_proteins_per_marker(finaldf)
 
     # filter incomplete genomes
     incomplete_genomes = {
@@ -221,19 +242,14 @@ def parse_hmmsearch(cfg: Config) -> tuple[pd.DataFrame, dict]:
             removed_reasons.setdefault(genome, []).append("ani_cluster:non_representative")
         removed_genomes.update(non_representatives)
 
-    rows_to_drop = []
-    for idx, row in finaldf.iterrows():
-        name = row[0].split("|")[0]
-        if name in removed_genomes:
-            rows_to_drop.append(idx)
-    finaldf = finaldf.drop(rows_to_drop)
+    finaldf, rows_dropped = _drop_rows_for_genomes(finaldf, removed_genomes)
 
     with open(os.path.join(cfg.outdir, "log_genomes_removed.txt"), "w") as f:
         for genome in sorted(removed_genomes):
             reasons = ";".join(removed_reasons.get(genome, ["filtered"]))
             f.write(f"{genome}\t{reasons}\n")
 
-    print(f"AFTER hmmout {finaldf.shape} # rows deleted {len(rows_to_drop)}")
+    print(f"AFTER hmmout {finaldf.shape} # rows deleted {rows_dropped}")
 
     # write marker count matrix
     kept_counts = {
