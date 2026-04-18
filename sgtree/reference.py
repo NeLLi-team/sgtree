@@ -7,6 +7,7 @@ import subprocess
 import shutil
 import zipfile
 
+from sgtree._subprocess import run_check
 from sgtree.config import Config
 
 
@@ -173,7 +174,7 @@ def prepare_reference(cfg: Config) -> list[str] | None:
         "--is_ref", "yes",
     ]
     print("- ... Creating new reference directory\n", cmd)
-    subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
+    run_check(cmd, stdout=subprocess.PIPE)
 
     # archive intermediate files
     for filepath in glob.glob(os.path.join(ref_dir, "*")):
@@ -181,7 +182,7 @@ def prepare_reference(cfg: Config) -> list[str] | None:
         if os.path.isdir(filepath):
             if basename in ("tables", "concat", "extracted_seqs"):
                 continue
-            subprocess.run(
+            run_check(
                 ["zip", filepath] + glob.glob(os.path.join(filepath, "*")),
                 stdout=subprocess.DEVNULL,
             )
