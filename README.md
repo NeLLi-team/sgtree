@@ -122,7 +122,7 @@ Core method controls:
 - `--selection_max_rounds`: maximum coordinate-descent rounds in `coordinate` mode (default `5`).
 - `--selection_global_rounds`: rebuild the guide species tree and rerun duplicate cleanup for a small fixed number of rounds (default `1`).
 - `--lock_references`: keep reference duplicate resolution score-locked instead of RF-updating them (default `false`).
-- `--singles_mode`: `delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, or `neighbor_ml` when singleton filtering is enabled.
+- `--singles_mode`: `delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`, `topoknn`, or `hybrid` when singleton filtering is enabled. `topoknn` and `hybrid` are internal baselines and not intended for production use.
 - `--singles_min_rfdist`: minimum marker/global RF distance required before singleton pruning activates (default `0.25`).
 - `--keep_intermediates`: keep intermediate alignments/tables for debugging and benchmarking (default `false`).
 - `--ani_cluster`: run pairwise ANI on the combined query+reference genome set and keep one representative per cluster for the main SGTree species tree.
@@ -166,7 +166,7 @@ Practical selection guide:
 - `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
 - `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
-- `--selection_global_rounds 2` is the current practical setting for harder contamination benchmarks.
+- `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels (see `eval/full/50gen/`).
 - `--singles yes` is still heuristic, but the singleton branch is now explicitly split into four strategies.
 - `--singles_mode delta_rf` is the pure topology baseline. It chooses the leaf whose removal most improves marker-vs-species RF and is mainly useful as the historical comparison point.
 - `--singles_mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
@@ -174,6 +174,7 @@ Practical selection guide:
 - `--singles_mode recipient_consensus` requires positive RF/topology support and then scores the candidate sequence against the recipient genome's nearest species-tree neighborhood. This is currently the strongest calibrated singleton mode on the 50-gen replacement benchmarks because it preserves intended removals while sharply reducing collateral pruning.
 - `--singles_mode neighbor_clade` ignores whole-tree RF as the primary trigger and instead asks whether a marker copy agrees with the copy positions from the genome's closest species-tree neighbors. It is intended to recover replacement events that are locally inconsistent with a compact neighborhood even when the whole marker tree RF barely changes.
 - `--singles_mode neighbor_ml` is an experimental mode that scores all singleton candidates with the sandbox-derived unsupervised local-neighborhood policy and then prunes a small top-ranked set of genomes. It is intended for benchmark validation only until collateral is under control.
+- `--singles_mode gcp` (Genome Consistency Profiling) computes per-genome z-scores over marker-level features, then combines IsolationForest and HDBSCAN outlier signals to score each candidate. Only the single most deviant marker per genome can be flagged. Falls back to legacy classification via `_classify_singleton_proposals_legacy` when the panel is below `GCP_MIN_GENOMES` or `GCP_MIN_MARKERS` thresholds (`sgtree/marker_selection.py:1540`).
 - When `contig_id` cannot be recovered from the input headers, SGTree falls back to RF/topology/recipient-consensus signal instead of treating every singleton proposal as automatically ambiguous.
 - Typical inclusion presets:
 - Balanced: `--percent_models 10 --max_sdup 2 --max_dupl 0.25`
@@ -207,6 +208,7 @@ Python output (`--outdir` or `--save_dir`):
 ```text
 <outdir>/
   tree.nwk
+  tree_round_N.nwk               # marker-selection mode, one per rebuild round
   tree_final.nwk                 # marker-selection mode
   tree_final.png                 # marker-selection mode
   marker_count_matrix.csv
@@ -240,7 +242,16 @@ Python output (`--outdir` or `--save_dir`):
 sgtree/
   sgtree/                 # Python package implementation
     benchmarks/           # synthetic benchmark generation/evaluation package
-    ani.py                # ANI clustering + SNP-tree helpers
+    ani.py                # pairwise ANI computation + SNP-tree construction
+    ani_clustering.py     # MCL clustering over ANI graphs and representative selection
+    benchmark.py          # thin wrapper around the benchmarks package for CLI entrypoints
+    benchmark_dataset.py  # committed benchmark dataset descriptors and lookups
+    config.py             # tunable constants and shared configuration defaults
+    fasta_normalize.py    # header/alphabet normalization for FAA/FNA inputs
+    id_schema.py          # genome/protein ID schema helpers for `|`-delimited headers
+    input_stage.py        # input intake, validation, and proteome preparation stage
+    itol.py               # iTOL annotation file generation
+    parallel.py           # thread/process pool helpers used across the pipeline
   sgtree.py               # backward-compatible wrapper
   bin/                    # helper scripts and launch wrappers
   resources/
@@ -410,7 +421,6 @@ pixi run clean-runtime
 Use these commands for more targeted cleanup:
 
 ```bash
-pixi run clean-regression
 pixi run clean-benchmarks
 pixi run clean-reference-cache
 pixi run clean-all
