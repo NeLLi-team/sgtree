@@ -80,6 +80,57 @@ class SupermatrixTests(unittest.TestCase):
             widths = df[col].map(lambda s: len(s.replace("\n", "")))
             self.assertEqual(widths.nunique(), 1, f"column {col} has mixed widths")
 
+    def test_build_supermatrix_artifact_equivalence(self):
+        # 3 genomes x 3 markers with missing cells. Pins: table CSV columns,
+        # concat FASTA record ids and per-record length, X-gap fill widths per
+        # marker, column order (alphabetical after SeqID).
+        from Bio import SeqIO
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            trimmed_dir = tmp / "trimmed"
+            trimmed_dir.mkdir()
+            (trimmed_dir / "M1.faa").write_text(">g1|p1\nAAAA\n>g2|p2\nCCCC\n")
+            (trimmed_dir / "M2.faa").write_text(">g1|p1\nGGGGG\n>g3|p1\nTTTTT\n")
+            (trimmed_dir / "M3.faa").write_text(">g2|p1\nNN\n>g3|p1\nMM\n")
+
+            table_path = str(tmp / "table.csv")
+            concat_path = str(tmp / "concat.faa")
+            build_supermatrix(
+                str(trimmed_dir), str(tmp / "out"), table_path, concat_path
+            )
+
+            table = pd.read_csv(table_path).set_index("SeqID")
+            self.assertEqual(sorted(table.index), ["g1", "g2", "g3"])
+            marker_cols = [c for c in table.columns if c.endswith(".faa")]
+            self.assertEqual(marker_cols, ["M1.faa", "M2.faa", "M3.faa"])
+
+            def cell(genome: str, marker: str) -> str:
+                return str(table.loc[genome, marker]).replace("\n", "")
+
+            # Real cells preserved (ignore legacy trailing newline inside cells)
+            self.assertEqual(cell("g1", "M1.faa"), "AAAA")
+            self.assertEqual(cell("g2", "M1.faa"), "CCCC")
+            self.assertEqual(cell("g1", "M2.faa"), "GGGGG")
+            self.assertEqual(cell("g3", "M2.faa"), "TTTTT")
+
+            # NaN cells filled with X-gaps of the column's alignment width
+            self.assertEqual(cell("g3", "M1.faa"), "X" * 4)
+            self.assertEqual(cell("g2", "M2.faa"), "X" * 5)
+            self.assertEqual(cell("g1", "M3.faa"), "X" * 2)
+
+            with open(concat_path) as handle:
+                records = list(SeqIO.parse(handle, "fasta"))
+            self.assertEqual(sorted(r.id for r in records), ["g1", "g2", "g3"])
+            # Each genome's supermatrix row has width 4 + 5 + 2 = 11.
+            for rec in records:
+                self.assertEqual(len(rec.seq), 11)
+
+            seqs = {r.id: str(r.seq) for r in records}
+            self.assertEqual(seqs["g1"], "AAAA" + "GGGGG" + "X" * 2)
+            self.assertEqual(seqs["g2"], "CCCC" + "X" * 5 + "NN")
+            self.assertEqual(seqs["g3"], "X" * 4 + "TTTTT" + "MM")
+
     def test_fill_nan_gaps_uses_last_non_nan_width_for_leading_gaps(self):
         # Backward pass quirk: leading NaNs are filled with the BOTTOM-most
         # non-NaN row's width, not the immediately-following one.
