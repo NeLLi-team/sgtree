@@ -109,7 +109,7 @@ pixi run sgtree-python testgenomes/example_fna10 resources/models/UNI56.hmm --nu
 Core method controls:
 
 - `--aln`: `hmmalign`, `mafft`, `mafft-linsi`, or `famsa` (default `hmmalign`).
-- `--tree_method`: `fasttree` or `iqtree` (default `fasttree`) for both species tree and per-marker trees.
+- `--tree_method`: `veryfasttree`, `fasttree` (legacy alias), or `iqtree` (default `veryfasttree`) for both species tree and per-marker trees.
 - `--iqtree_fast`: apply `-fast` when `--tree_method iqtree` (default `true`).
 - `--iqtree_model`: IQ-TREE model string (default `LG+F+I+G4`).
 - `--selection_mode`: `coordinate` or `legacy` (default `coordinate`) for marker-selection duplicate cleanup.
@@ -159,7 +159,7 @@ Practical selection guide:
 - `--aln mafft` remains available as a de novo alternative. For alignments with fewer than 100 taxa, each MAFFT job runs single-threaded and SGTree parallelizes across markers; at 100 taxa or more, each MAFFT job uses 4 threads.
 - `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
 - `--aln famsa` is an additional de novo protein aligner. SGTree runs it with `-refine_mode on` and the default guide-tree mode, which is the accuracy-oriented choice over FAMSA's large-dataset medoid-tree heuristic.
-- `--tree_method fasttree` uses `VeryFastTree` as the packaged fast tree builder. `--tree_method iqtree --iqtree_fast true` is the practical higher-accuracy alternative.
+- `--tree_method veryfasttree` is the quick default. `--tree_method fasttree` remains accepted as a legacy alias and resolves to `VeryFastTree`. `--tree_method iqtree --iqtree_fast true` is the practical higher-accuracy alternative.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
 - `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels in the local benchmark suites.
 - `--singles yes` is still heuristic, but the singleton branch is now explicitly split into multiple named strategies (`delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`).

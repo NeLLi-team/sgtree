@@ -44,6 +44,13 @@ def _resolve_required_path_arg(
     return value
 
 
+def _normalize_tree_method(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == "fasttree":
+        return "veryfasttree"
+    return normalized
+
+
 def parse_args() -> Config:
     parser = argparse.ArgumentParser(
         description="SGTree - Species tree from marker gene phylogenies",
@@ -83,9 +90,9 @@ def parse_args() -> Config:
                         help="minimum marker-tree/global-tree RF distance required to activate singleton filtering")
     parser.add_argument("--aln", type=str, default="hmmalign",
                         help="alignment method: hmmalign, mafft, mafft-linsi, or famsa")
-    parser.add_argument("--tree_method", type=str, default="fasttree",
-                        choices=["fasttree", "iqtree"],
-                        help="tree builder for species and marker trees: fasttree or iqtree")
+    parser.add_argument("--tree_method", type=str, default="veryfasttree",
+                        choices=["veryfasttree", "fasttree", "iqtree"],
+                        help="tree builder for species and marker trees: veryfasttree (legacy alias: fasttree) or iqtree")
     parser.add_argument("--iqtree_fast", type=str, default="yes",
                         help="when --tree_method iqtree, use IQ-TREE -fast (yes/no)")
     parser.add_argument("--iqtree_model", type=str, default="LG+F+I+G4",
@@ -195,7 +202,7 @@ def parse_args() -> Config:
         input_format="auto",
         lflt_fraction=float(args.lflt) / 100,
         aln_method=args.aln,
-        tree_method=args.tree_method,
+        tree_method=_normalize_tree_method(args.tree_method),
         iqtree_fast=iqtree_fast,
         iqtree_model=args.iqtree_model,
         hmmsearch_cutoff=args.hmmsearch_cutoff,
@@ -353,11 +360,12 @@ def main():
         # Step 9: Build species tree
         t0 = datetime.datetime.now()
         t_start = time.time()
-        print(f"- ...running {cfg.tree_method}")
+        tree_label = "VeryFastTree" if cfg.tree_method == "veryfasttree" else cfg.tree_method
+        print(f"- ...running {tree_label}")
         tree_path = os.path.join(cfg.outdir, "tree.nwk")
         phylogeny.run_species_tree(cfg, concat_path, tree_path)
         tree_time = time.time() - t_start
-        print(f"\n{cfg.tree_method} done - total runtime: {tree_time:.1f} seconds")
+        print(f"\n{tree_label} done - total runtime: {tree_time:.1f} seconds")
         print("=" * 80 + "\n")
         timings[f"running {cfg.tree_method}"] = (t0, tree_time)
 
@@ -391,11 +399,12 @@ def main():
             # Build per-marker protein trees
             t0 = datetime.datetime.now()
             t_start = time.time()
-            print(f"- ...running {cfg.tree_method}, making protein trees for marker selection:")
+            tree_label = "VeryFastTree" if cfg.tree_method == "veryfasttree" else cfg.tree_method
+            print(f"- ...running {tree_label}, making protein trees for marker selection:")
             treeout_dir = os.path.join(cfg.outdir, "treeouts_protTrees")
             phylogeny.run_fasttree_per_marker(cfg, trimmed_prot_dir, treeout_dir)
             tree_time = time.time() - t_start
-            print(f"\n{cfg.tree_method} done - total runtime: {tree_time:.1f} seconds")
+            print(f"\n{tree_label} done - total runtime: {tree_time:.1f} seconds")
             print("=" * 80 + "\n")
 
             # RF-distance marker selection
@@ -485,10 +494,16 @@ def main():
         ani_clustering.build_cluster_snp_trees(cfg)
 
     if not cfg.is_ref and not cfg.keep_intermediates:
+        print("- ...finalizing outputs (archiving intermediates)")
         if cfg.marker_selection:
             cleanup.cleanup_marker_selection(cfg.outdir)
         else:
             cleanup.cleanup_basic(cfg.outdir)
+        print("- ...finalization complete")
+
+    final_tree_path = os.path.join(cfg.outdir, "tree_final.nwk" if cfg.marker_selection else "tree.nwk")
+    if os.path.exists(final_tree_path):
+        print(f"Final tree: {os.path.abspath(final_tree_path)}")
 
     print(f"START: {cfg.start_time} END {datetime.datetime.now()}")
 

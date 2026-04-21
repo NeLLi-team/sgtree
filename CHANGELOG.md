@@ -5,6 +5,72 @@ All notable changes to SGTree are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-04-20
+
+### Highlights
+
+- SGTree now uses a proper `src/sgtree` package layout with minimal
+  `pyproject.toml` metadata instead of the previous flat package tree.
+- The public bundled data footprint was reduced to one small
+  10-genome FNA example dataset under `testgenomes/example_fna10`;
+  benchmark-only source panels moved to the local ignored
+  `benchmarking/` area.
+- The built-in iTOL formatting and PNG tree rendering path was removed,
+  and the dependency surface was reduced accordingly.
+- `VeryFastTree` is now the only packaged fast tree backend, and
+  `famsa` is available as a new optional de novo alignment backend.
+
+### Added
+
+- `pyproject.toml` with `src`-layout package discovery.
+- `testgenomes/example_fna10/` as the single bundled FNA smoke-test
+  panel.
+- `--aln famsa` de novo alignment backend. SGTree runs FAMSA with
+  `-refine_mode on` and the default guide-tree mode.
+
+### Changed
+
+- **Packaging**
+  - The runtime package moved from `sgtree/` to `src/sgtree/`.
+  - Repo-local wrappers under `bin/` now resolve imports through the
+    `src` layout.
+  - Pixi tasks now run the package via
+    `env PYTHONPATH=src python -m sgtree ...`.
+
+- **CLI and UX**
+  - `--tree_method` now defaults to `veryfasttree`; `fasttree`
+    remains accepted as a legacy alias.
+  - Example task now uses `8` CPUs by default.
+  - Runs now print explicit finalization progress after tree building,
+    plus the absolute path to the final tree before the final timestamp
+    line.
+
+- **Data layout**
+  - Public README/examples/tasks now point at the small FNA example
+    dataset.
+  - Benchmark preparation defaults now write local benchmark assets
+    under `benchmarking/testgenomes/`.
+
+- **Dependencies**
+  - Version caps widened for `pandas`, `biopython`, `numpy`, and
+    `xgboost`.
+  - `VeryFastTree` replaces the old `FastTree` package fallback.
+
+### Removed
+
+- Built-in iTOL color-strip and heatmap output generation.
+- Built-in PNG tree rendering and the related helper scripts/tests.
+- Unused dependencies: `matplotlib`, `nbformat`, `nbclient`,
+  `ipykernel`, `quarto`, `mummer4`, and `fasttree`.
+- Obsolete root `sgtree.py` wrapper.
+
+### Fixed
+
+- The CLI now reports `VeryFastTree` consistently instead of showing
+  the stale `fasttree` label while actually executing `VeryFastTree`.
+- Long post-tree silent periods now show explicit cleanup/finalization
+  progress so short example runs do not appear hung.
+
 ## [1.1.0] - 2026-04-18
 
 ### Highlights

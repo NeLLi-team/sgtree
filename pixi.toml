@@ -1,6 +1,6 @@
 [workspace]
 name = "sgtree"
-version = "1.1.0"
+version = "1.2.0"
 description = "Species tree construction from marker gene phylogenies"
 channels = ["conda-forge", "bioconda"]
 platforms = ["linux-64", "osx-64", "osx-arm64"]
@@ -30,7 +30,7 @@ hdbscan = ">=0.8,<1"
 [tasks]
 sgtree = "env PYTHONPATH=src python -m sgtree"
 sgtree-python = "env PYTHONPATH=src python -m sgtree"
-example = "env PYTHONPATH=src python -m sgtree testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 4 --save_dir runs/example_basic"
+example = "env PYTHONPATH=src python -m sgtree testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8 --save_dir runs/example_basic"
 test-basic = "env PYTHONPATH=src python -m sgtree testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8"
 test-full = "env PYTHONPATH=src python -m sgtree testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8 --marker_selection yes --singles yes"
 test-unit = "env PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py'"
