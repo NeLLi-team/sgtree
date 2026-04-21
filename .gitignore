@@ -10,6 +10,9 @@
 # Private manuscript/runtime artifacts
 /docs/
 /runs/
+/eval/
+/PRD.md
+/progress.txt
 /DEL/
 
 # Local environments and caches
