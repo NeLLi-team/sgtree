@@ -67,9 +67,8 @@ pixi run sgtree \
   --selection_mode legacy
 ```
 
-`pixi run sgtree` and `pixi run sgtree-python` now invoke the same Python engine.
-Marker searches are run with `pyhmmer`. The default alignment mode is `--aln hmmalign`; `--aln mafft` and `--aln mafft-linsi` remain available for de novo marker alignment.
-Rendered PNG trees now use a headless-safe matplotlib/Biopython renderer.
+`pixi run sgtree` and `pixi run sgtree-python` both run the package from `src/sgtree/` via `PYTHONPATH=src`.
+Marker searches are run with `pyhmmer`. The default alignment mode is `--aln hmmalign`; `--aln mafft`, `--aln mafft-linsi`, and `--aln famsa` remain available for de novo marker alignment.
 
 Example with IQ-TREE and explicit HMM threshold mode:
 
@@ -105,17 +104,11 @@ Equivalent alias:
 pixi run sgtree-python testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8
 ```
 
-Backward-compatible wrapper:
-
-```bash
-pixi run ./sgtree.py testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8
-```
-
 ## Settings
 
 Core method controls:
 
-- `--aln`: `hmmalign`, `mafft`, or `mafft-linsi` (default `hmmalign`).
+- `--aln`: `hmmalign`, `mafft`, `mafft-linsi`, or `famsa` (default `hmmalign`).
 - `--tree_method`: `fasttree` or `iqtree` (default `fasttree`) for both species tree and per-marker trees.
 - `--iqtree_fast`: apply `-fast` when `--tree_method iqtree` (default `true`).
 - `--iqtree_model`: IQ-TREE model string (default `LG+F+I+G4`).
@@ -165,7 +158,8 @@ Practical selection guide:
 - `--aln hmmalign` is the default. It keeps alignment behavior tied to each profile HMM and remains the most profile-constrained option.
 - `--aln mafft` remains available as a de novo alternative. For alignments with fewer than 100 taxa, each MAFFT job runs single-threaded and SGTree parallelizes across markers; at 100 taxa or more, each MAFFT job uses 4 threads.
 - `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
-- `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
+- `--aln famsa` is an additional de novo protein aligner. SGTree runs it with `-refine_mode on` and the default guide-tree mode, which is the accuracy-oriented choice over FAMSA's large-dataset medoid-tree heuristic.
+- `--tree_method fasttree` uses `VeryFastTree` as the packaged fast tree builder. `--tree_method iqtree --iqtree_fast true` is the practical higher-accuracy alternative.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
 - `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels in the local benchmark suites.
 - `--singles yes` is still heuristic, but the singleton branch is now explicitly split into multiple named strategies (`delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`).
@@ -211,12 +205,8 @@ Python output (`--outdir` or `--save_dir`):
   tree.nwk
   tree_round_N.nwk               # marker-selection mode, one per rebuild round
   tree_final.nwk                 # marker-selection mode
-  tree_final.png                 # marker-selection mode
   marker_count_matrix.csv
-  marker_count.txt               # basic mode
-  marker_counts.txt              # marker-selection mode
   marker_selection_rf_values.txt # marker-selection mode
-  color.txt
   log_genomes_removed.txt
   genome_manifest.tsv
   proteomes_header_map_<input>.tsv
@@ -241,25 +231,25 @@ Python output (`--outdir` or `--save_dir`):
 
 ```text
 sgtree/
-  sgtree/                 # Python package implementation
-    benchmarks/           # synthetic benchmark generation/evaluation package
-    ani.py                # pairwise ANI computation + SNP-tree construction
-    ani_clustering.py     # MCL clustering over ANI graphs and representative selection
-    benchmark.py          # thin wrapper around the benchmarks package for CLI entrypoints
-    benchmark_dataset.py  # committed benchmark dataset descriptors and lookups
-    config.py             # tunable constants and shared configuration defaults
-    fasta_normalize.py    # header/alphabet normalization for FAA/FNA inputs
-    id_schema.py          # genome/protein ID schema helpers for `|`-delimited headers
-    input_stage.py        # input intake, validation, and proteome preparation stage
-    itol.py               # iTOL annotation file generation
-    parallel.py           # thread/process pool helpers used across the pipeline
-  sgtree.py               # backward-compatible wrapper
-  bin/                    # helper scripts and launch wrappers
+  src/
+    sgtree/               # Python package implementation
+      benchmarks/         # synthetic benchmark generation/evaluation package
+      ani.py              # pairwise ANI computation + SNP-tree construction
+      ani_clustering.py   # MCL clustering over ANI graphs and representative selection
+      benchmark.py        # thin wrapper around the benchmarks package for CLI entrypoints
+      benchmark_dataset.py# committed benchmark dataset descriptors and lookups
+      config.py           # tunable constants and shared configuration defaults
+      fasta_normalize.py  # header/alphabet normalization for FAA/FNA inputs
+      id_schema.py        # genome/protein ID schema helpers for `|`-delimited headers
+      input_stage.py      # input intake, validation, and proteome preparation stage
+      parallel.py         # thread/process pool helpers used across the pipeline
+  bin/                    # thin script wrappers and helper utilities
   resources/
     models/               # combined marker-set HMM files
   testgenomes/            # one bundled 10-genome FNA example dataset
   benchmarking/           # local benchmark assets and source panels (gitignored)
   runs/                   # local scratch outputs and transient rerun logs
+  pyproject.toml          # package metadata for the src-layout project
   pixi.toml               # reproducible environment + tasks
 ```
 
@@ -277,7 +267,7 @@ Run the built-in benchmark harness:
 pixi run benchmark-run
 ```
 
-Benchmark source data is local-only and lives under `benchmarking/`. The canonical benchmark implementation lives under `sgtree/benchmarks/`, while `runs/` remains disposable local scratch.
+Benchmark source data is local-only and lives under `benchmarking/`. The canonical benchmark implementation lives under `src/sgtree/benchmarks/`, while `runs/` remains disposable local scratch.
 
 Burkholderiaceae benchmark assets:
 
@@ -405,8 +395,7 @@ pixi run sgtree \
                                   |
                                   v
                        +----------+-----------+
-                       | tree_final.png       |
-                       | marker_counts.txt    |
+                       | tree_final.nwk       |
                        | marker_selection_rf  |
                        +----------------------+
 ```

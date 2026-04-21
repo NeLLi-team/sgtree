@@ -1066,11 +1066,11 @@ def _write_star_tree(genome_ids: list[str], tree_path: Path) -> None:
 
 def _run_fasttree_nt(alignment_path: Path, tree_path: Path) -> None:
     executable = next(
-        (name for name in ("VeryFastTree", "veryfasttree", "FastTree") if shutil.which(name)),
+        (name for name in ("VeryFastTree", "veryfasttree") if shutil.which(name)),
         None,
     )
     if executable is None:
-        raise FileNotFoundError("Could not find VeryFastTree/FastTree in PATH")
+        raise FileNotFoundError("Could not find VeryFastTree in PATH")
     _run_cmd([executable, "-threads", "1", "-nt", "-gtr", "-quiet", "-out", str(tree_path), str(alignment_path)])
 
 

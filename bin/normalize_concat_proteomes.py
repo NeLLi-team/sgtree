@@ -8,8 +8,9 @@ from pathlib import Path
 
 # Ensure local package imports work when invoked as a script.
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC_ROOT = ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from sgtree.fasta_normalize import normalize_and_concat_proteomes
 from sgtree.input_stage import detect_input_format, gene_call_inputs, write_genome_manifest

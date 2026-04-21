@@ -47,8 +47,6 @@ def cleanup_basic(outdir: str):
 
     # organize into temp directories
     os.makedirs(os.path.join(outdir, "temp"), exist_ok=True)
-    os.makedirs(os.path.join(outdir, "temp", "itol"), exist_ok=True)
-
     for f in glob.glob(os.path.join(outdir, "*.zip")):
         shutil.move(f, os.path.join(outdir, "temp"))
 
@@ -56,11 +54,6 @@ def cleanup_basic(outdir: str):
         src = os.path.join(outdir, name)
         if os.path.exists(src):
             shutil.move(src, os.path.join(outdir, "temp"))
-
-    for name in ("color.txt", "marker_count.txt"):
-        src = os.path.join(outdir, name)
-        if os.path.exists(src):
-            shutil.move(src, os.path.join(outdir, "temp", "itol"))
 
 
 def cleanup_marker_selection(outdir: str):
@@ -93,8 +86,6 @@ def cleanup_marker_selection(outdir: str):
             _zip_file_in_place(filepath)
 
     os.makedirs(os.path.join(outdir, "temp"), exist_ok=True)
-    os.makedirs(os.path.join(outdir, "temp", "itol"), exist_ok=True)
-
     for f in glob.glob(os.path.join(outdir, "*.zip")):
         shutil.move(f, os.path.join(outdir, "temp"))
 
@@ -103,8 +94,3 @@ def cleanup_marker_selection(outdir: str):
         src = os.path.join(outdir, name)
         if os.path.exists(src):
             shutil.move(src, os.path.join(outdir, "temp"))
-
-    for name in ("color.txt", "marker_counts.txt"):
-        src = os.path.join(outdir, name)
-        if os.path.exists(src):
-            shutil.move(src, os.path.join(outdir, "temp", "itol"))

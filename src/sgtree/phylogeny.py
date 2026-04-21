@@ -9,19 +9,10 @@ from sgtree.parallel import map_threaded
 
 
 def _fasttree_executable() -> str:
-    require_veryfasttree = os.environ.get("SGTREE_REQUIRE_VERYFASTTREE", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    candidates = ("VeryFastTree", "veryfasttree") if require_veryfasttree else ("VeryFastTree", "veryfasttree", "FastTree")
-    for candidate in candidates:
+    for candidate in ("VeryFastTree", "veryfasttree"):
         if shutil.which(candidate):
             return candidate
-    if require_veryfasttree:
-        raise FileNotFoundError("SGTREE_REQUIRE_VERYFASTTREE is set, but VeryFastTree is not in PATH")
-    raise FileNotFoundError("Could not find VeryFastTree/FastTree in PATH")
+    raise FileNotFoundError("Could not find VeryFastTree in PATH")
 
 
 # Per-executable cache of whether the binary accepts the `-threads` flag.
@@ -53,7 +44,7 @@ def _run_fasttree_with_optional_threads(threaded_cmd: list[str], fallback_cmd: l
 
 
 def run_fasttree(input_fasta: str, output_tree: str, threads: int):
-    """Run VeryFastTree/FastTree to build an approximate ML tree."""
+    """Run VeryFastTree to build an approximate ML tree."""
     executable = _fasttree_executable()
     threaded_cmd = [executable, "-threads", str(max(1, threads)), "-quiet", "-out", output_tree, input_fasta]
     fallback_cmd = [executable, "-quiet", "-out", output_tree, input_fasta]

@@ -1,6 +1,6 @@
 """Pin the import surface of `sgtree.marker_selection` and `sgtree.ani`.
 
-These symbols are imported by the pipeline (`sgtree/cli.py`), the
+These symbols are imported by the pipeline (`src/sgtree/cli.py`), the
 benchmarks layer, and external tooling under `bin/`. The Phase 4
 structural splits (module -> package) must preserve every name here.
 A regression that removes or renames an export breaks downstream
@@ -19,7 +19,7 @@ _MARKER_SELECTION_PUBLIC = [
     "_tree_to_genome_level",
     "choose_tree_by_rf",
     "prune_singletons",
-    # from sgtree/cli.py
+    # from src/sgtree/cli.py
     "run_noperm",
     "remove_singles",
     "write_cleaned_sequences",
@@ -32,7 +32,7 @@ _ANI_PUBLIC = [
     "GenomeRecord",
     "_merge_intervals",
     "choose_cluster_representative",
-    # from sgtree/ani_clustering.py (ani_core.*)
+    # from src/sgtree/ani_clustering.py (ani_core.*)
     "run_ani_clustering",
     "build_snp_trees",
 ]

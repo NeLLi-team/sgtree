@@ -43,6 +43,26 @@ def _run_mafft(args):
         f.write(result.stdout + "\n")
 
 
+def _run_famsa(args):
+    extracted_seqs_dir, aligned_dir, filename, threads = args
+    filepath = os.path.join(extracted_seqs_dir, filename)
+    aligned_dest = os.path.join(aligned_dir, filename)
+    cmd = [
+        "famsa",
+        "-t",
+        str(threads),
+        "-refine_mode",
+        "on",
+        filepath,
+        aligned_dest,
+    ]
+    result = run_capture(cmd, env=_clean_subprocess_env())
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, output=result.stdout, stderr=result.stderr
+        )
+
+
 def _run_hmmalign(args):
     extracted_seqs_dir, aligned_dir, model_hmm_path, filename = args
     filepath = os.path.join(extracted_seqs_dir, filename)
@@ -122,19 +142,25 @@ def run_alignment(
 
     print(f"- ...running {cfg.aln_method}")
 
-    if cfg.aln_method in ("mafft", "mafft-linsi"):
+    if cfg.aln_method in ("mafft", "mafft-linsi", "famsa"):
         small = []
         large = []
         large_threads = max(1, min(4, cfg.num_cpus))
         for filename in files:
             filepath = os.path.join(extracted_seqs_dir, filename)
             taxa = _alignment_taxa_count(filepath)
-            if taxa < 100:
-                small.append((cfg.aln_method, extracted_seqs_dir, aligned_dir, filename, 1))
+            if taxa < 100 or cfg.aln_method == "famsa":
+                payload = (extracted_seqs_dir, aligned_dir, filename, 1) if cfg.aln_method == "famsa" else (
+                    cfg.aln_method, extracted_seqs_dir, aligned_dir, filename, 1
+                )
+                small.append(payload)
             else:
                 large.append((cfg.aln_method, extracted_seqs_dir, aligned_dir, filename, large_threads))
-        map_threaded(_run_mafft, large, max(1, min(len(large), cfg.num_cpus // large_threads if large else 1)))
-        map_threaded(_run_mafft, small, cfg.num_cpus)
+        if cfg.aln_method == "famsa":
+            map_threaded(_run_famsa, small, cfg.num_cpus)
+        else:
+            map_threaded(_run_mafft, large, max(1, min(len(large), cfg.num_cpus // large_threads if large else 1)))
+            map_threaded(_run_mafft, small, cfg.num_cpus)
     else:
         split_dir = os.path.join(cfg.outdir, "models_split")
         _split_models(cfg.models_path, split_dir)

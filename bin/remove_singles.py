@@ -7,8 +7,9 @@ from pathlib import Path
 from ete3 import Tree
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC_ROOT = ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from sgtree.marker_selection import (
     _load_score_table,

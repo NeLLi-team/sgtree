@@ -9,7 +9,7 @@ import argparse
 
 from sgtree.config import Config
 from sgtree import search, extract, align, duplicates, supermatrix, phylogeny
-from sgtree import render, sgtree_logging, cleanup, reference
+from sgtree import sgtree_logging, cleanup, reference
 from sgtree import ani_clustering
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -82,7 +82,7 @@ def parse_args() -> Config:
     parser.add_argument("--singles_min_rfdist", type=float, default=0.25,
                         help="minimum marker-tree/global-tree RF distance required to activate singleton filtering")
     parser.add_argument("--aln", type=str, default="hmmalign",
-                        help="alignment method: hmmalign, mafft, or mafft-linsi")
+                        help="alignment method: hmmalign, mafft, mafft-linsi, or famsa")
     parser.add_argument("--tree_method", type=str, default="fasttree",
                         choices=["fasttree", "iqtree"],
                         help="tree builder for species and marker trees: fasttree or iqtree")
@@ -239,10 +239,6 @@ def main():
     # handle reference genomes
     ls_refs = reference.prepare_reference(cfg)
 
-    # write iTOL color file after any ANI-driven input collapsing
-    from sgtree import itol
-    itol.write_color_file(cfg)
-
     # print arguments
     print(f"arguments:\n"
           f" proteomes, fasta {cfg.genomedir}\n"
@@ -365,11 +361,6 @@ def main():
         print("=" * 80 + "\n")
         timings[f"running {cfg.tree_method}"] = (t0, tree_time)
 
-        # iTOL heatmap (for basic run)
-        if not cfg.marker_selection:
-            from sgtree import itol
-            itol.write_heatmap(cfg, tree_path, "marker_count.txt")
-
         # Write logfile
         sgtree_logging.write_logfile(cfg, timings)
 
@@ -486,22 +477,6 @@ def main():
         except Exception as e:
             logger.exception("sgtree marker-selection phase failed")
             print(f"ERROR in marker selection: {e.__doc__}\n {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-
-        try:
-            # Render tree
-            color_file = os.path.join(cfg.outdir, "color.txt")
-            render.render_tree(cfg, color_file)
-
-            # iTOL heatmap
-            from sgtree import itol
-            itol.write_heatmap(cfg, tree_final_path, "marker_counts.txt")
-
-        except Exception as e:
-            logger.exception("sgtree final-tree/render phase failed")
-            print(f"ERROR in final tree: {e.__doc__}\n {e}")
             import traceback
             traceback.print_exc()
             raise
