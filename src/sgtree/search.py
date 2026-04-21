@@ -158,10 +158,27 @@ def run_hmmsearch(cfg: Config):
     def _run_search(cpus: int):
         search_opts = dict(base_opts)
         search_opts["cpus"] = cpus
+        total = len(hmms)
+        last_reported = 0
+        last_report_time = start
         with easel.SequenceFile(cfg.proteomes_path, digital=True, alphabet=hmms[0].alphabet) as seq_file:
             with open(cfg.hitsoutdir, "wb") as hits_out:
                 for i, hits in enumerate(hmmer.hmmsearch(hmms, seq_file, **search_opts)):
                     hits.write(hits_out, format="domains", header=(i == 0))
+                    current = i + 1
+                    now = time.time()
+                    should_report = (
+                        current == total
+                        or current - last_reported >= 5
+                        or now - last_report_time >= 10
+                    )
+                    if should_report:
+                        print(
+                            f"- ...hmmsearch progress {current}/{total} markers",
+                            flush=True,
+                        )
+                        last_reported = current
+                        last_report_time = now
 
     try:
         _run_search(requested_cpus)
