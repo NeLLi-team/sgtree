@@ -100,8 +100,10 @@ def concat_inputs(cfg: Config) -> int:
     os.makedirs(cfg.outdir, exist_ok=True)
     map_path = os.path.join(cfg.outdir, "proteomes_header_map.tsv")
     input_format = cfg.input_format
+    print("-... preparing input data", flush=True)
     if input_format == "auto":
         input_format = detect_input_format(cfg.genomedir)
+    print(f"-... detected input format: {input_format}", flush=True)
     if input_format == "fna":
         staged = gene_call_inputs(
             cfg.genomedir,
@@ -109,12 +111,17 @@ def concat_inputs(cfg: Config) -> int:
             cfg.gene_call_map_path,
         )
         source_path = staged.staged_source
+        print(
+            f"-... gene-calling complete (genomes={staged.staged_genomes}, contigs={staged.contigs}, proteins={staged.staged_records})",
+            flush=True,
+        )
     elif input_format == "faa":
         staged = None
         source_path = cfg.genomedir
     else:
         raise ValueError(f"Unsupported input format: {input_format}")
 
+    print("-... writing genome manifest", flush=True)
     write_genome_manifest(
         cfg.genomedir,
         input_format=input_format,

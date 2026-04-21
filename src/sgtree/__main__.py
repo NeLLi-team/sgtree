@@ -1,7 +1,13 @@
+import sys
 import warnings
 
 
 warnings.simplefilter("ignore", SyntaxWarning)
+
+for stream in (sys.stdout, sys.stderr):
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(line_buffering=True, write_through=True)
 
 
 try:

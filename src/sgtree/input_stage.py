@@ -79,6 +79,9 @@ def gene_call_inputs(
     total_records = 0
     total_contigs = 0
     genomes = set()
+    total_files = len(files)
+
+    print(f"-... gene-calling {total_files} genome files with pyrodigal", flush=True)
 
     with open(map_path, "w") as map_handle:
         map_handle.write(
@@ -87,6 +90,7 @@ def gene_call_inputs(
         for file_index, path in enumerate(files, start=1):
             stem = os.path.splitext(os.path.basename(path))[0]
             genome_id = sanitize_token(stem, f"genome_{file_index:05d}")
+            print(f"- ...gene-calling genome {file_index}/{total_files}: {genome_id}", flush=True)
             genomes.add(genome_id)
             out_path = os.path.join(output_dir, genome_id + ".faa")
             with open(out_path, "w") as out_handle:
