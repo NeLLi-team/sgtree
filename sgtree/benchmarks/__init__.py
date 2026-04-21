@@ -3659,7 +3659,7 @@ def _parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     gen = subparsers.add_parser("generate", help="Generate a benchmark dataset")
-    gen.add_argument("--source-dir", default="testgenomes/Chloroflexi")
+    gen.add_argument("--source-dir", default="benchmarking/testgenomes/Chloroflexi")
     gen.add_argument("--models", default="resources/models/UNI56.hmm")
     gen.add_argument("--outdir", default="runs/benchmarks/dev_chloroflexi")
     gen.add_argument("--n-genomes", type=int, default=20)
@@ -3729,10 +3729,10 @@ def _parse_args() -> argparse.Namespace:
     prep.add_argument("--seed", type=int, default=42)
 
     prepburk = subparsers.add_parser("prepare-burkholderiaceae", help="Materialize the 50-genome Burkholderiaceae ANI benchmark panel")
-    prepburk.add_argument("--outdir", default="testgenomes/Burkholderiaceae50")
-    prepburk.add_argument("--lookup", default="testgenomes/burkholderiaceae50.lookup")
-    prepburk.add_argument("--taxonomy-tsv", default="testgenomes/burkholderiaceae50_taxonomy.tsv")
-    prepburk.add_argument("--selection-tsv", default="testgenomes/burkholderiaceae50_selection.tsv")
+    prepburk.add_argument("--outdir", default="benchmarking/testgenomes/Burkholderiaceae50")
+    prepburk.add_argument("--lookup", default="benchmarking/testgenomes/burkholderiaceae50.lookup")
+    prepburk.add_argument("--taxonomy-tsv", default="benchmarking/testgenomes/burkholderiaceae50_taxonomy.tsv")
+    prepburk.add_argument("--selection-tsv", default="benchmarking/testgenomes/burkholderiaceae50_selection.tsv")
     prepburk.add_argument("--taxonomy-db", default=str(DEFAULT_TAXONOMY_DB))
     prepburk.add_argument("--prefix", default="BURK__")
     prepburk.add_argument("--overwrite", action="store_true")

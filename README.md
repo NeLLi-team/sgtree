@@ -12,7 +12,7 @@ pixi install
 
 The environment is managed through `pixi.toml` and `pixi.lock`.
 
-Quick smoke test with the bundled small example dataset:
+Quick smoke test with the bundled 10-genome FNA example dataset:
 
 ```bash
 pixi run example
@@ -36,24 +36,24 @@ pixi run sgtree \
 ```
 
 The examples below use `--genomedir` and `--modeldir`. The legacy positional form (`pixi run sgtree <genomedir> <modeldir>`) remains supported.
+The bundled example is `testgenomes/example_fna10`, a small 10-genome FNA smoke-test panel. Larger source panels used for benchmarking live under the local-only `benchmarking/` directory and are not committed.
 
 Example run:
 
 ```bash
 pixi run sgtree \
-  --genomedir testgenomes/Chloroflexi \
+  --genomedir testgenomes/example_fna10 \
   --modeldir resources/models/UNI56.hmm
 ```
 
-Marker-selection run with references and singleton filtering:
+Marker-selection run with singleton filtering:
 
 ```bash
 pixi run sgtree \
-  --genomedir testgenomes/Chloroflexi \
+  --genomedir testgenomes/example_fna10 \
   --modeldir resources/models/UNI56.hmm \
   --outdir runs/manual_full \
   --marker_selection true \
-  --ref testgenomes/chlorref \
   --singles yes
 ```
 
@@ -61,10 +61,9 @@ Legacy baseline for direct comparisons:
 
 ```bash
 pixi run sgtree \
-  --genomedir testgenomes/Chloroflexi \
+  --genomedir testgenomes/example_fna10 \
   --modeldir resources/models/UNI56.hmm \
   --marker_selection true \
-  --ref testgenomes/chlorref \
   --selection_mode legacy
 ```
 
@@ -76,7 +75,7 @@ Example with IQ-TREE and explicit HMM threshold mode:
 
 ```bash
 pixi run sgtree \
-  --genomedir testgenomes/Chloroflexi \
+  --genomedir testgenomes/example_fna10 \
   --modeldir resources/models/UNI56.hmm \
   --tree_method iqtree \
   --iqtree_fast true \
@@ -89,7 +88,7 @@ Example with `fna` input plus ANI clustering and opt-in per-cluster SNP trees:
 pixi run benchmark-prepare-burkholderiaceae
 
 pixi run sgtree \
-  --genomedir testgenomes/Burkholderiaceae50 \
+  --genomedir benchmarking/testgenomes/Burkholderiaceae50 \
   --modeldir resources/models/UNI56.hmm \
   --outdir runs/burkholderiaceae_ani_benchmark \
   --num_cpus 24 \
@@ -103,13 +102,13 @@ pixi run sgtree \
 Equivalent alias:
 
 ```bash
-pixi run sgtree-python testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8
+pixi run sgtree-python testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8
 ```
 
 Backward-compatible wrapper:
 
 ```bash
-pixi run ./sgtree.py testgenomes/Chloroflexi resources/models/UNI56.hmm --num_cpus 8
+pixi run ./sgtree.py testgenomes/example_fna10 resources/models/UNI56.hmm --num_cpus 8
 ```
 
 ## Settings
@@ -168,7 +167,7 @@ Practical selection guide:
 - `--aln mafft-linsi` is slower but can help when marker-specific profile alignment is not desired.
 - `--tree_method fasttree` is the quick default; `--tree_method iqtree --iqtree_fast true` is a practical higher-accuracy option.
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
-- `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels (see `eval/full/50gen/`).
+- `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels in the local benchmark suites.
 - `--singles yes` is still heuristic, but the singleton branch is now explicitly split into multiple named strategies (`delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`).
 - `--singles_mode delta_rf` is the pure topology baseline. It chooses the leaf whose removal most improves marker-vs-species RF and is mainly useful as the historical comparison point.
 - `--singles_mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
@@ -258,8 +257,8 @@ sgtree/
   bin/                    # helper scripts and launch wrappers
   resources/
     models/               # combined marker-set HMM files
-  testgenomes/            # example query/reference data
-  eval/                   # committed benchmark/evaluation metadata packages
+  testgenomes/            # one bundled 10-genome FNA example dataset
+  benchmarking/           # local benchmark assets and source panels (gitignored)
   runs/                   # local scratch outputs and transient rerun logs
   pixi.toml               # reproducible environment + tasks
 ```
@@ -278,15 +277,15 @@ Run the built-in benchmark harness:
 pixi run benchmark-run
 ```
 
-The benchmark generator derives a clean truth panel automatically from the bundled Chloroflexi proteomes and `UNI56.hmm`, then creates duplicate, triplicate, and replacement scenarios against a fixed truth tree. The canonical benchmark implementation lives under `sgtree/benchmarks/`. Committed evaluation metadata and compact benchmark dataset descriptions now live under [`eval/`](/home/fschulz/dev/software/sgtree/eval), while `runs/` is treated as disposable local scratch.
+Benchmark source data is local-only and lives under `benchmarking/`. The canonical benchmark implementation lives under `sgtree/benchmarks/`, while `runs/` remains disposable local scratch.
 
 Burkholderiaceae benchmark assets:
 
-- `pixi run benchmark-prepare-burkholderiaceae` materializes the requested 50-genome panel under [`testgenomes/Burkholderiaceae50`](/home/fschulz/dev/software/sgtree/testgenomes/Burkholderiaceae50).
+- `pixi run benchmark-prepare-burkholderiaceae` materializes the requested 50-genome panel under `benchmarking/testgenomes/Burkholderiaceae50`.
 - The same command writes taxonomy sidecars:
-  - [`testgenomes/burkholderiaceae50.lookup`](/home/fschulz/dev/software/sgtree/testgenomes/burkholderiaceae50.lookup)
-  - [`testgenomes/burkholderiaceae50_taxonomy.tsv`](/home/fschulz/dev/software/sgtree/testgenomes/burkholderiaceae50_taxonomy.tsv)
-  - [`testgenomes/burkholderiaceae50_selection.tsv`](/home/fschulz/dev/software/sgtree/testgenomes/burkholderiaceae50_selection.tsv)
+  - `benchmarking/testgenomes/burkholderiaceae50.lookup`
+  - `benchmarking/testgenomes/burkholderiaceae50_taxonomy.tsv`
+  - `benchmarking/testgenomes/burkholderiaceae50_selection.tsv`
 - The curated panel contains `20` genus/species buckets:
   - `18` singleton species from distinct genera
   - one `6`-strain species cluster
@@ -295,7 +294,7 @@ Burkholderiaceae benchmark assets:
 
 ```bash
 pixi run sgtree \
-  --genomedir testgenomes/Burkholderiaceae50 \
+  --genomedir benchmarking/testgenomes/Burkholderiaceae50 \
   --modeldir resources/models/UNI56.hmm \
   --outdir runs/burkholderiaceae_ani_benchmark \
   --num_cpus 24 \
@@ -307,7 +306,7 @@ pixi run sgtree \
 ```
 
 - Verified outputs for that run:
-  - `20` ANI representatives in [`runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv`](/home/fschulz/dev/software/sgtree/runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv)
+  - `20` ANI representatives in `runs/burkholderiaceae_ani_benchmark/ani/ani_representatives.tsv`
   - one `26`-member ANI cluster with a `524`-site SNP alignment after filtering to shared-core UNI56 backbone contigs
   - one `6`-member ANI cluster with no variable SNP sites, reported explicitly as `no_snp_sites`
 
@@ -414,7 +413,7 @@ pixi run sgtree \
 
 ## Repository Hygiene
 
-Use this command for a clean runtime workspace between runs. This does not delete benchmark outputs:
+Use this command for a clean runtime workspace between runs. This does not delete benchmark outputs or local benchmark source data in `benchmarking/`:
 
 ```bash
 pixi run clean-runtime

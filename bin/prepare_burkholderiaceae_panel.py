@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prepare Burkholderiaceae benchmark selection manifests and local test data."""
+"""Prepare Burkholderiaceae benchmark selection manifests and local benchmark data."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 NELLI_ROOT = (ROOT / ".." / ".." / "nelli-genomes-db").resolve()
 DB_PATH = NELLI_ROOT / "resources" / "database" / "gtdb_genomes.duckdb"
-OUT_DIR = ROOT / "testgenomes"
+OUT_DIR = ROOT / "benchmarking" / "testgenomes"
 REQUESTED_SELECTION = OUT_DIR / "burkholderiaceae_requested_50.tsv"
 REQUESTED_LOOKUP = OUT_DIR / "burkholderiaceae_requested_50.lookup.tsv"
 REQUESTED_LOOKUP_SIMPLE = OUT_DIR / "burkholderiaceae_requested_50.lookup"
