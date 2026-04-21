@@ -28,13 +28,36 @@ def _parse_bool(value: str | bool, *, flag: str) -> bool:
     raise ValueError(f"{flag} expects one of: yes/no, true/false, 1/0")
 
 
-def parse_args() -> Config:
-    parser = argparse.ArgumentParser(description="SGTree - Species tree from marker gene phylogenies")
+def _resolve_required_path_arg(
+    parser: argparse.ArgumentParser,
+    *,
+    positional: str | None,
+    flagged: str | None,
+    name: str,
+) -> str:
+    if flagged is None and positional is None:
+        parser.error(f"the following arguments are required: {name}")
+    if flagged is not None and positional is not None and flagged != positional:
+        parser.error(f"{name} specified with conflicting values: positional={positional!r}, flag={flagged!r}")
+    value = flagged if flagged is not None else positional
+    assert value is not None
+    return value
 
-    parser.add_argument("genomedir", type=str,
+
+def parse_args() -> Config:
+    parser = argparse.ArgumentParser(
+        description="SGTree - Species tree from marker gene phylogenies",
+        epilog="Provide the required inputs either as positional arguments or with --genomedir/--modeldir.",
+    )
+
+    parser.add_argument("genomedir", nargs="?", type=str,
                         help="directory containing .faa proteomes or .fna assemblies (or a concatenated fasta)")
-    parser.add_argument("modeldir", type=str,
+    parser.add_argument("modeldir", nargs="?", type=str,
                         help="path to marker-set .hmm file (legacy: directory of per-marker .hmm files)")
+    parser.add_argument("--genomedir", dest="genomedir_flag", metavar="GENOMEDIR", type=str, default=None,
+                        help="directory containing .faa proteomes or .fna assemblies (flag alias for the required input)")
+    parser.add_argument("--modeldir", dest="modeldir_flag", metavar="MODELDIR", type=str, default=None,
+                        help="path to marker-set .hmm file (flag alias for the required input)")
     parser.add_argument("--ref_concat", type=str, default=None,
                         help="path to store reference directory concat files")
     parser.add_argument("--num_cpus", type=int, default=8,
@@ -107,8 +130,18 @@ def parse_args() -> Config:
     start_time = str(datetime.datetime.now())
 
     # build output directory path
-    genomedir = args.genomedir.rstrip("/")
-    modeldir = args.modeldir.rstrip("/")
+    genomedir = _resolve_required_path_arg(
+        parser,
+        positional=args.genomedir,
+        flagged=args.genomedir_flag,
+        name="genomedir",
+    ).rstrip("/")
+    modeldir = _resolve_required_path_arg(
+        parser,
+        positional=args.modeldir,
+        flagged=args.modeldir_flag,
+        name="modeldir",
+    ).rstrip("/")
 
     if args.save_dir:
         outdir = args.save_dir

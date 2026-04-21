@@ -35,6 +35,8 @@ pixi run sgtree \
   --modeldir <path to marker set .hmm>
 ```
 
+The examples below use `--genomedir` and `--modeldir`. The legacy positional form (`pixi run sgtree <genomedir> <modeldir>`) remains supported.
+
 Example run:
 
 ```bash
@@ -192,8 +194,8 @@ MLCAFAEEEAKIAETVGKVATELKVKKLLSDFATKEGEEHISTYNKIAMTAKAEGYADIEAMLCAFAEEEAKLQKL
 
 Normalization behavior:
 
-- Directory input (`--genomedir <dir>`): one genome/proteome per file; genome id is derived from filename stem.
-- Single FASTA input (`--genomedir <file>`): if headers already contain `genome|protein`, the genome part is preserved.
+- Directory input (`--genomedir <dir>` or positional `genomedir`): one genome/proteome per file; genome id is derived from filename stem.
+- Single FASTA input (`--genomedir <file>` or positional `genomedir`): if headers already contain `genome|protein`, the genome part is preserved.
 - `fna` input is gene-called with `pyrodigal` before marker search; the gene-call table is written as `gene_calls.tsv`.
 - Headers and IDs are sanitized to avoid delimiter collisions.
 - Malformed header joins (for example `...*>next_header`) are repaired before parsing.

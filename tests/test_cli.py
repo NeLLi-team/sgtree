@@ -12,12 +12,31 @@ class CliTests(unittest.TestCase):
             cfg = parse_args()
         self.assertEqual(cfg.aln_method, "hmmalign")
 
+    def test_required_inputs_accept_flag_aliases(self):
+        argv = ["sgtree", "--genomedir", "input_dir", "--modeldir", "models.hmm"]
+        with patch.object(sys, "argv", argv):
+            cfg = parse_args()
+        self.assertEqual(cfg.genomedir, "input_dir")
+        self.assertEqual(cfg.modeldir, "models.hmm")
+
     def test_snp_defaults_to_disabled(self):
         argv = ["sgtree", "input_dir", "models.hmm"]
         with patch.object(sys, "argv", argv):
             cfg = parse_args()
         self.assertFalse(cfg.snp)
         self.assertFalse(cfg.ani_cluster)
+
+    def test_required_input_conflict_between_positional_and_flag_fails(self):
+        argv = [
+            "sgtree",
+            "input_dir",
+            "models.hmm",
+            "--genomedir",
+            "other_input_dir",
+        ]
+        with patch.object(sys, "argv", argv):
+            with self.assertRaises(SystemExit):
+                parse_args()
 
     def test_snp_requires_ani_cluster(self):
         argv = ["sgtree", "input_dir", "models.hmm", "--snp", "yes"]
