@@ -1,7 +1,9 @@
+import io
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import pandas as pd
@@ -80,7 +82,8 @@ class InputStageTests(unittest.TestCase):
             original = sys.modules.get("pyrodigal")
             sys.modules["pyrodigal"] = fake_module
             try:
-                stats = gene_call_inputs(str(fna_dir), str(out_dir), str(tmp / "gene_calls.tsv"))
+                with redirect_stdout(io.StringIO()):
+                    stats = gene_call_inputs(str(fna_dir), str(out_dir), str(tmp / "gene_calls.tsv"))
             finally:
                 if original is None:
                     del sys.modules["pyrodigal"]

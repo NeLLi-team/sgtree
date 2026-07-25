@@ -3,6 +3,7 @@ import glob
 import csv
 import logging
 import math
+import shutil
 import statistics
 import numpy as np
 
@@ -12,6 +13,7 @@ from ete3 import Tree
 
 from sgtree.config import Config
 from sgtree.id_schema import parse_savedname, parse_sequence_id
+from sgtree.marker_selection.loo_profile import score_loo_profiles
 from sgtree.parallel import map_processed, map_threaded
 
 
@@ -59,7 +61,7 @@ GCP_OUTLIER_COUNT_THRESHOLD = 3
 GCP_IFOREST_THRESHOLD = 0.5
 GCP_Z_THRESHOLD = 1.5
 GCP_MIN_GENOMES = 3
-GCP_MIN_MARKERS = 3
+GCP_MIN_MARKERS = 5
 
 
 def choose_best_candidate(
@@ -459,7 +461,7 @@ def _process_tree_worker(args):
             f.write(f"{item}\n")
         f.write(f"{len(removed)} {len(cleaned_nodes) + len(removed)}\n{'*' * 80}\n")
 
-    t = Tree(filepath)
+    t = Tree(filepath, format=1)
     t_final = t.copy()
     t_final.prune(cleaned_nodes)
     t_final.write(
@@ -665,7 +667,12 @@ def _canonical_singleton_mode(mode: str) -> str:
 
 
 def singleton_mode_uses_global_rf_gate(mode: str) -> bool:
-    return _canonical_singleton_mode(mode) not in {"neighbor_clade", "neighbor_ml", "gcp"}
+    """Return whether automatic pruning uses the final RF safeguard.
+
+    Retained for callers of the previous policy helper. Every supported mode
+    now uses the safeguard.
+    """
+    return True
 
 
 def _nearest_genome_neighbor_profile(
@@ -1224,18 +1231,22 @@ def choose_singleton_prune(
     score_table: pd.DataFrame | None = None,
     score_col: str | None = None,
     alignment_path: str | None = None,
+    scored_candidates: list[dict] | None = None,
 ) -> dict | None:
     mode = _canonical_singleton_mode(mode)
     if len(list(working_tree.iter_leaves())) <= 4:
         return None
-    candidates = _score_singleton_candidates(
-        species_tree,
-        working_tree,
-        k=k,
-        score_table=score_table,
-        score_col=score_col,
-        alignment_path=alignment_path,
-    )
+    if scored_candidates is None:
+        candidates = _score_singleton_candidates(
+            species_tree,
+            working_tree,
+            k=k,
+            score_table=score_table,
+            score_col=score_col,
+            alignment_path=alignment_path,
+        )
+    else:
+        candidates = [dict(candidate) for candidate in scored_candidates]
     if not candidates:
         return None
 
@@ -1589,7 +1600,65 @@ def _classify_neighbor_clade_proposals(proposals: list[dict]) -> list[dict]:
     return classified
 
 
-def _classify_gcp_proposals(proposals: list[dict]) -> list[dict]:
+def _classify_recipient_consensus_fallback_proposals(
+    proposals: list[dict],
+    *,
+    contig_marker_context: dict[tuple[str, str], set[str]] | None = None,
+) -> list[dict]:
+    contig_marker_context = contig_marker_context or {}
+    by_marker: dict[str, list[dict]] = {}
+    for proposal in proposals:
+        by_marker.setdefault(str(proposal.get("marker_name", "")), []).append(dict(proposal))
+
+    selected: dict[tuple[str, str], dict] = {}
+    scored: dict[tuple[str, str], dict] = {}
+    for marker_name, marker_proposals in by_marker.items():
+        candidates = [dict(proposal) for proposal in marker_proposals]
+        chosen = _choose_ranked_recipient_candidate(candidates)
+        for candidate in candidates:
+            key = (marker_name, str(candidate.get("leaf_name", "")))
+            if "recipient_rank_score" in candidate:
+                scored[key] = {
+                    "recipient_rank_score": float(candidate["recipient_rank_score"]),
+                    "score": float(candidate["recipient_rank_score"]),
+                }
+            if "recipient_rank_gap" in candidate:
+                scored.setdefault(key, {})["recipient_rank_gap"] = float(candidate["recipient_rank_gap"])
+        if chosen is not None:
+            finalized = _finalize_singleton_choice(chosen, score_key="recipient_rank_score")
+            selected[(marker_name, str(finalized.get("leaf_name", "")))] = finalized
+
+    selected_classified = _classify_singleton_proposals_legacy(
+        list(selected.values()),
+        contig_marker_context=contig_marker_context,
+    )
+    selected_lookup: dict[tuple[str, str], dict] = {}
+    for updated in selected_classified:
+        if str(updated.get("contig_id", "unknown_contig")) == "unknown_contig" and _strong_unknown_contig_signal(updated):
+            updated["singleton_class"] = "contamination_candidate"
+        updated.setdefault("contig_consensus_score", 0.0)
+        selected_lookup[(str(updated.get("marker_name", "")), str(updated.get("leaf_name", "")))] = updated
+
+    classified: list[dict] = []
+    for proposal in proposals:
+        key = (str(proposal.get("marker_name", "")), str(proposal.get("leaf_name", "")))
+        updated = dict(proposal)
+        updated.update(scored.get(key, {}))
+        if key in selected_lookup:
+            updated.update(selected_lookup[key])
+        else:
+            updated.setdefault("score", float(updated.get("recipient_rank_score", 0.0)))
+            updated.setdefault("singleton_class", "clean")
+            updated.setdefault("contig_consensus_score", 0.0)
+        classified.append(updated)
+    return classified
+
+
+def _classify_gcp_proposals(
+    proposals: list[dict],
+    *,
+    contig_marker_context: dict[tuple[str, str], set[str]] | None = None,
+) -> list[dict]:
     """Classify singleton proposals using Genome Consistency Profiling.
 
     Computes per-genome z-scores across markers, then combines outlier count,
@@ -1606,19 +1675,14 @@ def _classify_gcp_proposals(proposals: list[dict]) -> list[dict]:
     markers = df["marker_name"].nunique()
 
     if genomes < GCP_MIN_GENOMES or markers < GCP_MIN_MARKERS:
-        # KNOWN ISSUE (plan task 3.3): the introducing commit 6e0cb0a says the
-        # fallback should dispatch to recipient_consensus, but the code below
-        # dispatches to _classify_singleton_proposals_legacy. The log message
-        # is left as "recipient_consensus" pending user decision on whether
-        # the implementation or the commit message is the source of truth.
         logger.warning(
             "GCP fallback: panel has %d genomes and %d markers (need >=%d and >=%d). "
             "Using recipient_consensus classification.",
             genomes, markers, GCP_MIN_GENOMES, GCP_MIN_MARKERS,
         )
-        return _classify_singleton_proposals_legacy(
+        return _classify_recipient_consensus_fallback_proposals(
             proposals,
-            contig_marker_context={},
+            contig_marker_context=contig_marker_context,
         )
 
     feature_cols = [c for c in GCP_KEY_FEATURES if c in df.columns]
@@ -1736,7 +1800,10 @@ def classify_singleton_proposals(
 ) -> list[dict]:
     mode = _canonical_singleton_mode(mode)
     if mode == "gcp":
-        return _classify_gcp_proposals(proposals)
+        return _classify_gcp_proposals(
+            proposals,
+            contig_marker_context=contig_marker_context,
+        )
     if mode == "neighbor_clade":
         return _classify_neighbor_clade_proposals(proposals)
     if mode == "neighbor_ml":
@@ -2362,8 +2429,10 @@ def build_singleton_output_tree(
     marker_tree_path: str,
     species_tree_path: str,
     accepted_leaf_names: list[str],
-    mode: str,
+    mode: str | None = None,
 ) -> tuple[Tree, str]:
+    if mode is not None and not singleton_mode_uses_global_rf_gate(mode):
+        raise ValueError(f"Singleton mode {mode!r} bypasses the RF safeguard")
     tf = Tree(marker_tree_path)
     accepted_leaf_set = {str(name) for name in accepted_leaf_names if str(name)}
     if not accepted_leaf_set:
@@ -2379,15 +2448,13 @@ def build_singleton_output_tree(
 
     candidate_tree = tf.copy()
     candidate_tree.prune(remaining)
-    if singleton_mode_uses_global_rf_gate(mode):
-        td = _tree_to_genome_level(tf)
-        ti = _cached_species_tree(species_tree_path)
-        ti.prune([leaf.name for leaf in td.iter_leaves()])
-        chosen_tree = choose_tree_by_rf(ti, tf, candidate_tree)
-        if sorted(leaf.name for leaf in chosen_tree.iter_leaves()) == sorted(leaf.name for leaf in tf.iter_leaves()):
-            return chosen_tree, "kept_rf_guard"
-        return chosen_tree, "pruned"
-    return candidate_tree, "pruned"
+    td = _tree_to_genome_level(tf)
+    ti = _cached_species_tree(species_tree_path)
+    ti.prune([leaf.name for leaf in td.iter_leaves()])
+    chosen_tree = choose_tree_by_rf(ti, tf, candidate_tree)
+    if sorted(leaf.name for leaf in chosen_tree.iter_leaves()) == sorted(leaf.name for leaf in tf.iter_leaves()):
+        return chosen_tree, "kept_rf_guard"
+    return chosen_tree, "pruned"
 
 
 def effective_singleton_mode(
@@ -2432,6 +2499,29 @@ def _propose_singleton_prune_worker(args):
     else:
         num_nei = max(2, min(10, leaf_count - 1))
 
+    if effective_mode == "loo_profile":
+        candidates = []
+        for leaf in sorted(tf.iter_leaves(), key=lambda item: str(item.name)):
+            genome_id, contig_id, gene_id = parse_sequence_id(str(leaf.name))
+            candidates.append(
+                {
+                    "leaf_name": str(leaf.name),
+                    "taxa_count": leaf_count,
+                    "genome": genome_id,
+                    "contig_id": contig_id,
+                    "gene_id": gene_id,
+                }
+            )
+        return {
+            "filepath": filepath,
+            "marker_name": _marker_name_from_tree_path(filepath),
+            "mode": effective_mode,
+            "rdist": rdist,
+            "num_nei": num_nei,
+            "chosen": None,
+            "candidates": candidates,
+        }
+
     score_table = None
     score_col = None
     if os.path.exists(table_path):
@@ -2447,7 +2537,7 @@ def _propose_singleton_prune_worker(args):
     chosen = None
     if effective_mode == "neighbor_ml":
         chosen = None
-    elif rdist >= singles_min_rfdist or not singleton_mode_uses_global_rf_gate(effective_mode):
+    elif rdist >= singles_min_rfdist or effective_mode in {"neighbor_clade", "gcp"}:
         chosen = choose_singleton_prune(
             species_tree=ti,
             working_tree=tf,
@@ -2456,6 +2546,7 @@ def _propose_singleton_prune_worker(args):
             score_table=score_table,
             score_col=score_col,
             alignment_path=alignment_path,
+            scored_candidates=candidates,
         )
         if chosen is not None:
             chosen = {
@@ -2584,6 +2675,10 @@ def _write_singleton_candidate_table(
     proposal_keys: set[tuple[str, str]],
 ) -> None:
     path = os.path.join(outdir, "singleton_candidates.tsv")
+
+    def format_float(value):
+        return "" if value is None else f"{float(value):.6f}"
+
     fieldnames = [
         "marker_name",
         "leaf_name",
@@ -2615,6 +2710,26 @@ def _write_singleton_candidate_table(
         "anchor_knn_agreement",
         "attachment_gap",
         "neighbor_clade_score",
+        "loo_class",
+        "loo_abstention_reason",
+        "loo_target_support",
+        "loo_target_support_sides",
+        "loo_attachment_taxa",
+        "loo_attachment_clade",
+        "loo_voter_count",
+        "loo_voter_markers",
+        "loo_coordinate_count",
+        "loo_coordinate_taxa",
+        "loo_target_discordance",
+        "loo_voter_center",
+        "loo_voter_mad",
+        "loo_voter_upper",
+        "loo_conflict_margin",
+        "loo_score",
+        "loo_marker_rank",
+        "loo_marker_margin",
+        "loo_conflict_beyond_dispersion",
+        "loo_decision",
         "selected_candidate",
         "decision",
         "singleton_class",
@@ -2630,6 +2745,10 @@ def _write_singleton_candidate_table(
                 leaf_name = str(candidate.get("leaf_name", ""))
                 selected_candidate = (marker_name, leaf_name) in proposal_keys
                 enriched = proposal_lookup.get((marker_name, leaf_name), {})
+                is_loo_profile = str(result.get("mode", "")) == "loo_profile"
+                numeric_default = None if is_loo_profile else 0.0
+                count_default = None if is_loo_profile else 0
+                conflict_beyond_dispersion = enriched.get("loo_conflict_beyond_dispersion")
                 writer.writerow(
                     {
                         "marker_name": marker_name,
@@ -2640,31 +2759,67 @@ def _write_singleton_candidate_table(
                         "mode": result.get("mode", ""),
                         "rdist": f"{float(result.get('rdist', 0.0)):.6f}",
                         "num_nei": int(result.get("num_nei", 0)),
-                        "delta_rf": f"{float(candidate.get('delta_rf', 0.0)):.6f}",
-                        "neighbor_overlap": f"{float(candidate.get('neighbor_overlap', 0.0)):.6f}",
-                        "topoknn_score": f"{float(candidate.get('topoknn_score', 0.0)):.6f}",
-                        "branch_outlier": f"{float(candidate.get('branch_outlier', 0.0)):.6f}",
-                        "bitscore_outlier": f"{float(candidate.get('bitscore_outlier', 0.0)):.6f}",
-                        "recipient_consensus_score": f"{float(candidate.get('recipient_consensus_score', 0.0)):.6f}",
-                        "contig_consensus_score": f"{float(enriched.get('contig_consensus_score', 0.0)):.6f}",
-                        "species_anchor_score": f"{float(candidate.get('species_anchor_score', 0.0)):.6f}",
-                        "species_anchor_purity": f"{float(candidate.get('species_anchor_purity', 0.0)):.6f}",
-                        "species_anchor_compactness": f"{float(candidate.get('species_anchor_compactness', 0.0)):.6f}",
-                        "species_anchor_compactness_score": f"{float(candidate.get('species_anchor_compactness_score', 0.0)):.6f}",
-                        "species_long_branch_z": f"{float(candidate.get('species_long_branch_z', 0.0)):.6f}",
-                        "species_long_branch_support": f"{float(candidate.get('species_long_branch_support', 0.0)):.6f}",
-                        "target_neighbor_count": int(candidate.get("target_neighbor_count", 0)),
-                        "present_neighbor_count": int(candidate.get("present_neighbor_count", 0)),
-                        "present_neighbor_fraction": f"{float(candidate.get('present_neighbor_fraction', 0.0)):.6f}",
-                        "neighbor_anchor_purity": f"{float(candidate.get('neighbor_anchor_purity', 0.0)):.6f}",
-                        "join_purity": f"{float(candidate.get('join_purity', 0.0)):.6f}",
-                        "purity_drop": f"{float(candidate.get('purity_drop', 0.0)):.6f}",
-                        "anchor_knn_agreement": f"{float(candidate.get('anchor_knn_agreement', 0.0)):.6f}",
-                        "attachment_gap": f"{float(candidate.get('attachment_gap', 0.0)):.6f}",
-                        "neighbor_clade_score": f"{float(candidate.get('neighbor_clade_score', 0.0)):.6f}",
+                        "delta_rf": format_float(candidate.get("delta_rf", numeric_default)),
+                        "neighbor_overlap": format_float(candidate.get("neighbor_overlap", numeric_default)),
+                        "topoknn_score": format_float(candidate.get("topoknn_score", numeric_default)),
+                        "branch_outlier": format_float(candidate.get("branch_outlier", numeric_default)),
+                        "bitscore_outlier": format_float(candidate.get("bitscore_outlier", numeric_default)),
+                        "recipient_consensus_score": format_float(candidate.get("recipient_consensus_score", numeric_default)),
+                        "contig_consensus_score": format_float(enriched.get("contig_consensus_score", numeric_default)),
+                        "species_anchor_score": format_float(candidate.get("species_anchor_score", numeric_default)),
+                        "species_anchor_purity": format_float(candidate.get("species_anchor_purity", numeric_default)),
+                        "species_anchor_compactness": format_float(candidate.get("species_anchor_compactness", numeric_default)),
+                        "species_anchor_compactness_score": format_float(candidate.get("species_anchor_compactness_score", numeric_default)),
+                        "species_long_branch_z": format_float(candidate.get("species_long_branch_z", numeric_default)),
+                        "species_long_branch_support": format_float(candidate.get("species_long_branch_support", numeric_default)),
+                        "target_neighbor_count": candidate.get("target_neighbor_count", count_default),
+                        "present_neighbor_count": candidate.get("present_neighbor_count", count_default),
+                        "present_neighbor_fraction": format_float(candidate.get("present_neighbor_fraction", numeric_default)),
+                        "neighbor_anchor_purity": format_float(candidate.get("neighbor_anchor_purity", numeric_default)),
+                        "join_purity": format_float(candidate.get("join_purity", numeric_default)),
+                        "purity_drop": format_float(candidate.get("purity_drop", numeric_default)),
+                        "anchor_knn_agreement": format_float(candidate.get("anchor_knn_agreement", numeric_default)),
+                        "attachment_gap": format_float(candidate.get("attachment_gap", numeric_default)),
+                        "neighbor_clade_score": format_float(candidate.get("neighbor_clade_score", numeric_default)),
+                        "loo_class": enriched.get("loo_class", ""),
+                        "loo_abstention_reason": enriched.get("loo_abstention_reason") or "",
+                        "loo_target_support": format_float(enriched.get("loo_target_support")),
+                        "loo_target_support_sides": ";".join(
+                            f"{','.join(str(taxon) for taxon in side.get('taxa', []))}:"
+                            f"{format_float(side.get('support'))}"
+                            for side in enriched.get("loo_target_support_sides", [])
+                        ),
+                        "loo_attachment_taxa": ",".join(
+                            sorted(str(item) for item in enriched.get("loo_attachment_taxa", []))
+                        ),
+                        "loo_attachment_clade": enriched.get("loo_attachment_clade") or "",
+                        "loo_voter_count": enriched.get("loo_voter_count", ""),
+                        "loo_voter_markers": ",".join(
+                            sorted(str(item) for item in enriched.get("loo_voter_markers", []))
+                        ),
+                        "loo_coordinate_count": enriched.get("loo_coordinate_count", ""),
+                        "loo_coordinate_taxa": ",".join(
+                            sorted(str(item) for item in enriched.get("loo_coordinate_taxa", []))
+                        ),
+                        "loo_target_discordance": format_float(enriched.get("loo_target_discordance")),
+                        "loo_voter_center": format_float(enriched.get("loo_voter_center")),
+                        "loo_voter_mad": format_float(enriched.get("loo_voter_mad")),
+                        "loo_voter_upper": format_float(enriched.get("loo_voter_upper")),
+                        "loo_conflict_margin": format_float(enriched.get("loo_conflict_margin")),
+                        "loo_score": format_float(enriched.get("loo_score")),
+                        "loo_marker_rank": enriched.get("loo_marker_rank") or "",
+                        "loo_marker_margin": format_float(enriched.get("loo_marker_margin")),
+                        "loo_conflict_beyond_dispersion": (
+                            ""
+                            if conflict_beyond_dispersion is None
+                            else "yes" if conflict_beyond_dispersion else "no"
+                        ),
+                        "loo_decision": enriched.get("loo_decision", ""),
                         "selected_candidate": "yes" if selected_candidate else "no",
                         "decision": (
-                            _singleton_decision(
+                            enriched.get("loo_decision", "")
+                            if is_loo_profile
+                            else _singleton_decision(
                                 enriched,
                                 marker_name=marker_name,
                                 accepted_keys=accepted_keys,
@@ -2705,6 +2860,36 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
     ]
     results = map_processed(_propose_singleton_prune_worker, args, cfg.num_cpus)
     reference_genomes = _reference_genomes_from_dir(cfg.ref)
+    singleton_mode = _canonical_singleton_mode(cfg.singles_mode)
+    if singleton_mode == "loo_profile":
+        marker_trees = {
+            str(result["marker_name"]): Tree(str(result["filepath"]), format=1)
+            for result in sorted(results, key=lambda item: str(item["filepath"]))
+        }
+        loo_rows = score_loo_profiles(
+            marker_trees,
+            excluded_target_genomes=reference_genomes,
+        )
+        proposal_lookup = {
+            (str(row["marker_name"]), str(row["leaf_name"])): row
+            for row in loo_rows
+        }
+        accepted_keys: set[tuple[str, str]] = set()
+        proposal_keys: set[tuple[str, str]] = set()
+        _write_singleton_candidate_table(
+            results,
+            outdir=cfg.outdir,
+            accepted_keys=accepted_keys,
+            proposal_lookup=proposal_lookup,
+            proposal_keys=proposal_keys,
+        )
+        no_singles_dir = os.path.join(cfg.outdir, "protTrees", "no_singles")
+        os.makedirs(no_singles_dir, exist_ok=True)
+        for result in sorted(results, key=lambda item: str(item["filepath"])):
+            source = str(result["filepath"])
+            shutil.copyfile(source, os.path.join(no_singles_dir, os.path.basename(source)))
+        return
+
     proposals, proposal_keys = singleton_proposals_from_results(
         results,
         mode=cfg.singles_mode,
@@ -2715,10 +2900,14 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
         proposal_keys,
         reference_genomes=reference_genomes,
     )
-    if _canonical_singleton_mode(cfg.singles_mode) in {"neighbor_ml", "gcp"}:
+    if singleton_mode in {"neighbor_ml", "gcp"}:
         proposals = classify_singleton_proposals(
             proposals,
-            contig_marker_context={},
+            contig_marker_context=(
+                _load_contig_marker_context(os.path.join(cfg.outdir, "table_elim_dups"))
+                if singleton_mode == "gcp"
+                else {}
+            ),
             marker_neighbor_context=None,
             mode=cfg.singles_mode,
         )
@@ -2727,7 +2916,7 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
             for proposal in proposals
             if proposal.get("singleton_class") == "contamination_candidate"
         ]
-        if _canonical_singleton_mode(cfg.singles_mode) == "gcp":
+        if singleton_mode == "gcp":
             accepted = select_singleton_proposals(
                 accepted_proposals,
                 genome_marker_counts=_count_genome_marker_support(files),

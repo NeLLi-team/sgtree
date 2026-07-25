@@ -5,6 +5,7 @@ import datetime
 import logging
 
 from sgtree.config import Config
+from sgtree._version import DISPLAY_VERSION
 
 
 logger = logging.getLogger("sgtree")
@@ -21,7 +22,7 @@ def write_logfile(cfg: Config, timings: dict):
     try:
         with open(logfile, "w") as f:
             f.write(f"{cfg.outdir}\n{sep}\n")
-            f.write(f"Sg_Tree v.2\nstart time: {cfg.start_time}\n{sep}\n")
+            f.write(f"{DISPLAY_VERSION}\nstart time: {cfg.start_time}\n{sep}\n")
             f.write(f"Genomes database {cfg.genomedir} contains {cfg.genome_count} genomes\n{sep}\n")
             f.write(f"Marker database {cfg.modeldir} contains {cfg.model_file_count} models\n{sep}\n")
             f.write(f"{sys.argv}\n{sep}\n")

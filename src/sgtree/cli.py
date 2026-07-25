@@ -79,9 +79,9 @@ def parse_args() -> Config:
                         help="output directory name")
     parser.add_argument("--singles", type=str, default="no",
                         help="remove singleton markers (yes/no)")
-    parser.add_argument("--singles_mode", type=str, default="delta_rf",
-                        choices=["delta_rf", "topoknn", "hybrid", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml", "gcp"],
-                        help="singleton filtering mode")
+    parser.add_argument("--singles-mode", "--singles_mode", dest="singles_mode", type=str, default="delta_rf",
+                        choices=["delta_rf", "topoknn", "hybrid", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml", "gcp", "loo_profile"],
+                        help="singleton mode; loo_profile reports evidence without pruning")
     parser.add_argument("--lflt", type=int, default=0,
                         help="remove sequences shorter than N%% of median length")
     parser.add_argument("--num_nei", type=int, default=0,
@@ -415,13 +415,14 @@ def main():
             total_rounds = max(1, cfg.selection_global_rounds)
 
             for round_idx in range(1, total_rounds + 1):
-                current_use_singles = cfg.singles and round_idx == total_rounds
                 kept = marker_selection.run_noperm(
                     cfg,
                     ls_refs,
                     species_tree_path=current_species_tree,
                     initial_kept=previous_kept,
                 )
+                converged = previous_kept is not None and kept == previous_kept
+                current_use_singles = cfg.singles and (round_idx == total_rounds or converged)
                 rf_src = os.path.join(cfg.outdir, "marker_selection_rf_values.txt")
                 if total_rounds > 1:
                     shutil.copyfile(
@@ -470,7 +471,7 @@ def main():
                         os.path.join(cfg.outdir, f"tree_round_{round_idx}.nwk"),
                     )
 
-                if previous_kept is not None and kept == previous_kept:
+                if converged:
                     print(f"- ...marker selection converged after round {round_idx}")
                     break
                 previous_kept = kept

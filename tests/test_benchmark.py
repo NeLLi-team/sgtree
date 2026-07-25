@@ -11,6 +11,19 @@ from sgtree import benchmark
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_default_cleanup_profiles_use_gcp_for_singleton_scenarios(self):
+        profiles = benchmark.DEFAULT_CLEANUP_PROFILES
+
+        self.assertFalse(profiles["duplicate_only"]["singles"])
+        self.assertEqual(profiles["duplicate_only"]["singles_mode"], "delta_rf")
+
+        for scenario in ["replacement_only", "combined", "mixed_high_level"]:
+            with self.subTest(scenario=scenario):
+                profile = profiles[scenario]
+                self.assertTrue(profile["singles"])
+                self.assertEqual(profile["singles_mode"], "gcp")
+                self.assertIn("gcp", profile["name"])
+
     def test_make_contaminant_record_rehomes_donor_under_recipient(self):
         donor = SeqRecord(Seq("MPEPTIDE"), id="DonorA|prot123", description="DonorA|prot123")
 
@@ -75,6 +88,43 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertNotIn("RecipientB|native_marker", updated)
         self.assertIn("RecipientB|background", updated)
+
+    def test_replacement_outcome_uses_exact_opaque_record_ids(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            aligned_dir = run_dir / "aligned_final"
+            aligned_dir.mkdir()
+            aligned_path = aligned_dir / "MarkerX.faa"
+            contaminant_id = "GenomeA|c_a13f|g_b27e"
+            native_id = "GenomeA|c_c91d|g_d48a"
+
+            aligned_path.write_text(
+                f">{contaminant_id}\nMPEPTIDE\n>GenomeB|c_e22c|g_f63b\nMOTHER\n"
+            )
+            self.assertEqual(
+                benchmark._replacement_outcome(
+                    run_dir,
+                    "GenomeA",
+                    "MarkerX",
+                    contaminant_id,
+                    native_id,
+                ),
+                "contaminant_retained",
+            )
+
+            aligned_path.write_text(
+                f">{native_id}\nMPEPTIDE\n>GenomeB|c_e22c|g_f63b\nMOTHER\n"
+            )
+            self.assertEqual(
+                benchmark._replacement_outcome(
+                    run_dir,
+                    "GenomeA",
+                    "MarkerX",
+                    contaminant_id,
+                    native_id,
+                ),
+                "native_retained",
+            )
 
     def test_choose_markers_for_pair_requires_marker_presence_in_both_genomes(self):
         native_map = {
@@ -173,35 +223,117 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_taxonomy_scope_matches_enforces_expected_rank_rules(self):
         recipient = {
+            "domain": "Bacteria",
+            "phylum": "Pseudomonadota",
             "class": "Gammaproteobacteria",
             "order_name": "Enterobacterales",
             "family": "Enterobacteriaceae",
             "genus": "Escherichia",
+            "species": "Escherichia coli",
         }
         same_family_other_genus = {
+            "domain": "Bacteria",
+            "phylum": "Pseudomonadota",
             "class": "Gammaproteobacteria",
             "order_name": "Enterobacterales",
             "family": "Enterobacteriaceae",
             "genus": "Salmonella",
+            "species": "Salmonella enterica",
         }
         same_order_other_family = {
+            "domain": "Bacteria",
+            "phylum": "Pseudomonadota",
             "class": "Gammaproteobacteria",
             "order_name": "Enterobacterales",
             "family": "Vibrionaceae",
             "genus": "Vibrio",
+            "species": "Vibrio cholerae",
         }
         same_class_other_order = {
+            "domain": "Bacteria",
+            "phylum": "Pseudomonadota",
             "class": "Gammaproteobacteria",
             "order_name": "Pseudomonadales",
             "family": "Pseudomonadaceae",
             "genus": "Pseudomonas",
+            "species": "Pseudomonas aeruginosa",
+        }
+        same_phylum_other_class = {
+            "domain": "Bacteria",
+            "phylum": "Pseudomonadota",
+            "class": "Alphaproteobacteria",
+            "order_name": "Rhizobiales",
+            "family": "Rhizobiaceae",
+            "genus": "Rhizobium",
+            "species": "Rhizobium leguminosarum",
+        }
+        same_domain_other_phylum = {
+            "domain": "Bacteria",
+            "phylum": "Bacteroidota",
+            "class": "Bacteroidia",
+            "order_name": "Flavobacteriales",
+            "family": "Flavobacteriaceae",
+            "genus": "Flavobacterium",
+            "species": "Flavobacterium johnsoniae",
         }
 
         self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_family_other_genus, "genus"))
         self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_order_other_family, "family"))
         self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_class_other_order, "order"))
+        self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_phylum_other_class, "class"))
+        self.assertTrue(benchmark._taxonomy_scope_matches(recipient, same_domain_other_phylum, "phylum"))
         self.assertFalse(benchmark._taxonomy_scope_matches(recipient, same_order_other_family, "genus"))
         self.assertFalse(benchmark._taxonomy_scope_matches(recipient, same_class_other_order, "family"))
+        self.assertFalse(benchmark._taxonomy_scope_matches(recipient, same_domain_other_phylum, "class"))
+
+    def test_classify_taxonomic_distance_reports_source_level(self):
+        recipient = {
+            "phylum": "Pseudomonadota",
+            "class": "Gammaproteobacteria",
+            "order_name": "Enterobacterales",
+            "family": "Enterobacteriaceae",
+            "genus": "Escherichia",
+            "species": "Escherichia coli",
+        }
+        cases = [
+            (
+                {"phylum": "Pseudomonadota", "class": "Gammaproteobacteria", "order_name": "Enterobacterales", "family": "Enterobacteriaceae", "genus": "Escherichia", "species": "Escherichia fergusonii"},
+                "species",
+                "different_species_same_genus",
+            ),
+            (
+                {"phylum": "Pseudomonadota", "class": "Gammaproteobacteria", "order_name": "Enterobacterales", "family": "Enterobacteriaceae", "genus": "Salmonella", "species": "Salmonella enterica"},
+                "genus",
+                "different_genus_same_family",
+            ),
+            (
+                {"phylum": "Pseudomonadota", "class": "Gammaproteobacteria", "order_name": "Enterobacterales", "family": "Vibrionaceae", "genus": "Vibrio", "species": "Vibrio cholerae"},
+                "family",
+                "different_family_same_order",
+            ),
+            (
+                {"phylum": "Pseudomonadota", "class": "Gammaproteobacteria", "order_name": "Pseudomonadales", "family": "Pseudomonadaceae", "genus": "Pseudomonas", "species": "Pseudomonas aeruginosa"},
+                "order",
+                "different_order_same_class",
+            ),
+            (
+                {"phylum": "Pseudomonadota", "class": "Alphaproteobacteria", "order_name": "Rhizobiales", "family": "Rhizobiaceae", "genus": "Rhizobium", "species": "Rhizobium leguminosarum"},
+                "class",
+                "different_class_same_phylum",
+            ),
+            (
+                {"phylum": "Bacteroidota", "class": "Bacteroidia", "order_name": "Flavobacteriales", "family": "Flavobacteriaceae", "genus": "Flavobacterium", "species": "Flavobacterium johnsoniae"},
+                "phylum",
+                "different_phylum",
+            ),
+        ]
+
+        for donor, expected_level, expected_label in cases:
+            with self.subTest(expected_level=expected_level):
+                result = benchmark.classify_taxonomic_distance(recipient, donor)
+                self.assertEqual(result["contamination_source_taxonomic_level"], expected_level)
+                self.assertEqual(result["contamination_source_taxonomic_label"], expected_label)
+                self.assertEqual(result[f"contamination_source_differs_{expected_level}"], "yes")
 
     def test_taxonomic_donor_candidates_filter_by_scope_and_marker(self):
         recipient_taxonomy = {
@@ -422,6 +554,83 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(int(rows.loc["GenomeA", "cross_group_events"]), 1)
         self.assertEqual(int(rows.loc["GenomeB", "replacement_events"]), 1)
 
+    def test_evaluate_benchmark_run_treats_missing_and_empty_alignments_as_unknown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            scenario_dir = benchmark_dir / "scenarios" / "replacement_only"
+            run_dir = root / "run"
+            scenario_dir.mkdir(parents=True)
+            (run_dir / "aligned_final").mkdir(parents=True)
+
+            reference_tree = scenario_dir / "reference_tree.nwk"
+            reference_tree.write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree_final.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "marker_selection_rf_values.txt").write_text(
+                "ProteinID MarkerGene RFdistance Status\n"
+            )
+            (run_dir / "aligned_final" / "MarkerEmpty.faa").write_text("")
+            header = [
+                "event_index",
+                "scenario",
+                "event_type",
+                "recipient_genome",
+                "marker",
+                "native_record_id",
+                "contaminant_record_id",
+            ]
+            rows = [
+                [
+                    "1",
+                    "replacement_only",
+                    "replacement",
+                    "GenomeA",
+                    "MarkerMissing",
+                    "GenomeA|c_102a|g_203b",
+                    "GenomeA|c_304c|g_405d",
+                ],
+                [
+                    "2",
+                    "replacement_only",
+                    "replacement",
+                    "GenomeB",
+                    "MarkerEmpty",
+                    "GenomeB|c_506e|g_607f",
+                    "GenomeB|c_708a|g_809b",
+                ],
+            ]
+            (scenario_dir / "events.tsv").write_text(
+                "\t".join(header) + "\n" + "\n".join("\t".join(row) for row in rows) + "\n"
+            )
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "selected_genomes": ["GenomeA", "GenomeB", "GenomeC"],
+                        "scenarios": [
+                            {
+                                "name": "replacement_only",
+                                "reference_tree_path": str(reference_tree),
+                                "reference_taxa": ["GenomeA", "GenomeB", "GenomeC"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            result = benchmark.evaluate_benchmark_run(
+                benchmark_dir=benchmark_dir,
+                scenario_name="replacement_only",
+                run_dir=run_dir,
+                runtime_seconds=1.0,
+            )
+
+        self.assertEqual(result["replacement_unknown"], 2)
+        self.assertEqual(result["replacement_contaminant_removed"], 0)
+        self.assertEqual(result["replacement_marker_dropped"], 0)
+        self.assertEqual(result["contaminant_markers_removed"], 0)
+        self.assertEqual(result["contaminant_markers_removed_fraction"], 0.0)
+
     def test_evaluate_benchmark_run_reports_missing_taxa(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -507,6 +716,61 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["final_missing_taxa"], "GenomeC")
         self.assertEqual(result["collateral_genome_loss_count"], 1)
         self.assertEqual(result["collateral_genomes_lost"], "GenomeC")
+        self.assertEqual(result["replacement_marker_dropped"], 1)
+        self.assertEqual(result["replacement_contaminant_removed"], 1)
+
+    def test_evaluate_benchmark_run_does_not_credit_marker_drop_when_recipient_is_lost(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            benchmark_dir = root / "benchmark"
+            scenario_dir = benchmark_dir / "scenarios" / "replacement_only"
+            run_dir = root / "run"
+            scenario_dir.mkdir(parents=True)
+            (run_dir / "aligned_final").mkdir(parents=True)
+
+            reference_tree = scenario_dir / "reference_tree.nwk"
+            reference_tree.write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree.nwk").write_text("((GenomeA,GenomeB),GenomeC);\n")
+            (run_dir / "tree_final.nwk").write_text("(GenomeB,GenomeC);\n")
+            (run_dir / "marker_selection_rf_values.txt").write_text(
+                "ProteinID MarkerGene RFdistance Status\n"
+            )
+            (run_dir / "aligned_final" / "MarkerX.faa").write_text(
+                ">GenomeB|c_910c|g_011d\nMPEPTIDE\n"
+            )
+            (scenario_dir / "events.tsv").write_text(
+                "event_index\tscenario\tevent_type\trecipient_genome\tmarker\t"
+                "native_record_id\tcontaminant_record_id\n"
+                "1\treplacement_only\treplacement\tGenomeA\tMarkerX\t"
+                "GenomeA|c_122e|g_233f\tGenomeA|c_344a|g_455b\n"
+            )
+            (benchmark_dir / "benchmark_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "selected_genomes": ["GenomeA", "GenomeB", "GenomeC"],
+                        "scenarios": [
+                            {
+                                "name": "replacement_only",
+                                "reference_tree_path": str(reference_tree),
+                                "reference_taxa": ["GenomeA", "GenomeB", "GenomeC"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            result = benchmark.evaluate_benchmark_run(
+                benchmark_dir=benchmark_dir,
+                scenario_name="replacement_only",
+                run_dir=run_dir,
+                runtime_seconds=1.0,
+            )
+
+        self.assertEqual(result["replacement_recipient_lost"], 1)
+        self.assertEqual(result["replacement_recipient_genome_loss_count"], 1)
+        self.assertEqual(result["replacement_marker_dropped"], 0)
+        self.assertEqual(result["replacement_contaminant_removed"], 0)
+        self.assertEqual(result["contaminant_markers_removed"], 0)
 
     def test_evaluate_benchmark_run_uses_manifest_reference_taxa_over_pruned_reference_tree(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,4 +1,6 @@
+import os
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import Mock
 from unittest.mock import patch
@@ -37,7 +39,8 @@ class PhylogenyTests(unittest.TestCase):
 
         with patch.object(phylogeny, "_fasttree_executable", return_value="VeryFastTree"):
             with patch("sgtree._subprocess.subprocess.run", side_effect=fake_run):
-                phylogeny.run_fasttree("input.faa", "tree.nwk", threads=24)
+                with self.assertLogs("sgtree", level="ERROR"):
+                    phylogeny.run_fasttree("input.faa", "tree.nwk", threads=24)
 
         self.assertEqual(
             calls,
@@ -64,7 +67,8 @@ class PhylogenyTests(unittest.TestCase):
 
         with patch.object(phylogeny, "_fasttree_executable", return_value="VeryFastTree"):
             with patch("sgtree._subprocess.subprocess.run", side_effect=fake_run):
-                phylogeny.run_fasttree("input.faa", "tree.nwk", threads=4)
+                with self.assertLogs("sgtree", level="ERROR"):
+                    phylogeny.run_fasttree("input.faa", "tree.nwk", threads=4)
                 call_count_after_first = len(calls)
                 phylogeny.run_fasttree("input2.faa", "tree2.nwk", threads=4)
 
@@ -90,7 +94,8 @@ class PhylogenyTests(unittest.TestCase):
 
         with patch.object(phylogeny, "_fasttree_executable", return_value="VeryFastTree"):
             with patch("sgtree._subprocess.subprocess.run", side_effect=fake_run):
-                phylogeny._build_tree_worker(("input.faa", "treeouts", "fasttree", "LG", False))
+                with self.assertLogs("sgtree", level="ERROR"):
+                    phylogeny._build_tree_worker(("input.faa", "treeouts", "fasttree", "LG", False))
 
         self.assertEqual(
             calls,
@@ -99,6 +104,63 @@ class PhylogenyTests(unittest.TestCase):
                 ["VeryFastTree", "-quiet", "-out", "treeouts/input.faa_tree.out", "input.faa"],
             ],
         )
+
+    def test_species_tree_thread_override_is_honored(self):
+        cfg = Mock(tree_method="veryfasttree", num_cpus=8)
+
+        with patch.dict(
+            os.environ,
+            {"SGTREE_SPECIES_TREE_THREADS": "1"},
+        ):
+            with patch.object(phylogeny, "run_fasttree") as run_fasttree:
+                phylogeny.run_species_tree(cfg, "input.faa", "tree.nwk")
+
+        run_fasttree.assert_called_once_with("input.faa", "tree.nwk", 1)
+
+    def test_marker_tree_cache_reuses_canonical_alignment_and_restores_leaf_ids(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first_path = os.path.join(tmpdir, "first.faa")
+            second_path = os.path.join(tmpdir, "second.faa")
+            with open(first_path, "w") as handle:
+                handle.write(
+                    ">genome_a|contig_1|gene_1\nMKT--A\n"
+                    ">genome_b|contig_1|gene_1\nMKTA-A\n"
+                )
+            with open(second_path, "w") as handle:
+                handle.write(
+                    ">genome_a|contig_other|gene_x\nMKT--A\n"
+                    ">genome_b|contig_other|gene_x\nMKTA-A\n"
+                )
+
+            tree_dir = os.path.join(tmpdir, "trees")
+            os.mkdir(tree_dir)
+            cache_dir = os.path.join(tmpdir, "cache")
+            calls = []
+
+            def fake_fasttree(threaded_cmd, fallback_cmd):
+                calls.append(threaded_cmd)
+                with open(threaded_cmd[5], "w") as handle:
+                    handle.write(
+                        "(genome_a:0.123456789,genome_b:0.987654321);\n"
+                    )
+
+            with patch.dict(os.environ, {"SGTREE_MARKER_TREE_CACHE_DIR": cache_dir}):
+                with patch.object(phylogeny, "_fasttree_executable", return_value="VeryFastTree"):
+                    with patch.object(phylogeny, "_run_fasttree_with_optional_threads", fake_fasttree):
+                        phylogeny._build_tree_worker((first_path, tree_dir, "veryfasttree", "LG", False))
+                        phylogeny._build_tree_worker((second_path, tree_dir, "veryfasttree", "LG", False))
+
+            self.assertEqual(len(calls), 1)
+            with open(os.path.join(tree_dir, "first.faa_tree.out")) as handle:
+                first_tree = handle.read()
+            with open(os.path.join(tree_dir, "second.faa_tree.out")) as handle:
+                second_tree = handle.read()
+            self.assertIn("genome_a|contig_1|gene_1", first_tree)
+            self.assertIn("genome_b|contig_1|gene_1", first_tree)
+            self.assertIn("genome_a|contig_other|gene_x", second_tree)
+            self.assertIn("genome_b|contig_other|gene_x", second_tree)
+            self.assertIn("0.123456789", first_tree)
+            self.assertIn("0.987654321", second_tree)
 
 
 if __name__ == "__main__":

@@ -42,7 +42,8 @@ class RunCaptureTests(unittest.TestCase):
             mock_run.return_value = subprocess.CompletedProcess(
                 args=["x"], returncode=3, stdout="out", stderr="err"
             )
-            result = run_capture(["x"])
+            with self.assertLogs("sgtree", level="ERROR"):
+                result = run_capture(["x"])
             self.assertEqual(result.returncode, 3)
             self.assertEqual(result.stdout, "out")
             self.assertEqual(result.stderr, "err")

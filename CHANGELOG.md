@@ -5,6 +5,41 @@ All notable changes to SGTree are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `--singles-mode loo_profile`, a report-only leave-one-marker-out
+  placement-consensus scorer. It writes candidate evidence without pruning
+  marker trees.
+- A fixed tree benchmark includes 24 mechanism fixtures plus eight scale
+  fixtures at 50 and 100 leaves. It checks clean-panel safety, far-source
+  singleton detection, same-contig evidence, and RF guards.
+- A fixed 12-case aligned-protein benchmark covers native-contig controls
+  and held-out near-source and far-source events.
+
+### Fixed
+
+- Replacement-event evaluation now uses exact native and contaminant record
+  IDs and treats missing or empty alignments as unknown outcomes.
+- Singleton analysis runs after duplicate convergence, scores each candidate
+  once, preserves cached branch support, and applies the RF guard to every
+  automatic pruning mode.
+- GCP low-panel fallback now runs recipient-consensus ranking and
+  classification instead of applying the legacy classifier to every
+  GCP candidate.
+- Full GCP scoring now requires at least 5 markers; 3-4 marker panels
+  use the recipient-consensus fallback because the per-genome z-score
+  outlier-count gate is not reliable at that size.
+- `--singles-mode` is now the preferred CLI spelling for singleton mode
+  selection, while the legacy `--singles_mode` alias remains accepted.
+- Runtime banner and logfile headers now report the package version
+  (`SGTree 1.2.0`) instead of the stale `Sg_Tree v.2` label.
+- README workflow diagram now includes the `famsa` alignment backend.
+- Test output is quieter: expected negative-path stderr/log records and
+  known third-party invalid-escape `SyntaxWarning`s are now captured or
+  suppressed, and the trim fallback closes its parsed FASTA handle.
+
 ## [1.2.0] - 2026-04-20
 
 ### Highlights
@@ -167,11 +202,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Documentation**
   - README: `--singles_mode` table now lists `gcp` with the correct
-    expansion ("Genome Consistency Profiling") and documents the
-    fallback to `_classify_singleton_proposals_legacy` when the panel
-    is below `GCP_MIN_GENOMES` / `GCP_MIN_MARKERS`. `topoknn` and
-    `hybrid` are labeled as internal baselines. The Repository Structure
-    section was brought back in sync with the actual module layout.
+    expansion ("Genome Consistency Profiling") and documents its
+    low-panel fallback behavior. `topoknn` and `hybrid` are labeled as
+    internal baselines. The Repository Structure section was brought
+    back in sync with the actual module layout.
   - `tree_round_N.nwk` is documented as a per-round output.
 
 ### Removed
@@ -185,9 +219,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `cli.py`: GCP fallback log message corrected to match the legacy
-  classifier dispatch it triggers; known-issue comment tracks the
-  deeper log-vs-dispatch ambiguity for a future release.
+- `cli.py`: GCP fallback log message corrected to match the classifier
+  dispatch it triggers.
 - `ani/__init__.py`: MCL invocation via `run_check` removed the
   invalid `text=True` kwarg that would have raised `TypeError` on any
   run that actually exercised the binary MCL path.
@@ -202,11 +235,6 @@ The following optional follow-ups are tracked for a later release:
   Blocked on a test restructuring because several tests patch names
   at the package namespace that internal callers would resolve via
   their own submodule globals after a split.
-- Decision on the GCP fallback log vs dispatch mismatch at
-  `sgtree/marker_selection/__init__.py:1544` (flagged inline with a
-  `KNOWN ISSUE` comment; both log text and dispatch preserved as on
-  v1.0).
-
 ## [1.0.0] - 2026-03-03
 
 Initial tagged release.

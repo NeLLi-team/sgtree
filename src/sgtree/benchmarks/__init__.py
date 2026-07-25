@@ -64,28 +64,28 @@ DEFAULT_CLEANUP_PROFILES = {
         "singles_mode": "delta_rf",
     },
     "replacement_only": {
-        "name": "singles_delta_rf",
+        "name": "singles_gcp",
         "selection_mode": "coordinate",
         "selection_global_rounds": 2,
         "marker_selection": True,
         "singles": True,
-        "singles_mode": "delta_rf",
+        "singles_mode": "gcp",
     },
     "combined": {
-        "name": "duplicate_plus_singles_delta_rf",
+        "name": "duplicate_plus_singles_gcp",
         "selection_mode": "coordinate",
         "selection_global_rounds": 2,
         "marker_selection": True,
         "singles": True,
-        "singles_mode": "delta_rf",
+        "singles_mode": "gcp",
     },
     "mixed_high_level": {
-        "name": "duplicate_plus_singles_delta_rf",
+        "name": "duplicate_plus_singles_gcp",
         "selection_mode": "coordinate",
         "selection_global_rounds": 2,
         "marker_selection": True,
         "singles": True,
-        "singles_mode": "delta_rf",
+        "singles_mode": "gcp",
     },
 }
 
@@ -108,11 +108,32 @@ TAXONOMY_SCOPE_RULES = {
         "different_rank": "order_name",
         "scope_label": "same_class_different_order",
     },
+    "class": {
+        "same_rank": "phylum",
+        "different_rank": "class",
+        "scope_label": "same_phylum_different_class",
+    },
     "phylum": {
         "same_rank": "domain",
         "different_rank": "phylum",
         "scope_label": "same_domain_different_phylum",
     },
+}
+TAXONOMY_DISTANCE_RANKS = (
+    ("phylum", "phylum"),
+    ("class", "class"),
+    ("order", "order_name"),
+    ("family", "family"),
+    ("genus", "genus"),
+    ("species", "species"),
+)
+TAXONOMY_DISTANCE_LABELS = {
+    "phylum": "different_phylum",
+    "class": "different_class_same_phylum",
+    "order": "different_order_same_class",
+    "family": "different_family_same_order",
+    "genus": "different_genus_same_family",
+    "species": "different_species_same_genus",
 }
 
 
@@ -222,7 +243,7 @@ def _run_sgtree_python(
         cmd.extend(["--marker_selection", "yes"])
     if singles:
         cmd.extend(["--singles", "yes"])
-    cmd.extend(["--singles_mode", singles_mode])
+    cmd.extend(["--singles-mode", singles_mode])
     _run_cmd(cmd)
 
 
@@ -545,7 +566,10 @@ def _taxonomy_lookup(df: pd.DataFrame) -> dict[str, dict[str, str]]:
 
 
 def _taxonomy_field(meta: dict[str, str], key: str) -> str:
-    return str(meta.get(key, "")).strip()
+    if key == "order_name" and key not in meta:
+        key = "order"
+    value = str(meta.get(key, "")).strip()
+    return "" if value.lower() in {"nan", "none", "<na>"} else value
 
 
 def _taxonomy_scope_matches(
@@ -563,6 +587,55 @@ def _taxonomy_scope_matches(
     if not same_value or not donor_same_value or not different_value or not donor_different_value:
         return False
     return same_value == donor_same_value and different_value != donor_different_value
+
+
+def classify_taxonomic_distance(
+    recipient_meta: dict[str, str],
+    donor_meta: dict[str, str],
+) -> dict[str, str]:
+    """Classify the donor-vs-recipient source rank for a contamination event."""
+    differs: dict[str, str] = {}
+    first_known_difference = ""
+    unknown_seen = False
+
+    for rank_label, rank_key in TAXONOMY_DISTANCE_RANKS:
+        recipient_value = _taxonomy_field(recipient_meta, rank_key)
+        donor_value = _taxonomy_field(donor_meta, rank_key)
+        if not recipient_value or not donor_value:
+            differs[rank_label] = "unknown"
+            unknown_seen = True
+        elif recipient_value != donor_value:
+            differs[rank_label] = "yes"
+            if not first_known_difference:
+                first_known_difference = rank_label
+        else:
+            differs[rank_label] = "no"
+
+    if first_known_difference:
+        level = first_known_difference
+        label = TAXONOMY_DISTANCE_LABELS[level]
+    elif unknown_seen:
+        level = "unknown"
+        label = "unknown"
+    else:
+        level = "same_taxonomy"
+        label = "same_taxonomy"
+
+    return {
+        "contamination_source_taxonomic_level": level,
+        "contamination_source_taxonomic_label": label,
+        **{
+            f"contamination_source_differs_{rank_label}": differs[rank_label]
+            for rank_label, _rank_key in TAXONOMY_DISTANCE_RANKS
+        },
+    }
+
+
+def _event_taxonomic_distance_fields(
+    recipient_meta: dict[str, str],
+    donor_meta: dict[str, str],
+) -> dict[str, str]:
+    return classify_taxonomic_distance(recipient_meta, donor_meta)
 
 
 def _taxonomic_donor_candidates(
@@ -1384,6 +1457,7 @@ def _materialize_taxonomic_benchmark_from_truth(
                     "native_degrade_fraction": spec["native_degrade_fraction"],
                     **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                     **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                    **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
                 }
             )
             event_index += 1
@@ -1466,6 +1540,7 @@ def _materialize_taxonomic_benchmark_from_truth(
                     "native_degrade_fraction": spec["native_degrade_fraction"],
                     **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                     **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                    **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
                 }
             )
             replacement_events_written += 1
@@ -1926,6 +2001,7 @@ def _materialize_mixed_lineage_benchmark_from_truth(
                 "native_degrade_fraction": 0.12,
                 **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                 **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
             }
         )
         event_index += 1
@@ -1993,6 +2069,7 @@ def _materialize_mixed_lineage_benchmark_from_truth(
                 "native_degrade_fraction": 0.12,
                 **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                 **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
             }
         )
         event_index += 1
@@ -2167,17 +2244,27 @@ def _resolve_manifest_path(path_value: str | Path, benchmark_dir: Path) -> Path:
     return path
 
 
-def _replacement_outcome(run_dir: Path, recipient: str, marker: str) -> str:
+def _replacement_outcome(
+    run_dir: Path,
+    recipient: str,
+    marker: str,
+    contaminant_record_id: str,
+    native_record_id: str,
+) -> str:
     aligned_path = run_dir / "aligned_final" / f"{marker}.faa"
     if not aligned_path.exists():
         return "unknown"
     with open(aligned_path) as handle:
-        ids = [record.id for record in SeqIO.parse(handle, "fasta") if record.id.startswith(f"{recipient}|")]
+        ids = [record.id for record in SeqIO.parse(handle, "fasta")]
     if not ids:
-        return "marker_dropped"
-    if any("|contam__" in record_id for record_id in ids):
+        return "unknown"
+    if contaminant_record_id in ids:
         return "contaminant_retained"
-    return "native_retained"
+    if native_record_id in ids:
+        return "native_retained"
+    if not any(record_id.startswith(f"{recipient}|") for record_id in ids):
+        return "marker_dropped"
+    return "unknown"
 
 
 def _sorted_leaf_names(tree_path: Path) -> list[str]:
@@ -2283,16 +2370,27 @@ def evaluate_benchmark_run(
             rf_status.get((_normalized_status_id(row.native_record_id), row.marker)) == "Kept"
         )
 
-    replacement_outcomes = [
-        _replacement_outcome(run_dir, row.recipient_genome, row.marker)
-        for row in replacement_events.itertuples(index=False)
-    ]
-    replacement_contaminant_retained = int(sum(outcome == "contaminant_retained" for outcome in replacement_outcomes))
-    replacement_contaminant_removed = int(len(replacement_events) - replacement_contaminant_retained)
-    total_contaminants = int(len(duplicate_events) + len(replacement_events))
-    total_removed = int(contaminant_correct + replacement_contaminant_removed)
     reference_taxa = _expected_reference_taxa(manifest, scenario_meta, truth_tree)
     final_taxa = _sorted_leaf_names(result_tree)
+    final_taxa_set = set(final_taxa)
+    replacement_outcomes = []
+    for row in replacement_events.itertuples(index=False):
+        outcome = _replacement_outcome(
+            run_dir,
+            str(row.recipient_genome),
+            str(row.marker),
+            str(row.contaminant_record_id),
+            str(row.native_record_id),
+        )
+        if outcome in {"marker_dropped", "native_retained"} and str(row.recipient_genome) not in final_taxa_set:
+            outcome = "recipient_lost"
+        replacement_outcomes.append(outcome)
+    replacement_contaminant_retained = int(sum(outcome == "contaminant_retained" for outcome in replacement_outcomes))
+    replacement_contaminant_removed = int(
+        sum(outcome in {"marker_dropped", "native_retained"} for outcome in replacement_outcomes)
+    )
+    total_contaminants = int(len(duplicate_events) + len(replacement_events))
+    total_removed = int(contaminant_correct + replacement_contaminant_removed)
     missing_taxa = sorted(set(reference_taxa) - set(final_taxa))
     extra_taxa = sorted(set(final_taxa) - set(reference_taxa))
     replacement_recipients = sorted(set(replacement_events["recipient_genome"])) if not replacement_events.empty else []
@@ -2317,6 +2415,8 @@ def evaluate_benchmark_run(
         "replacement_contaminant_retained": replacement_contaminant_retained,
         "replacement_contaminant_removed": replacement_contaminant_removed,
         "replacement_native_retained": int(sum(outcome == "native_retained" for outcome in replacement_outcomes)),
+        "replacement_unknown": int(sum(outcome == "unknown" for outcome in replacement_outcomes)),
+        "replacement_recipient_lost": int(sum(outcome == "recipient_lost" for outcome in replacement_outcomes)),
         "contaminant_markers_added": total_contaminants,
         "contaminant_markers_removed": total_removed,
         "contaminant_markers_removed_fraction": total_removed / total_contaminants if total_contaminants else 0.0,
@@ -3199,6 +3299,7 @@ def replicate_existing_taxonomic_benchmark_panel(
                     "native_degrade_fraction": spec["native_degrade_fraction"],
                     **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                     **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                    **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
                 }
             )
             event_index += 1
@@ -3281,6 +3382,7 @@ def replicate_existing_taxonomic_benchmark_panel(
                     "native_degrade_fraction": spec["native_degrade_fraction"],
                     **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                     **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                    **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
                 }
             )
             replacement_events_written += 1
@@ -3465,6 +3567,7 @@ def replicate_existing_mixed_benchmark_panel(
                 "native_degrade_fraction": 0.12,
                 **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                 **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
             }
         )
         event_index += 1
@@ -3532,6 +3635,7 @@ def replicate_existing_mixed_benchmark_panel(
                 "native_degrade_fraction": 0.12,
                 **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
                 **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
+                **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
             }
         )
         event_index += 1
@@ -3683,7 +3787,10 @@ def _parse_args() -> argparse.Namespace:
     gentax.add_argument("--seed", type=int, default=42)
     gentax.add_argument("--num-cpus", type=int, default=8)
 
-    gensuite = subparsers.add_parser("generate-taxonomic-suite", help="Generate genus/family/order taxonomy-aware benchmark datasets")
+    gensuite = subparsers.add_parser(
+        "generate-taxonomic-suite",
+        help="Generate taxonomy-aware benchmark datasets across one or more scopes",
+    )
     gensuite.add_argument("--truth-source-dir", required=True)
     gensuite.add_argument("--outbase", required=True)
     gensuite.add_argument("--models", default="resources/models/UNI56.hmm")
@@ -3693,9 +3800,13 @@ def _parse_args() -> argparse.Namespace:
     gensuite.add_argument("--genus-donor-source-dir", default=None)
     gensuite.add_argument("--family-donor-source-dir", default=None)
     gensuite.add_argument("--order-donor-source-dir", default=None)
+    gensuite.add_argument("--class-donor-source-dir", default=None)
+    gensuite.add_argument("--phylum-donor-source-dir", default=None)
     gensuite.add_argument("--genus-donor-lineage-label", default=None)
     gensuite.add_argument("--family-donor-lineage-label", default=None)
     gensuite.add_argument("--order-donor-lineage-label", default=None)
+    gensuite.add_argument("--class-donor-lineage-label", default=None)
+    gensuite.add_argument("--phylum-donor-lineage-label", default=None)
     gensuite.add_argument("--n-genomes", type=int, default=50)
     gensuite.add_argument("--n-markers", type=int, default=10)
     gensuite.add_argument("--min-marker-presence-fraction", type=float, default=0.8)
@@ -3908,11 +4019,15 @@ def main() -> None:
                 "genus": Path(args.genus_donor_source_dir) if args.genus_donor_source_dir else None,
                 "family": Path(args.family_donor_source_dir) if args.family_donor_source_dir else None,
                 "order": Path(args.order_donor_source_dir) if args.order_donor_source_dir else None,
+                "class": Path(args.class_donor_source_dir) if args.class_donor_source_dir else None,
+                "phylum": Path(args.phylum_donor_source_dir) if args.phylum_donor_source_dir else None,
             },
             donor_lineage_label_by_scope={
                 "genus": args.genus_donor_lineage_label,
                 "family": args.family_donor_lineage_label,
                 "order": args.order_donor_lineage_label,
+                "class": args.class_donor_lineage_label,
+                "phylum": args.phylum_donor_lineage_label,
             },
             n_genomes=args.n_genomes,
             n_markers=args.n_markers,

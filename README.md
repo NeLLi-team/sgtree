@@ -116,7 +116,7 @@ Core method controls:
 - `--selection_max_rounds`: maximum coordinate-descent rounds in `coordinate` mode (default `5`).
 - `--selection_global_rounds`: rebuild the guide species tree and rerun duplicate cleanup for a small fixed number of rounds (default `1`).
 - `--lock_references`: keep reference duplicate resolution score-locked instead of RF-updating them (default `false`).
-- `--singles_mode`: `delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`, `topoknn`, or `hybrid` when singleton filtering is enabled. `topoknn` and `hybrid` are internal baselines and not intended for production use.
+- `--singles-mode`: `delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`, `loo_profile`, `topoknn`, or `hybrid` when singleton filtering is enabled. The legacy spelling `--singles_mode` remains accepted. `loo_profile` is report-only. `topoknn` and `hybrid` are internal baselines.
 - `--singles_min_rfdist`: minimum marker/global RF distance required before singleton pruning activates (default `0.25`).
 - `--keep_intermediates`: keep intermediate alignments/tables for debugging and benchmarking (default `false`).
 - `--ani_cluster`: run pairwise ANI on the combined query+reference genome set and keep one representative per cluster for the main SGTree species tree.
@@ -163,13 +163,15 @@ Practical selection guide:
 - `--selection_mode coordinate` is the stronger default; `legacy` is kept for benchmark comparisons.
 - `--selection_global_rounds` defaults to `1`; `2` is recommended for harder contamination panels in the local benchmark suites.
 - `--singles yes` is still heuristic, but the singleton branch is now explicitly split into multiple named strategies (`delta_rf`, `composite`, `contig_consensus`, `recipient_consensus`, `neighbor_clade`, `neighbor_ml`, `gcp`).
-- `--singles_mode delta_rf` is the pure topology baseline. It chooses the leaf whose removal most improves marker-vs-species RF and is mainly useful as the historical comparison point.
-- `--singles_mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
-- `--singles_mode contig_consensus` starts from the composite detector and then checks whether the candidate marker disagrees with the other markers on the same contig. It is only useful when contig IDs are reliable and multiple markers share a contig.
-- `--singles_mode recipient_consensus` requires positive RF/topology support and then scores the candidate sequence against the recipient genome's nearest species-tree neighborhood. This is currently the strongest calibrated singleton mode on the 50-gen replacement benchmarks because it preserves intended removals while sharply reducing collateral pruning.
-- `--singles_mode neighbor_clade` ignores whole-tree RF as the primary trigger and instead asks whether a marker copy agrees with the copy positions from the genome's closest species-tree neighbors. It is intended to recover replacement events that are locally inconsistent with a compact neighborhood even when the whole marker tree RF barely changes.
-- `--singles_mode neighbor_ml` is an experimental mode that scores all singleton candidates with the sandbox-derived unsupervised local-neighborhood policy and then prunes a small top-ranked set of genomes. It is intended for benchmark validation only until collateral is under control.
-- `--singles_mode gcp` (Genome Consistency Profiling) computes per-genome z-scores over marker-level features, then combines IsolationForest and HDBSCAN outlier signals to score each candidate. Only the single most deviant marker per genome can be flagged. Falls back to legacy classification via `_classify_singleton_proposals_legacy` when the panel is below `GCP_MIN_GENOMES` or `GCP_MIN_MARKERS` thresholds (`sgtree/marker_selection.py:1540`).
+- `--singles-mode delta_rf` is the pure topology baseline. It chooses the leaf whose removal most improves marker-vs-species RF and is mainly useful as the historical comparison point.
+- `--singles-mode composite` requires agreement between RF improvement, local topology mismatch, branch-length outlier behavior, and bitscore outlier behavior. It is the most conservative singleton mode.
+- `--singles-mode contig_consensus` starts from the composite detector and then checks whether the candidate marker disagrees with the other markers on the same contig. It is only useful when contig IDs are reliable and multiple markers share a contig.
+- `--singles-mode recipient_consensus` requires positive RF/topology support and then scores the candidate sequence against the recipient genome's nearest species-tree neighborhood. This is currently the strongest calibrated singleton mode on the 50-gen replacement benchmarks because it preserves intended removals while sharply reducing collateral pruning.
+- `--singles-mode neighbor_clade` ignores whole-tree RF as the primary trigger and instead asks whether a marker copy agrees with the copy positions from the genome's closest species-tree neighbors. It is intended to recover replacement events that are locally inconsistent with a compact neighborhood even when the whole marker tree RF barely changes.
+- `--singles-mode neighbor_ml` is an experimental mode that scores all singleton candidates with the sandbox-derived unsupervised local-neighborhood policy and then prunes a small top-ranked set of genomes. It is intended for benchmark validation only until collateral is under control.
+- `--singles-mode gcp` (Genome Consistency Profiling) computes per-genome z-scores over marker-level features, then combines IsolationForest and HDBSCAN outlier signals to score each candidate. Only the single most deviant marker per genome can be flagged. Falls back to recipient-consensus ranking and classification when the panel is below `GCP_MIN_GENOMES` or `GCP_MIN_MARKERS` (currently 3 genomes or 5 markers).
+- `--singles-mode loo_profile` compares each marker placement with the recipient genome's other marker trees and writes the evidence to `singleton_candidates.tsv`. It copies all marker trees unchanged. The scorer abstains when support, shared taxa, or voter agreement is insufficient.
+- Sequence-derived same-contig evidence is benchmark-only. Close-source contamination remains unresolved when its placement falls within normal cross-marker dispersion.
 - When `contig_id` cannot be recovered from the input headers, SGTree falls back to RF/topology/recipient-consensus signal instead of treating every singleton proposal as automatically ambiguous.
 - Typical inclusion presets:
 - Balanced: `--percent_models 10 --max_sdup 2 --max_dupl 0.25`
@@ -327,7 +329,8 @@ pixi run sgtree \
                                       v
                              +--------+--------+
                              | ALIGN (hmmalign/|
-                             | mafft/linsi)    |
+                             | mafft/linsi/    |
+                             | famsa)          |
                              +--------+--------+
                                       |
                                       v

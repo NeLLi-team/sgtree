@@ -3,6 +3,8 @@ import glob
 import datetime
 from dataclasses import dataclass, field
 
+from sgtree._version import DISPLAY_VERSION
+
 
 @dataclass(frozen=True)
 class SingletonThresholds:
@@ -52,7 +54,7 @@ class SingletonThresholds:
     gcp_iforest_threshold: float = 0.5
     gcp_z_threshold: float = 1.5
     gcp_min_genomes: int = 3
-    gcp_min_markers: int = 3
+    gcp_min_markers: int = 5
 
 
 DEFAULT_SINGLETON_THRESHOLDS = SingletonThresholds()
@@ -193,6 +195,6 @@ class Config:
     def print_banner(self):
         sep = "=" * 80
         print(f"{self.outdir}\n{sep}")
-        print(f"Sg_Tree v.2\nstart time: {self.start_time}\n{sep}")
+        print(f"{DISPLAY_VERSION}\nstart time: {self.start_time}\n{sep}")
         print(f"Genomes database {self.genomedir} contains {self.genome_count} genomes\n{sep}")
         print(f"Marker database {self.modeldir} contains {self.model_file_count} models\n{sep}\n")
