@@ -1,63 +1,8 @@
 import os
 import glob
-import datetime
 from dataclasses import dataclass, field
 
 from sgtree._version import DISPLAY_VERSION
-
-
-@dataclass(frozen=True)
-class SingletonThresholds:
-    """Immutable bundle of the singleton-classifier tunable constants.
-
-    Centralizes the ~30 numeric thresholds that currently live as module-level
-    globals in ``sgtree/marker_selection/__init__.py``. New code paths should
-    accept a ``SingletonThresholds`` argument and default to
-    ``DEFAULT_SINGLETON_THRESHOLDS`` instead of reading the globals directly,
-    which makes panel-specific overrides tractable without touching CLI.
-
-    Phase 6 deliberately does not replace the existing module-level constants;
-    those are kept for backward compatibility and grep-ability. Migration is
-    opt-in on a per-call-site basis.
-    """
-
-    composite_score_threshold: float = 2.0
-    composite_score_margin: float = 0.35
-
-    recipient_consensus_z_threshold: float = 3.0
-    recipient_consensus_min_score: float = 1.5
-    recipient_consensus_rank_margin: float = 0.15
-
-    contig_consensus_high_overlap: float = 0.6
-    contig_consensus_low_overlap: float = 0.2
-    contig_consensus_min_support: int = 2
-
-    neighbor_clade_min_present: int = 3
-    neighbor_clade_min_present_fraction: float = 0.6
-    neighbor_clade_min_species_anchor: float = 0.65
-    neighbor_clade_min_neighbor_purity: float = 0.75
-    neighbor_clade_min_purity_drop: float = 0.35
-    neighbor_clade_max_knn_agreement: float = 0.4
-    neighbor_clade_min_score: float = 2.0
-    neighbor_clade_min_recipient_support: float = 1.0
-
-    neighbor_ml_high_conf_min_present: int = 3
-    neighbor_ml_high_conf_min_fraction: float = 0.6
-    neighbor_ml_high_conf_min_anchor: float = 0.35
-
-    unknown_contig_delta_floor: float = 0.05
-    unknown_contig_topoknn_floor: float = 1.5
-    unknown_contig_recipient_floor: float = 1.5
-
-    gcp_combined_threshold: float = 0.80
-    gcp_outlier_count_threshold: int = 3
-    gcp_iforest_threshold: float = 0.5
-    gcp_z_threshold: float = 1.5
-    gcp_min_genomes: int = 3
-    gcp_min_markers: int = 5
-
-
-DEFAULT_SINGLETON_THRESHOLDS = SingletonThresholds()
 
 
 @dataclass
@@ -116,15 +61,11 @@ class Config:
     concat_dir: str = field(init=False)
     ref_proteomes_path: str = field(init=False)
     ani_dir: str = field(init=False)
-    ani_inputs_path: str = field(init=False)
-    ani_pairs_path: str = field(init=False)
     ani_cluster_members_path: str = field(init=False)
-    ani_representatives_path: str = field(init=False)
     ani_keep_list_path: str = field(init=False)
     ani_selected_query_dir: str = field(init=False)
     ani_selected_ref_dir: str = field(init=False)
     snp_trees_dir: str = field(init=False)
-    snp_tree_summary_path: str = field(init=False)
 
     def __post_init__(self):
         self.models_path = os.path.join(self.outdir, "models")
@@ -141,15 +82,11 @@ class Config:
         self.concat_dir = os.path.join(self.outdir, "concat")
         self.ref_proteomes_path = os.path.join(self.outdir, "ref_and_query_proteomes")
         self.ani_dir = os.path.join(self.outdir, "ani")
-        self.ani_inputs_path = os.path.join(self.ani_dir, "inputs.tsv")
-        self.ani_pairs_path = os.path.join(self.ani_dir, "ani_pairwise.tsv")
         self.ani_cluster_members_path = os.path.join(self.ani_dir, "ani_clusters.tsv")
-        self.ani_representatives_path = os.path.join(self.ani_dir, "ani_representatives.tsv")
         self.ani_keep_list_path = os.path.join(self.ani_dir, "ani_kept_genomes.txt")
         self.ani_selected_query_dir = os.path.join(self.ani_dir, "query_representatives")
         self.ani_selected_ref_dir = os.path.join(self.ani_dir, "ref_representatives")
         self.snp_trees_dir = os.path.join(self.outdir, "snp_trees")
-        self.snp_tree_summary_path = os.path.join(self.snp_trees_dir, "snp_tree_summary.tsv")
         if self.original_genomedir is None:
             self.original_genomedir = self.genomedir
         if self.original_ref is None:

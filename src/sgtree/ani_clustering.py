@@ -5,7 +5,6 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
-from Bio import SeqIO
 
 from sgtree import ani as ani_core
 from sgtree._fasta_utils import fasta_contig_bases_stats

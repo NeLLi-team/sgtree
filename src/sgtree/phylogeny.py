@@ -94,33 +94,6 @@ def run_species_tree(cfg: Config, input_fasta: str, output_tree: str):
         run_fasttree(input_fasta, output_tree, threads)
 
 
-def run_snp_tree(cfg: Config, input_fasta: str, output_tree: str):
-    """Run a nucleotide tree for cluster-level SNP alignments."""
-    if cfg.tree_method == "iqtree":
-        prefix = output_tree + ".iqtree"
-        cmd = [
-            "iqtree",
-            "--quiet",
-            "--prefix", prefix,
-            "-m", "GTR+G",
-            "-st", "DNA",
-            "-T", "1",
-        ]
-        if cfg.iqtree_fast:
-            cmd.append("-fast")
-        cmd.extend(["-s", input_fasta])
-        run_check(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        treefile = prefix + ".treefile"
-        if not os.path.exists(treefile):
-            raise FileNotFoundError(f"IQ-TREE did not produce expected treefile: {treefile}")
-        shutil.copyfile(treefile, output_tree)
-    else:
-        executable = _fasttree_executable()
-        threaded_cmd = [executable, "-threads", "1", "-nt", "-gtr", "-quiet", "-out", output_tree, input_fasta]
-        fallback_cmd = [executable, "-nt", "-gtr", "-quiet", "-out", output_tree, input_fasta]
-        _run_fasttree_with_optional_threads(threaded_cmd, fallback_cmd)
-
-
 def _marker_tree_cache_context(filepath: str, executable: str) -> tuple[str, dict[str, str], str] | None:
     """Return canonical marker content, leaf names, and cache key when safe to cache."""
     with open(filepath) as handle:

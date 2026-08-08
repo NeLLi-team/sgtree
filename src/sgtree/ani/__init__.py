@@ -17,9 +17,6 @@ from sgtree._subprocess import run_capture, run_check
 from sgtree.id_schema import build_sequence_id, parse_sequence_id, sanitize_token
 
 
-FASTA_SUFFIXES = {".fna", ".fa", ".fasta"}
-
-
 @dataclass(frozen=True)
 class GenomeRecord:
     genome_id: str

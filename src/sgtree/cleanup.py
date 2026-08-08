@@ -2,7 +2,6 @@ import os
 import glob
 import shutil
 import subprocess
-import tempfile
 import zipfile
 
 from sgtree._subprocess import run_check

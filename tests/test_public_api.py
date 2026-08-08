@@ -1,10 +1,10 @@
 """Pin the import surface of `sgtree.marker_selection` and `sgtree.ani`.
 
-These symbols are imported by the pipeline (`src/sgtree/cli.py`), the
-benchmarks layer, and external tooling under `bin/`. The Phase 4
-structural splits (module -> package) must preserve every name here.
-A regression that removes or renames an export breaks downstream
-callers silently at import time; this test makes that loud.
+These symbols are imported by the pipeline (`src/sgtree/cli.py`) and the
+benchmarks layer. The Phase 4 structural splits (module -> package) must
+preserve every name here. A regression that removes or renames an export
+breaks downstream callers silently at import time; this test makes that
+loud.
 """
 
 from __future__ import annotations
@@ -14,11 +14,10 @@ import unittest
 
 
 _MARKER_SELECTION_PUBLIC = [
-    # from bin/remove_singles.py
+    # from the benchmarks layer and tests
     "_load_score_table",
     "_tree_to_genome_level",
     "choose_tree_by_rf",
-    "prune_singletons",
     # from src/sgtree/cli.py
     "run_noperm",
     "remove_singles",

@@ -1199,15 +1199,6 @@ def _verify_inference_inputs(manifest: dict) -> None:
             raise ValueError(f"Frozen inference input checksum changed: {path}")
 
 
-def _replace_record_sequence(
-    records: list[SeqRecord],
-    contig_id: str,
-    replacement: Seq,
-) -> None:
-    target = _contig_by_normalized_id(records, contig_id)
-    target.seq = replacement
-
-
 def _mask_native(records: list[SeqRecord], event: dict) -> None:
     contig = _contig_by_normalized_id(records, str(event["native_contig_id"]))
     start0 = int(event["native_begin"]) - 1

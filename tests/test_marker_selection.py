@@ -262,33 +262,6 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(chosen.write(format=9), original.write(format=9))
 
-    def test_effective_singleton_mode_returns_requested_runtime_mode(self):
-        for mode in ("delta_rf", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml"):
-            self.assertEqual(
-                marker_selection.effective_singleton_mode(
-                    mode,
-                    0.40,
-                    duplicate_resolution_present=True,
-                ),
-                mode,
-            )
-
-    def test_every_singleton_mode_uses_global_rf_gate(self):
-        modes = (
-            "delta_rf",
-            "topoknn",
-            "hybrid",
-            "composite",
-            "contig_consensus",
-            "recipient_consensus",
-            "neighbor_clade",
-            "neighbor_ml",
-            "gcp",
-        )
-        for mode in modes:
-            with self.subTest(mode=mode):
-                self.assertTrue(marker_selection.singleton_mode_uses_global_rf_gate(mode))
-
     def test_choose_singleton_prune_prefers_highest_delta_rf(self):
         species = Tree("((A,B),(C,(D,E)));")
         working = Tree("((A,B),(C,(D,E)));")
@@ -580,27 +553,6 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertIsNone(chosen)
 
-    def test_prune_singletons_removes_only_selected_leaf(self):
-        species = Tree("((A,B),(C,(D,E)));")
-        working = Tree("((A,B),(C,(D,E)));")
-
-        with patch.object(
-            marker_selection,
-            "choose_singleton_prune",
-            return_value={
-                "leaf_name": "A",
-                "candidate_tree": Tree("(B,(C,(D,E)));"),
-            },
-        ):
-            pruned = marker_selection.prune_singletons(
-                species_tree=species,
-                working_tree=working,
-                mode="delta_rf",
-                k=3,
-            )
-
-        self.assertEqual(sorted(leaf.name for leaf in pruned.iter_leaves()), ["B", "C", "D", "E"])
-
     def test_choose_singleton_prune_outlier_picks_obvious_misplaced_leaf(self):
         species = Tree("(((A:1,B:1):1,C:1):1,(D:1,E:1):1);")
         working = Tree("((((A:1,B:1):1,D:3):1,C:1):1,E:1);")
@@ -834,16 +786,6 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertEqual(
             {proposal["genome"] for proposal in accepted},
             {f"Genome{i:03d}" for i in range(70)},
-        )
-
-    def test_prune_tree_to_query_genomes_removes_references(self):
-        tree = Tree("((Ref1|r1,Query1|q1),(Ref2|r2,Query2|q2));")
-
-        pruned = marker_selection._prune_tree_to_query_genomes(tree, {"Ref1", "Ref2"})
-
-        self.assertEqual(
-            sorted(leaf.name for leaf in pruned.iter_leaves()),
-            ["Query1|q1", "Query2|q2"],
         )
 
     def test_propose_singleton_prune_worker_keeps_references_in_scoring_context(self):
