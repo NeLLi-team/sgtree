@@ -26,7 +26,6 @@ LEGACY_SINGLETON_MODE_ALIASES = {
 COMPOSITE_SCORE_THRESHOLD = 2.0
 COMPOSITE_SCORE_MARGIN = 0.35
 RECIPIENT_CONSENSUS_Z_THRESHOLD = 3.0
-RECIPIENT_CONSENSUS_MIN_SCORE = 1.5
 RECIPIENT_CONSENSUS_RANK_MARGIN = 0.15
 CONTIG_CONSENSUS_HIGH_OVERLAP = 0.6
 CONTIG_CONSENSUS_LOW_OVERLAP = 0.2
@@ -167,11 +166,6 @@ def _best_score(scored_list):
         scored_list,
         key=lambda entry: (-float(entry.rsplit(":", 1)[1]), entry.rsplit(":", 1)[0]),
     )
-
-
-def _removekey(d, key):
-    """Return a copy of dict d without the given key."""
-    return {k: v for k, v in d.items() if k != key}
 
 
 def _split_scored_entry(scored_entry: str) -> tuple[str, float]:
@@ -664,15 +658,6 @@ def _leaf_neighbor_overlap(species_tree: Tree, working_tree: Tree, leaf_name: st
 
 def _canonical_singleton_mode(mode: str) -> str:
     return LEGACY_SINGLETON_MODE_ALIASES.get(mode, mode)
-
-
-def singleton_mode_uses_global_rf_gate(mode: str) -> bool:
-    """Return whether automatic pruning uses the final RF safeguard.
-
-    Retained for callers of the previous policy helper. Every supported mode
-    now uses the safeguard.
-    """
-    return True
 
 
 def _nearest_genome_neighbor_profile(
@@ -1353,30 +1338,6 @@ def choose_singleton_prune(
         return None
 
     raise ValueError(f"Unknown singleton mode: {mode}")
-
-
-def prune_singletons(
-    species_tree: Tree,
-    working_tree: Tree,
-    *,
-    mode: str,
-    k: int,
-    score_table: pd.DataFrame | None = None,
-    score_col: str | None = None,
-    alignment_path: str | None = None,
-) -> Tree:
-    chosen = choose_singleton_prune(
-        species_tree,
-        working_tree,
-        mode=mode,
-        k=k,
-        score_table=score_table,
-        score_col=score_col,
-        alignment_path=alignment_path,
-    )
-    if chosen is None:
-        return working_tree.copy()
-    return chosen["candidate_tree"]
 
 
 def _marker_name_from_tree_path(filepath: str) -> str:
@@ -2071,18 +2032,6 @@ def _reference_genomes_from_dir(ref_dir: str | None) -> set[str]:
     }
 
 
-def _prune_tree_to_query_genomes(tree: Tree, reference_genomes: set[str]) -> Tree:
-    pruned = tree.copy()
-    keep_leaves = [
-        leaf.name
-        for leaf in pruned.iter_leaves()
-        if leaf.name.split("|")[0] not in reference_genomes
-    ]
-    if keep_leaves and len(keep_leaves) < len(list(pruned.iter_leaves())):
-        pruned.prune(keep_leaves)
-    return pruned
-
-
 def _filter_reference_singleton_proposals(
     proposals: list[dict],
     proposal_keys: set[tuple[str, str]],
@@ -2431,8 +2380,6 @@ def build_singleton_output_tree(
     accepted_leaf_names: list[str],
     mode: str | None = None,
 ) -> tuple[Tree, str]:
-    if mode is not None and not singleton_mode_uses_global_rf_gate(mode):
-        raise ValueError(f"Singleton mode {mode!r} bypasses the RF safeguard")
     tf = Tree(marker_tree_path)
     accepted_leaf_set = {str(name) for name in accepted_leaf_names if str(name)}
     if not accepted_leaf_set:
@@ -2457,16 +2404,6 @@ def build_singleton_output_tree(
     return chosen_tree, "pruned"
 
 
-def effective_singleton_mode(
-    mode: str,
-    rdist: float,
-    *,
-    duplicate_resolution_present: bool,
-) -> str:
-    """Use the chosen singleton cleanup implementation for all runtime runs."""
-    return _canonical_singleton_mode(mode)
-
-
 def _propose_singleton_prune_worker(args):
     (
         filepath,
@@ -2488,11 +2425,7 @@ def _propose_singleton_prune_worker(args):
     rf, maxrf, *_ = ti.robinson_foulds(td, unrooted_trees=True)
     maxrf = maxrf + 0.0001
     rdist = rf / maxrf
-    effective_mode = effective_singleton_mode(
-        singles_mode,
-        rdist,
-        duplicate_resolution_present=bool(duplicate_markers),
-    )
+    effective_mode = _canonical_singleton_mode(singles_mode)
     leaf_count = len(list(tf.iter_leaves()))
     if num_nei_override > 0:
         num_nei = min(num_nei_override, max(1, leaf_count - 1))
@@ -2718,6 +2651,7 @@ def _write_singleton_candidate_table(
         "loo_attachment_clade",
         "loo_voter_count",
         "loo_voter_markers",
+        "loo_voter_search_mode",
         "loo_coordinate_count",
         "loo_coordinate_taxa",
         "loo_target_discordance",
@@ -2729,6 +2663,8 @@ def _write_singleton_candidate_table(
         "loo_marker_rank",
         "loo_marker_margin",
         "loo_conflict_beyond_dispersion",
+        "loo_robust_z",
+        "loo_review_candidate",
         "loo_decision",
         "selected_candidate",
         "decision",
@@ -2797,6 +2733,7 @@ def _write_singleton_candidate_table(
                         "loo_voter_markers": ",".join(
                             sorted(str(item) for item in enriched.get("loo_voter_markers", []))
                         ),
+                        "loo_voter_search_mode": enriched.get("loo_voter_search_mode") or "",
                         "loo_coordinate_count": enriched.get("loo_coordinate_count", ""),
                         "loo_coordinate_taxa": ",".join(
                             sorted(str(item) for item in enriched.get("loo_coordinate_taxa", []))
@@ -2813,6 +2750,10 @@ def _write_singleton_candidate_table(
                             ""
                             if conflict_beyond_dispersion is None
                             else "yes" if conflict_beyond_dispersion else "no"
+                        ),
+                        "loo_robust_z": format_float(enriched.get("loo_robust_z")),
+                        "loo_review_candidate": (
+                            "yes" if enriched.get("loo_review_candidate") else "no"
                         ),
                         "loo_decision": enriched.get("loo_decision", ""),
                         "selected_candidate": "yes" if selected_candidate else "no",

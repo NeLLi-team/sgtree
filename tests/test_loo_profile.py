@@ -248,8 +248,11 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
             for index, coordinates in enumerate(coordinate_sets)
         ]
 
-        selected, coordinates = loo_profile._select_voters(target, voters, "G")
+        selected, coordinates, search_mode = loo_profile._select_voters(
+            target, voters, "G"
+        )
 
+        self.assertEqual(search_mode, "exact")
         self.assertGreaterEqual(len(selected), loo_profile.MIN_VOTERS)
         self.assertGreaterEqual(len(coordinates), loo_profile.MIN_COORDINATES)
         self.assertEqual(
@@ -358,6 +361,86 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
 
         self.assertEqual(result["loo_abstention_reason"], "within_voter_dispersion")
         self.assertFalse(result["loo_conflict_beyond_dispersion"])
+
+    def test_voter_search_mode_switches_from_exact_to_greedy(self):
+        exact_trees = {
+            f"M{index}": _scaled(_base_tree(f"M{index}"), index + 1)
+            for index in range(6)
+        }
+        exact = _row(loo_profile.score_loo_profiles(exact_trees), "M0")
+        self.assertEqual(exact["loo_voter_search_mode"], "exact")
+
+        greedy_trees = {
+            f"M{index}": _scaled(_base_tree(f"M{index}"), index + 1)
+            for index in range(loo_profile.MAX_EXACT_VOTERS + 2)
+        }
+        greedy = _row(loo_profile.score_loo_profiles(greedy_trees), "M0")
+        self.assertEqual(
+            greedy["loo_voter_count"],
+            loo_profile.MAX_EXACT_VOTERS + 1,
+        )
+        self.assertEqual(greedy["loo_voter_search_mode"], "greedy")
+
+    def test_review_candidate_flags_robust_conflict_under_dispersion_ceiling(self):
+        voters = {
+            f"M{index}": _base_tree(f"M{index}", far_stem=stem)
+            for index, stem in enumerate((1.0, 1.02, 1.04, 1.06, 9.0), start=1)
+        }
+        trees = {"M0": _base_tree("M0", far_stem=2.0), **voters}
+
+        result = _row(loo_profile.score_loo_profiles(trees), "M0")
+
+        self.assertEqual(result["loo_abstention_reason"], "within_voter_dispersion")
+        self.assertGreaterEqual(
+            result["loo_robust_z"],
+            loo_profile.REVIEW_ROBUST_Z,
+        )
+        self.assertTrue(result["loo_review_candidate"])
+        self.assertEqual(result["loo_decision"], "kept_report_only")
+
+    def test_review_candidate_requires_target_support(self):
+        voters = {
+            f"M{index}": _base_tree(f"M{index}", far_stem=stem)
+            for index, stem in enumerate((1.0, 1.02, 1.04, 1.06, 9.0), start=1)
+        }
+        trees = {
+            "M0": _base_tree("M0", far_stem=2.0, target_support="0.69"),
+            **voters,
+        }
+
+        result = _row(loo_profile.score_loo_profiles(trees), "M0")
+
+        self.assertEqual(
+            result["loo_abstention_reason"],
+            "target_support_below_threshold",
+        )
+        self.assertFalse(result["loo_review_candidate"])
+
+    def test_review_candidate_not_set_for_calls_or_zero_mad(self):
+        conflict_trees = {"M0": _localized_regraft_tree("M0")}
+        conflict_trees.update(
+            {f"M{index}": _base_tree(f"M{index}") for index in range(1, 6)}
+        )
+        conflict = _row(
+            [
+                row
+                for row in loo_profile.score_loo_profiles(conflict_trees)
+                if row["marker_name"] == "M0"
+            ],
+            "M0",
+        )
+        self.assertEqual(conflict["loo_class"], "discordant_marker")
+        self.assertIsNone(conflict["loo_robust_z"])
+        self.assertFalse(conflict["loo_review_candidate"])
+
+        scaled_trees = {
+            f"M{index}": _scaled(_base_tree(f"M{index}"), index + 1)
+            for index in range(6)
+        }
+        clean = _row(loo_profile.score_loo_profiles(scaled_trees), "M0")
+        self.assertEqual(clean["loo_class"], "clean")
+        self.assertIsNone(clean["loo_robust_z"])
+        self.assertFalse(clean["loo_review_candidate"])
 
     def test_duplicate_target_genome_abstains(self):
         duplicate = Tree(

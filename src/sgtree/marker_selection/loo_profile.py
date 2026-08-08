@@ -16,6 +16,7 @@ MIN_TARGET_SUPPORT = 0.70
 MIN_TARGET_DISCORDANCE = 0.02
 MIN_MARKER_MARGIN = 0.02
 MAX_EXACT_VOTERS = 12
+REVIEW_ROBUST_Z = 3.0
 TOLERANCE = 1e-12
 
 
@@ -258,6 +259,7 @@ def _base_row(marker_name: str, leaf_name: str) -> dict:
         "loo_attachment_clade": None,
         "loo_voter_count": 0,
         "loo_voter_markers": [],
+        "loo_voter_search_mode": None,
         "loo_coordinate_count": 0,
         "loo_coordinate_taxa": [],
         "loo_target_discordance": None,
@@ -265,8 +267,10 @@ def _base_row(marker_name: str, leaf_name: str) -> dict:
         "loo_voter_mad": None,
         "loo_voter_upper": None,
         "loo_conflict_margin": None,
+        "loo_robust_z": None,
         "loo_score": None,
         "loo_conflict_beyond_dispersion": None,
+        "loo_review_candidate": False,
         "loo_marker_rank": None,
         "loo_marker_margin": None,
         "loo_decision": "kept_report_only",
@@ -285,7 +289,7 @@ def _select_voters(
     target: dict,
     voters: list[tuple[str, dict]],
     genome: str,
-) -> tuple[list[tuple[str, dict]], list[str]]:
+) -> tuple[list[tuple[str, dict]], list[str], str]:
     """Find a shared-coordinate voter set without unbounded subset search."""
     if len(voters) <= MAX_EXACT_VOTERS:
         for size in range(len(voters), MIN_VOTERS - 1, -1):
@@ -304,7 +308,7 @@ def _select_voters(
                     )
             if candidates:
                 _negative_count, _names, selected, shared = min(candidates)
-                return selected, shared
+                return selected, shared, "exact"
 
     # Large production panels stay bounded. Greedy failure only causes a
     # report-only abstention; the fixed eight-marker benchmark uses exact search.
@@ -318,7 +322,7 @@ def _select_voters(
             choices.append((-len(shared), voter_name, index, shared))
         _negative_count, _voter_name, remove_index, coordinates = min(choices)
         selected.pop(remove_index)
-    return selected, coordinates
+    return selected, coordinates, "greedy"
 
 
 def _apply_within_marker_gate(rows: list[dict]) -> None:
@@ -426,9 +430,10 @@ def score_loo_profiles(
                 rows.append(row)
                 continue
 
-            voters, coordinates = _select_voters(target, voters, genome)
+            voters, coordinates, search_mode = _select_voters(target, voters, genome)
             row["loo_voter_count"] = len(voters)
             row["loo_voter_markers"] = [name for name, _voter in voters]
+            row["loo_voter_search_mode"] = search_mode
             row["loo_coordinate_count"] = len(coordinates)
             row["loo_coordinate_taxa"] = coordinates
             if len(coordinates) < MIN_COORDINATES:
@@ -479,6 +484,11 @@ def score_loo_profiles(
             upper = max(max(voter_discordances), center + (3.0 * 1.4826 * mad))
             margin = target_discordance - upper
             beyond_dispersion = target_discordance > upper + TOLERANCE
+            robust_z = (
+                (target_discordance - center) / (1.4826 * mad)
+                if mad > 0
+                else None
+            )
             row.update(
                 {
                     "loo_target_discordance": target_discordance,
@@ -486,6 +496,7 @@ def score_loo_profiles(
                     "loo_voter_mad": mad,
                     "loo_voter_upper": upper,
                     "loo_conflict_margin": margin,
+                    "loo_robust_z": robust_z,
                     "loo_score": target_discordance,
                     "loo_conflict_beyond_dispersion": beyond_dispersion,
                 }
@@ -505,4 +516,13 @@ def score_loo_profiles(
             rows.append(row)
 
     _apply_within_marker_gate(rows)
+    for row in rows:
+        # Report-only review tier: dispersion-ceiling abstentions whose conflict
+        # is still robustly outside the voter MAD band. Never a call by itself;
+        # confirmation requires downstream contig evidence.
+        row["loo_review_candidate"] = (
+            row["loo_abstention_reason"] == "within_voter_dispersion"
+            and row["loo_robust_z"] is not None
+            and float(row["loo_robust_z"]) >= REVIEW_ROBUST_Z
+        )
     return rows
