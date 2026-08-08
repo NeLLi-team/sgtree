@@ -153,6 +153,56 @@ class LeaveOneOutSequenceBenchmarkTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load_cmtv_rf_weights(path)
 
+    def test_informative_margin_stats(self):
+        self.assertEqual(
+            benchmark._informative_margin_stats([]),
+            (None, None),
+        )
+        self.assertEqual(
+            benchmark._informative_margin_stats(
+                [{"informative": False, "score_margin": 50.0}]
+            ),
+            (None, None),
+        )
+        mean, minimum = benchmark._informative_margin_stats(
+            [
+                {"informative": True, "score_margin": 30.0},
+                {"informative": True, "score_margin": 20.0},
+                {"informative": False, "score_margin": 500.0},
+                {"informative": True, "score_margin": None},
+            ]
+        )
+        self.assertEqual(mean, 25.0)
+        self.assertEqual(minimum, 20.0)
+
+    def test_donor_gene_sweep_gate_floor_is_structural(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outdir = Path(temp_dir)
+            sweep = benchmark.run_donor_gene_sweep(
+                outdir,
+                threads=1,
+                panel_filter={("alpha_like", 809)},
+            )
+            rows = sweep["rows"]
+            self.assertEqual(len(rows), len(benchmark.SWEEP_DONOR_GENE_COUNTS))
+            for row in rows:
+                if row["donor_gene_count"] < 3:
+                    self.assertFalse(row["contig_gate_pass"])
+                    self.assertEqual(row["informative_gene_count"], 0)
+                else:
+                    # Measured v2 curve: at or above the three-query floor
+                    # every donor gene votes and agrees, and the gate passes.
+                    self.assertTrue(row["contig_gate_pass"])
+                    self.assertEqual(
+                        row["informative_gene_count"],
+                        row["donor_gene_count"],
+                    )
+                    self.assertEqual(
+                        row["agreement_count"],
+                        row["donor_gene_count"],
+                    )
+            self.assertTrue((outdir / "donor_gene_sweep.tsv").exists())
+
     def test_full_bounded_sequence_benchmark_passes_and_reuses_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             outdir = Path(temp_dir)
@@ -201,6 +251,38 @@ class LeaveOneOutSequenceBenchmarkTests(unittest.TestCase):
                 report["metrics"]["loo_gene_rich_f1"],
                 report["metrics"]["cmtv_weighted_gene_rich_f1"],
             )
+            # Characterization of instrument v2 (native_contig_genes_v2):
+            # the plain vote gate passes 42 of 91 review candidates (40
+            # false); the margin floor keeps the 2 truth warnings and
+            # rejects all 40. Margin threshold is dev-calibrated on the two
+            # truth events, so this pins measured state, not validation.
+            self.assertEqual(report["review_tier"]["review_robust_z"], 3.0)
+            self.assertEqual(
+                report["review_tier"]["review_min_vote_margin"], 28.0
+            )
+            self.assertEqual(report["review_tier"]["candidate_count"], 91)
+            self.assertEqual(
+                report["review_tier"]["gate_only_warning_count"], 42
+            )
+            self.assertEqual(report["review_tier"]["gate_only_false_count"], 40)
+            self.assertEqual(report["review_tier"]["warning_count"], 2)
+            self.assertEqual(report["review_tier"]["warning_truth_count"], 2)
+            self.assertEqual(report["review_tier"]["warning_false_count"], 0)
+            self.assertEqual(
+                report["review_tier"]["near_source_gene_rich_warned"],
+                2,
+            )
+            self.assertEqual(
+                report["review_tier"]["near_source_gene_rich_total"],
+                2,
+            )
+            greedy = report["greedy_tier"]
+            self.assertEqual(greedy["marker_count"], benchmark.GREEDY_MARKER_COUNT)
+            self.assertEqual(greedy["distance_stratum"], "far")
+            self.assertEqual(greedy["voter_search_modes"], ["greedy"])
+            self.assertEqual(greedy["case"]["loo_truth_positive_count"], 1)
+            self.assertEqual(greedy["case"]["loo_truth_false_positive_count"], 0)
+            self.assertFalse(greedy["case"]["loo_sentinel_removed"])
             self.assertEqual(report["wp1_decision"]["status"], "select_simpler_tied_scorer")
             self.assertEqual(report["wp1_decision"]["selected_scorer"], "loo")
             self.assertTrue(report["wp1_decision"]["empirical_confirmation_ready"])

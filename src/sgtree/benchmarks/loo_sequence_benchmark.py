@@ -26,7 +26,10 @@ warnings.simplefilter("ignore", SyntaxWarning)
 from ete3 import Tree
 
 from sgtree.benchmarks.loo_tree_fixtures import (
+    _balanced,
     _nearest_genome_set,
+    _opaque,
+    _pectinate,
     _score_cmtv_current,
     cmtv_rf_quality_weights,
     wilson_interval,
@@ -40,7 +43,7 @@ from sgtree.marker_selection import (
     select_singleton_proposals,
 )
 from sgtree.marker_selection.contig_evidence import contig_gene_vote_gate
-from sgtree.marker_selection.loo_profile import score_loo_profiles
+from sgtree.marker_selection.loo_profile import REVIEW_ROBUST_Z, score_loo_profiles
 from sgtree.phylogeny import run_fasttree
 
 
@@ -66,6 +69,16 @@ EVENT_CLASSES = ("clean", "gene_rich_contaminant", "solo_marker_contaminant")
 TAXA_COUNT = 12
 MARKER_COUNT = 8
 NON_MARKER_GENE_COUNT = 3
+NATIVE_CONTIG_GENE_COUNT = 3
+GREEDY_MARKER_COUNT = 16
+GREEDY_PANEL_TAG = "greedy16"
+SWEEP_DONOR_GENE_COUNTS = (0, 1, 2, 3, 4, 5, 7, 10)
+# Review-warning margin floor, calibrated on the v2 development instrument:
+# truth informative-vote margin means were 31.1 and 50.5 bits, the highest
+# false mean was 25.5. Two truth events only, so this is calibration, not
+# validation. Donor-origin genes show a sharp attachment/background affinity
+# cliff; native genes sit on a smooth within-panel divergence gradient.
+REVIEW_MIN_VOTE_MARGIN = 28.0
 MARKER_LENGTH = 400
 NON_MARKER_LENGTH = 220
 MAX_MARKER_TREE_BUILDS = 96
@@ -78,27 +91,9 @@ TREE_CACHE_SCHEMA = 1
 SCORER_SIMPLICITY_ORDER = ("loo", "cmtv_weighted", "recipient_consensus")
 
 
-def _opaque(prefix: str, *parts: object) -> str:
-    payload = "\x1f".join(str(part) for part in parts).encode()
-    return prefix + hashlib.blake2s(payload, digest_size=6).hexdigest()
-
-
 def _seed(*parts: object) -> int:
     payload = "\x1f".join(str(part) for part in parts).encode()
     return int.from_bytes(hashlib.blake2s(payload, digest_size=8).digest(), "big")
-
-
-def _balanced(items: list[str]) -> str | tuple:
-    if len(items) == 1:
-        return items[0]
-    midpoint = len(items) // 2
-    return _balanced(items[:midpoint]), _balanced(items[midpoint:])
-
-
-def _pectinate(items: list[str]) -> str | tuple:
-    if len(items) == 2:
-        return items[0], items[1]
-    return items[0], _pectinate(items[1:])
 
 
 def _attach_sister(
@@ -229,15 +224,25 @@ def _event_record(
     return contig, build_sequence_id(recipient, contig, gene)
 
 
-def build_panel(regime: str, seed: int) -> dict:
+def build_panel(
+    regime: str,
+    seed: int,
+    *,
+    marker_count: int = MARKER_COUNT,
+    tag: str | None = None,
+) -> dict:
     """Build one predeclared panel without calling a scorer or tree builder."""
     if regime not in REGIMES or seed not in SEEDS:
         raise ValueError("unknown fixed sequence-panel coordinate")
 
-    panel_id = _opaque("p", regime, seed)
-    fixture_key = (regime, seed)
+    panel_id = (
+        _opaque("p", regime, seed)
+        if tag is None
+        else _opaque("p", regime, seed, tag)
+    )
+    fixture_key = (regime, seed) if tag is None else (regime, seed, tag)
     genomes = tuple(_opaque("x", panel_id, index) for index in range(TAXA_COUNT))
-    markers = tuple(_opaque("m", panel_id, index) for index in range(MARKER_COUNT))
+    markers = tuple(_opaque("m", panel_id, index) for index in range(marker_count))
     source_id = _opaque("s", panel_id, "held_out_source")
     main_recipient = genomes[2]
     main_marker = markers[0]
@@ -301,6 +306,38 @@ def build_panel(regime: str, seed: int) -> dict:
             non_marker_sequences[genome][family] = family_sequences[genome]
         source_non_marker_sequences[family] = family_sequences[source_id]
 
+    # Native gene neighborhoods: every native marker contig carries the gate
+    # minimum of non-marker genes, so contig audits on native records must be
+    # decided by vote direction rather than gene scarcity.
+    native_contig_genes: dict[str, dict[str, dict[str, str]]] = {
+        genome: {} for genome in genomes
+    }
+    sweep_donor_gene_sequences: list[str] = [
+        source_non_marker_sequences[family]
+        for family in sorted(source_non_marker_sequences)
+    ]
+    for marker_index, marker in enumerate(markers):
+        for slot in range(NATIVE_CONTIG_GENE_COUNT):
+            family_sequences = _simulate_family(
+                source_topology,
+                regime=regime,
+                family_key=(panel_id, "native_contig", marker_index, slot),
+                length=NON_MARKER_LENGTH,
+            )
+            for genome in genomes:
+                contig = _opaque("c", panel_id, marker, genome)
+                record_id = build_sequence_id(
+                    genome,
+                    contig,
+                    _opaque(
+                        "q", panel_id, "native_contig", marker_index, slot, genome
+                    ),
+                )
+                native_contig_genes[genome].setdefault(contig, {})[record_id] = (
+                    family_sequences[genome]
+                )
+            sweep_donor_gene_sequences.append(family_sequences[source_id])
+
     main_contig, main_record = _event_record(
         fixture_key,
         recipient=main_recipient,
@@ -356,6 +393,7 @@ def build_panel(regime: str, seed: int) -> dict:
         "panel_id": panel_id,
         "regime": regime,
         "seed": seed,
+        "tag": tag,
         "topology_name": REGIMES[regime]["topology"],
         "genomes": genomes,
         "markers": markers,
@@ -365,6 +403,8 @@ def build_panel(regime: str, seed: int) -> dict:
         "marker_records": marker_records,
         "non_marker_sequences": non_marker_sequences,
         "non_marker_records": non_marker_records,
+        "native_contig_genes": native_contig_genes,
+        "sweep_donor_gene_sequences": sweep_donor_gene_sequences,
         "main_event": {
             "event_id": _opaque("e", *fixture_key, "source_replacement"),
             "event_kind": "source_replacement",
@@ -422,6 +462,8 @@ def _panel_sequence_hash(panel: dict) -> str:
         "marker_sequences": panel["marker_sequences"],
         "non_marker_records": panel["non_marker_records"],
         "non_marker_sequences": panel["non_marker_sequences"],
+        "native_contig_genes": panel["native_contig_genes"],
+        "sweep_donor_gene_sequences": panel["sweep_donor_gene_sequences"],
         "events": {
             key: {
                 "observed_record_id": panel[key]["observed_record_id"],
@@ -490,9 +532,7 @@ def build_manifest(panels: list[dict] | None = None) -> dict:
         for event_class in EVENT_CLASSES:
             case_rows.append(
                 {
-                    "case_id": _opaque(
-                        "f", panel["regime"], event_class, panel["seed"]
-                    ),
+                    "case_id": _case_opaque(panel, event_class),
                     "panel_id": panel["panel_id"],
                     "regime": panel["regime"],
                     "seed": panel["seed"],
@@ -500,6 +540,7 @@ def build_manifest(panels: list[dict] | None = None) -> dict:
                     "distance_stratum": panel["main_event"]["distance_stratum"],
                 }
             )
+    marker_counts = sorted({len(panel["markers"]) for panel in panels})
     return {
         "benchmark_kind": "synthetic_aligned_protein_inference",
         "primary_estimand": "truth_topology_far_source_single_copy_contamination",
@@ -509,7 +550,11 @@ def build_manifest(panels: list[dict] | None = None) -> dict:
         "production_pruning_enabled": False,
         "scorer_simplicity_order": list(SCORER_SIMPLICITY_ORDER),
         "taxa_per_panel": TAXA_COUNT,
-        "markers_per_case": MARKER_COUNT,
+        "markers_per_case": (
+            marker_counts[0] if len(marker_counts) == 1 else marker_counts
+        ),
+        "panel_realism": "native_contig_genes_v2",
+        "native_contig_gene_count": NATIVE_CONTIG_GENE_COUNT,
         "panels": panel_rows,
         "cases": case_rows,
     }
@@ -525,6 +570,9 @@ def _case_state(panel: dict, event_class: str) -> dict:
         for marker, per_genome in panel["marker_sequences"].items()
     }
     contig_genes: dict[str, dict[str, str]] = {}
+    for genome in panel["genomes"]:
+        for contig, genes in panel["native_contig_genes"][genome].items():
+            contig_genes[contig] = dict(genes)
     events = []
     if event_class in {"gene_rich_contaminant", "solo_marker_contaminant"}:
         event = panel["main_event"]
@@ -564,6 +612,9 @@ def _reference_proteomes(panel: dict) -> dict[str, dict[str, str]]:
             result[genome][panel["non_marker_records"][genome][family]] = panel[
                 "non_marker_sequences"
             ][genome][family]
+    for genome in panel["genomes"]:
+        for contig in sorted(panel["native_contig_genes"][genome]):
+            result[genome].update(panel["native_contig_genes"][genome][contig])
     return result
 
 
@@ -836,13 +887,35 @@ def _all_marker_record_ids(panel: dict) -> set[str]:
     return result
 
 
+def _case_opaque(panel: dict, event_class: str) -> str:
+    tag = panel.get("tag")
+    if tag is None:
+        return _opaque("f", panel["regime"], event_class, panel["seed"])
+    return _opaque("f", panel["regime"], event_class, panel["seed"], tag)
+
+
 def _select_with_budget(proposals: list[dict], panel: dict) -> list[dict]:
     return select_singleton_proposals(
         proposals,
-        genome_marker_counts={genome: MARKER_COUNT for genome in panel["genomes"]},
+        genome_marker_counts={
+            genome: len(panel["markers"]) for genome in panel["genomes"]
+        },
         min_markers_per_genome=1,
         max_prunes_per_genome=1,
     )
+
+
+def _informative_margin_stats(
+    votes: list[dict],
+) -> tuple[float | None, float | None]:
+    margins = [
+        float(vote["score_margin"])
+        for vote in votes
+        if vote.get("informative") and vote.get("score_margin") is not None
+    ]
+    if not margins:
+        return None, None
+    return sum(margins) / len(margins), min(margins)
 
 
 def _loo_proposals(rows: list[dict]) -> list[dict]:
@@ -1134,7 +1207,7 @@ def _score_case(
     threads: int,
     clean_species_path: Path,
 ) -> tuple[dict, int]:
-    case_id = _opaque("f", panel["regime"], event_class, panel["seed"])
+    case_id = _case_opaque(panel, event_class)
     state = _case_state(panel, event_class)
     marker_paths = _case_tree_paths(panel, event_class, marker_cache)
     trees = _marker_trees(marker_paths)
@@ -1202,12 +1275,17 @@ def _score_case(
         for proposals in raw_proposals.values()
         for proposal in proposals
     }
+    review_keys = {
+        (str(row["marker_name"]), str(row["leaf_name"]))
+        for row in loo_rows
+        if row["loo_review_candidate"]
+    }
     common_audits = _common_attachment_audits(
         panel,
         state,
         trees,
         rows_by_key,
-        raw_candidate_keys,
+        raw_candidate_keys | review_keys,
     )
     pipelines = {}
     for scorer, proposals in raw_proposals.items():
@@ -1266,6 +1344,54 @@ def _score_case(
         if event_class == "gene_rich_contaminant"
         else set()
     )
+    review_margin_stats = {
+        key: _informative_margin_stats(common_audits[key]["evidence"]["votes"])
+        for key in review_keys
+    }
+    review_warned_keys = {
+        key
+        for key in review_keys
+        if common_audits[key]["gate"]["contig_gate_pass"]
+        and review_margin_stats[key][0] is not None
+        and review_margin_stats[key][0] >= REVIEW_MIN_VOTE_MARGIN
+    }
+    review_rows = []
+    for key in sorted(review_keys):
+        row = rows_by_key[key]
+        gate = common_audits[key]["gate"]
+        evidence = common_audits[key]["evidence"]
+        margin_mean, margin_min = review_margin_stats[key]
+        review_rows.append(
+            {
+                "case_id": case_id,
+                "panel_id": panel["panel_id"],
+                "regime": panel["regime"],
+                "seed": panel["seed"],
+                "event_class": event_class,
+                "distance_stratum": main["distance_stratum"],
+                "marker_name": key[0],
+                "record_id": key[1],
+                "genome": str(row["genome"]),
+                "loo_robust_z": row["loo_robust_z"],
+                "loo_target_discordance": row["loo_target_discordance"],
+                "loo_voter_upper": row["loo_voter_upper"],
+                "loo_target_support": row["loo_target_support"],
+                "loo_voter_search_mode": row["loo_voter_search_mode"],
+                "evidence_status": evidence.get("input_status"),
+                "informative_gene_count": gate.get("informative_gene_count", 0),
+                "contig_gate_pass": gate.get("contig_gate_pass", False),
+                "contig_abstention_reason": gate.get("contig_abstention_reason"),
+                "vote_margin_mean": margin_mean,
+                "vote_margin_min": margin_min,
+                "margin_pass": (
+                    margin_mean is not None
+                    and margin_mean >= REVIEW_MIN_VOTE_MARGIN
+                ),
+                "review_warning": key in review_warned_keys,
+                "is_truth_event": key in truth_keys,
+                "is_gene_rich_truth": key in gene_rich_truth,
+            }
+        )
     method_counts = {}
     for method, pipeline in pipelines.items():
         removals = pipeline["removals"]
@@ -1367,6 +1493,10 @@ def _score_case(
             "contig_abstention_reason": audit.get("gate", {}).get(
                 "contig_abstention_reason"
             ),
+            "loo_robust_z": row["loo_robust_z"],
+            "loo_review_candidate": row["loo_review_candidate"],
+            "loo_review_warning": key in review_warned_keys,
+            "loo_voter_search_mode": row["loo_voter_search_mode"],
         }
         for scorer in pipelines:
             comparison = comparison_by_event[(*key, scorer)]
@@ -1402,12 +1532,17 @@ def _score_case(
         "evaluation_role": evaluation_role,
         "primary_positive": primary_positive,
         "taxa_count": TAXA_COUNT,
-        "marker_count": MARKER_COUNT,
+        "marker_count": len(panel["markers"]),
         "truth_reference_removed_count": len(truth_reference_removals),
         "truth_reference_preserves_sentinel": sentinel_key not in truth_reference_removals,
         "cmtv_k5_neighbors_preserved_posthoc": cmtv_k5_preserved,
         "cmtv_marker_rf_distances": cmtv_marker_rf_distances,
         "cmtv_marker_rf_weights": cmtv_marker_rf_weights,
+        "loo_review_candidate_count": len(review_keys),
+        "loo_review_warning_count": len(review_warned_keys),
+        "loo_review_warning_truth_count": len(review_warned_keys & truth_keys),
+        "loo_review_warning_false_count": len(review_warned_keys - truth_keys),
+        "_review_rows": review_rows,
         **{
             f"{scorer}_raw_call_count": len(pipeline["raw"])
             for scorer, pipeline in pipelines.items()
@@ -1717,6 +1852,141 @@ def _write_comparison_table(outdir: Path, rows: list[dict]) -> Path:
     return path
 
 
+REVIEW_TIER_FIELDS = [
+    "case_id",
+    "panel_id",
+    "regime",
+    "seed",
+    "event_class",
+    "distance_stratum",
+    "marker_name",
+    "record_id",
+    "genome",
+    "loo_robust_z",
+    "loo_target_discordance",
+    "loo_voter_upper",
+    "loo_target_support",
+    "loo_voter_search_mode",
+    "evidence_status",
+    "informative_gene_count",
+    "contig_gate_pass",
+    "contig_abstention_reason",
+    "vote_margin_mean",
+    "vote_margin_min",
+    "margin_pass",
+    "review_warning",
+    "is_truth_event",
+    "is_gene_rich_truth",
+]
+
+
+def _write_review_tier_table(outdir: Path, rows: list[dict]) -> Path:
+    path = outdir / "review_tier.tsv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=REVIEW_TIER_FIELDS,
+            delimiter="\t",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+SWEEP_FIELDS = [
+    "regime",
+    "seed",
+    "distance_stratum",
+    "donor_gene_count",
+    "evidence_status",
+    "informative_gene_count",
+    "agreement_count",
+    "strongest_conflict_count",
+    "contig_gate_pass",
+    "contig_abstention_reason",
+]
+
+
+def run_donor_gene_sweep(
+    outdir: Path,
+    *,
+    threads: int = 1,
+    panel_filter: set[tuple[str, int]] | None = None,
+) -> dict:
+    """Trace the contig-gate operating curve over donor non-marker gene counts.
+
+    Gate-stage only: marker trees come from the shared cache and the truth
+    row is scored once per panel; only the donor candidate gene set varies.
+    """
+    if threads < 1 or threads > MAX_THREADS:
+        raise ValueError(f"threads must be between 1 and {MAX_THREADS}")
+    rows = []
+    for panel in build_panels():
+        coordinate = (panel["regime"], panel["seed"])
+        if panel_filter is not None and coordinate not in panel_filter:
+            continue
+        cache, _built = _build_marker_trees(panel, outdir, threads)
+        trees = _marker_trees(_case_tree_paths(panel, "gene_rich_contaminant", cache))
+        loo_rows = score_loo_profiles(trees)
+        main = panel["main_event"]
+        main_key = (main["marker"], main["observed_record_id"])
+        row = next(
+            item
+            for item in loo_rows
+            if (str(item["marker_name"]), str(item["leaf_name"])) == main_key
+        )
+        reference_proteomes = _reference_proteomes(panel)
+        marker_record_ids = _all_marker_record_ids(panel)
+        attachment = set(row["loo_attachment_taxa"])
+        background = {
+            str(leaf.name).split("|", 1)[0]
+            for leaf in trees[str(row["marker_name"])].iter_leaves()
+        } - {main["recipient"]} - attachment
+        donor_genes = panel["sweep_donor_gene_sequences"]
+        stratum = SOURCE_DISTANCE_STRATA[coordinate]
+        for count in SWEEP_DONOR_GENE_COUNTS:
+            candidate_genes = {
+                build_sequence_id(
+                    main["recipient"],
+                    main["contig_id"],
+                    _opaque("q", panel["panel_id"], "sweep", index),
+                ): sequence
+                for index, sequence in enumerate(donor_genes[:count])
+            }
+            evidence = assign_contig_gene_split_votes(
+                candidate_genes,
+                reference_proteomes,
+                recipient_genome=main["recipient"],
+                candidate_contig_id=main["contig_id"],
+                marker_record_ids=marker_record_ids,
+                attachment_taxa=attachment,
+                background_taxa=background,
+            )
+            gate = contig_gene_vote_gate(evidence["votes"], row["loo_attachment_clade"])
+            rows.append(
+                {
+                    "regime": panel["regime"],
+                    "seed": panel["seed"],
+                    "distance_stratum": stratum,
+                    "donor_gene_count": count,
+                    "evidence_status": evidence.get("input_status"),
+                    "informative_gene_count": gate.get("informative_gene_count", 0),
+                    "agreement_count": gate.get("agreement_count", 0),
+                    "strongest_conflict_count": gate.get(
+                        "strongest_conflict_count", 0
+                    ),
+                    "contig_gate_pass": gate.get("contig_gate_pass", False),
+                    "contig_abstention_reason": gate.get("contig_abstention_reason"),
+                }
+            )
+    path = outdir / "donor_gene_sweep.tsv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SWEEP_FIELDS, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(rows)
+    return {"rows": rows, "path": str(path)}
+
+
 def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
     if threads < 1 or threads > MAX_THREADS:
         raise ValueError(f"threads must be between 1 and {MAX_THREADS}")
@@ -1737,7 +2007,7 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
     reference_species_paths = {}
     species_tree_builds_this_run = 0
     for panel in panels:
-        clean_case_id = _opaque("f", panel["regime"], "clean", panel["seed"])
+        clean_case_id = _case_opaque(panel, "clean")
         clean_path, built = _species_tree(
             panel,
             _case_state(panel, "clean"),
@@ -1770,6 +2040,87 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
         for row in case["comparison_rows"]
     ]
     comparison_path = _write_comparison_table(outdir, comparison_rows)
+    # Greedy voter-selection tier: one far-source 16-marker panel exercising
+    # the production greedy path. Scored outside the frozen 12-case matrix
+    # with its own tree accounting.
+    greedy_panel = build_panel(
+        "alpha_like",
+        809,
+        marker_count=GREEDY_MARKER_COUNT,
+        tag=GREEDY_PANEL_TAG,
+    )
+    greedy_outdir = outdir / "greedy_tier"
+    greedy_cache, greedy_marker_builds = _build_marker_trees(
+        greedy_panel, greedy_outdir, threads
+    )
+    greedy_clean_path, greedy_clean_built = _species_tree(
+        greedy_panel,
+        _case_state(greedy_panel, "clean"),
+        case_id=_case_opaque(greedy_panel, "clean"),
+        arm="initial",
+        removals=set(),
+        outdir=greedy_outdir,
+        threads=threads,
+    )
+    greedy_case, greedy_species_builds = _score_case(
+        greedy_panel,
+        "gene_rich_contaminant",
+        marker_cache=greedy_cache,
+        outdir=greedy_outdir,
+        threads=threads,
+        clean_species_path=greedy_clean_path,
+    )
+    greedy_case.pop("_review_rows")
+    greedy_tier = {
+        "panel_tag": GREEDY_PANEL_TAG,
+        "marker_count": GREEDY_MARKER_COUNT,
+        "distance_stratum": greedy_case["distance_stratum"],
+        "marker_tree_builds": greedy_marker_builds,
+        "distinct_marker_trees": len(greedy_cache),
+        "species_tree_builds": greedy_species_builds + int(greedy_clean_built),
+        "voter_search_modes": sorted(
+            {
+                str(event["loo_voter_search_mode"])
+                for event in greedy_case["events"]
+                if event.get("loo_voter_search_mode") is not None
+            }
+        ),
+        "case": greedy_case,
+    }
+
+    review_rows = [row for case in cases for row in case.pop("_review_rows")]
+    review_path = _write_review_tier_table(outdir, review_rows)
+    review_tier = {
+        "review_robust_z": REVIEW_ROBUST_Z,
+        "review_min_vote_margin": REVIEW_MIN_VOTE_MARGIN,
+        "candidate_count": len(review_rows),
+        "gate_only_warning_count": sum(
+            row["contig_gate_pass"] for row in review_rows
+        ),
+        "gate_only_false_count": sum(
+            row["contig_gate_pass"] and not row["is_truth_event"]
+            for row in review_rows
+        ),
+        "warning_count": sum(row["review_warning"] for row in review_rows),
+        "warning_truth_count": sum(
+            row["review_warning"] and row["is_truth_event"] for row in review_rows
+        ),
+        "warning_false_count": sum(
+            row["review_warning"] and not row["is_truth_event"]
+            for row in review_rows
+        ),
+        "near_source_gene_rich_warned": sum(
+            row["review_warning"]
+            and row["is_gene_rich_truth"]
+            and row["distance_stratum"] == "near"
+            for row in review_rows
+        ),
+        "near_source_gene_rich_total": sum(
+            case["event_class"] == "gene_rich_contaminant"
+            and case["distance_stratum"] == "near"
+            for case in cases
+        ),
+    }
     raw_discrimination = _raw_discrimination_metrics(comparison_rows)
     decision = _wp1_decision(raw_discrimination)
     metrics = {}
@@ -1873,6 +2224,9 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
         "cmtv_baseline": "CMTV-current with positive RF-quality voter weights",
         "raw_candidate_discrimination": raw_discrimination,
         "wp1_decision": decision,
+        "review_tier": review_tier,
+        "review_tier_path": str(review_path),
+        "greedy_tier": greedy_tier,
         "per_event_comparison_path": str(comparison_path),
         "per_event_comparison_rows": comparison_rows,
         "case_count": len(cases),
@@ -2050,7 +2404,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--outdir", default="runs/us009_sequence")
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--sweep-donor-genes", action="store_true")
     args = parser.parse_args(argv)
+    if args.sweep_donor_genes:
+        sweep = run_donor_gene_sweep(Path(args.outdir), threads=args.threads)
+        print(json.dumps(sweep["rows"], indent=2, sort_keys=True))
+        print(f"WROTE: {sweep['path']}")
+        return 0
     report = run_benchmark(Path(args.outdir), threads=args.threads)
     print(json.dumps(report, indent=2, sort_keys=True))
     if not args.check:
