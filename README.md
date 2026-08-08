@@ -170,7 +170,7 @@ Practical selection guide:
 - `--singles-mode neighbor_clade` ignores whole-tree RF as the primary trigger and instead asks whether a marker copy agrees with the copy positions from the genome's closest species-tree neighbors. It is intended to recover replacement events that are locally inconsistent with a compact neighborhood even when the whole marker tree RF barely changes.
 - `--singles-mode neighbor_ml` is an experimental mode that scores all singleton candidates with the sandbox-derived unsupervised local-neighborhood policy and then prunes a small top-ranked set of genomes. It is intended for benchmark validation only until collateral is under control.
 - `--singles-mode gcp` (Genome Consistency Profiling) computes per-genome z-scores over marker-level features, then combines IsolationForest and HDBSCAN outlier signals to score each candidate. Only the single most deviant marker per genome can be flagged. Falls back to recipient-consensus ranking and classification when the panel is below `GCP_MIN_GENOMES` or `GCP_MIN_MARKERS` (currently 3 genomes or 5 markers).
-- `--singles-mode loo_profile` compares each marker placement with the recipient genome's other marker trees and writes the evidence to `singleton_candidates.tsv`. It copies all marker trees unchanged. The scorer abstains when support, shared taxa, or voter agreement is insufficient.
+- `--singles-mode loo_profile` compares each marker placement with the recipient genome's other marker trees and writes the evidence to `singleton_candidates.tsv`. It copies all marker trees unchanged. The scorer abstains when support, shared taxa, or voter agreement is insufficient. Each cell carries the abstention reason, a MAD-scaled conflict score (`loo_robust_z`), the voter-selection mode (`loo_voter_search_mode`, exact for panels up to 12 voters and greedy above), and a topology-only review flag (`loo_review_candidate`) for cells whose conflict is robust but sits inside the voter dispersion ceiling. The review flag marks a cell for inspection; it confirms nothing by itself.
 - Sequence-derived same-contig evidence is benchmark-only. Close-source contamination remains unresolved when its placement falls within normal cross-marker dispersion.
 - When `contig_id` cannot be recovered from the input headers, SGTree falls back to RF/topology/recipient-consensus signal instead of treating every singleton proposal as automatically ambiguous.
 - Typical inclusion presets:
@@ -235,8 +235,9 @@ Python output (`--outdir` or `--save_dir`):
 sgtree/
   src/
     sgtree/               # Python package implementation
-      benchmarks/         # synthetic benchmark generation/evaluation package
-      ani.py              # pairwise ANI computation + SNP-tree construction
+      benchmarks/         # benchmark generation, evaluation, and evidence instruments
+      marker_selection/   # RF-guided cleanup, singleton scoring, LOO evidence
+      ani/                # pairwise ANI computation + SNP-tree construction
       ani_clustering.py   # MCL clustering over ANI graphs and representative selection
       benchmark.py        # thin wrapper around the benchmarks package for CLI entrypoints
       benchmark_dataset.py# committed benchmark dataset descriptors and lookups
@@ -245,7 +246,7 @@ sgtree/
       id_schema.py        # genome/protein ID schema helpers for `|`-delimited headers
       input_stage.py      # input intake, validation, and proteome preparation stage
       parallel.py         # thread/process pool helpers used across the pipeline
-  bin/                    # thin script wrappers and helper utilities
+  bin/                    # benchmark CLI entrypoints (sgtree_benchmark.py and panel prep)
   resources/
     models/               # combined marker-set HMM files
   testgenomes/            # one bundled 10-genome FNA example dataset
@@ -270,6 +271,19 @@ pixi run benchmark-run
 ```
 
 Benchmark source data is local-only and lives under `benchmarking/`. The canonical benchmark implementation lives under `src/sgtree/benchmarks/`, while `runs/` remains disposable local scratch.
+
+Two fixed evidence instruments gate the contamination-detection code. Both are engineering and safety screens, not biological performance estimates, and both keep production pruning disabled:
+
+```bash
+# 24 mechanism fixtures + 8 scale fixtures, in memory, seconds
+env PYTHONPATH=src pixi run python -m sgtree.benchmarks.loo_tree_fixtures --check
+
+# 12 held-out sequence cases with real VeryFastTree inference, ~40 s
+env PYTHONPATH=src pixi run python -m sgtree.benchmarks.loo_sequence_benchmark \
+  --outdir runs/us009_sequence --threads 1 --check
+```
+
+The sequence benchmark writes `per_event_comparison.tsv` (scorer comparison through the shared gate/budget/RF pipeline), `review_tier.tsv` (review candidates with contig-vote and margin evidence), and a greedy voter-selection tier that exercises the large-panel code path. `--sweep-donor-genes` traces the contig-gate operating curve over donor gene counts into `donor_gene_sweep.tsv`.
 
 Burkholderiaceae benchmark assets:
 

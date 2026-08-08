@@ -7,8 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Fourteen orphaned `bin/` scripts left over from the removed Nextflow
+  runtime. Their logic lives in `src/sgtree/` and nothing invoked them; the
+  standalone copies had drifted behind the package implementations.
+- Dormant synthetic-benchmark machinery in `sgtree.benchmarks`: the
+  mixed-lineage and cross-family generators, the taxonomic suite wrapper,
+  panel/seed replicate generation, multi-suite running, run aggregation, and
+  the docs table exporter, plus the matching `sgtree_benchmark.py`
+  subcommands and Pixi tasks. `generate`, `generate-taxonomic`,
+  `prepare-burkholderiaceae`, and `run` remain. Scenario names, cleanup
+  profiles, and `evaluate_benchmark_run` are unchanged, so existing panels
+  and result artifacts still evaluate.
+- `SingletonThresholds`/`DEFAULT_SINGLETON_THRESHOLDS` in `sgtree.config`.
+  The bundle was never consumed by the classifier and had drifted from the
+  live module constants it mirrored.
+- Dead code: `phylogeny.run_snp_tree`, `marker_selection.prune_singletons`,
+  the always-true `singleton_mode_uses_global_rf_gate` guard and the
+  `effective_singleton_mode` pass-through, four write-only `Config` path
+  fields, and assorted unused imports and helpers.
+
 ### Added
 
+- Review-warning margin discrimination. Review warnings now require the
+  informative contig votes' mean attachment-background bitscore margin to
+  reach `REVIEW_MIN_VOTE_MARGIN` (28.0, calibrated on the two truth events
+  of the v2 development instrument; calibration, not validation). Donor
+  genes show a sharp affinity cliff at the donor-clade boundary; native
+  genes sit on a smooth divergence gradient. Measured on v2: the plain gate
+  passes 42 of 91 candidates (40 false); the margin floor keeps the 2 truth
+  warnings and rejects all 40. `review_tier.tsv` gains `vote_margin_mean`,
+  `vote_margin_min`, and `margin_pass`; the report keeps gate-only counts
+  for comparison. Action-path gates are unchanged.
+- Sequence-benchmark instrument v2 (`panel_realism: native_contig_genes_v2`).
+  Every native marker contig now carries the gate-minimum three non-marker
+  genes, so contig audits on native records are decided by vote direction
+  instead of gene scarcity. Measured consequence, pinned in tests: the
+  review tier's contig gate passes 42 of 91 review candidates: 2 true and
+  40 false (8 of the false in clean panels), a weakness the gene-scarce v1
+  instrument hid; action decisions,
+  sentinel vetoes, and all frozen structural gates are unchanged.
+- Donor gene-count sweep (`--sweep-donor-genes`): traces the contig-gate
+  operating curve over 0-10 donor genes per event. The gate is a step
+  function at the three-query floor; donor votes agree fully at every
+  count.
+- Greedy voter-selection tier: a 16-marker far-source panel scored outside
+  the frozen 12-case matrix (own cache directory) proves the production
+  greedy path detects, gates, and removes the far-source event and spares
+  the sentinel. New `loo_voter_search_mode` column in LOO rows,
+  `singleton_candidates.tsv`, and `review_tier.tsv`.
+- Report-only LOO review tier. `score_loo_profiles` now emits `loo_robust_z`
+  (MAD-scaled conflict) and `loo_review_candidate` (dispersion-ceiling
+  abstentions whose conflict is still robustly outside the voter MAD band,
+  fixed threshold z >= 3). `singleton_candidates.tsv` carries both columns;
+  the flag is topology-only in production and confirms nothing by itself.
+  The 12-case sequence benchmark audits review candidates through the
+  existing contig-vote gate and reports gate-confirmed review warnings in
+  `review_tier.tsv` plus a `review_tier` report section. Action decisions,
+  frozen comparison tables, and check gates are unchanged.
 - `--singles-mode loo_profile`, a report-only leave-one-marker-out
   placement-consensus scorer. It writes candidate evidence without pruning
   marker trees.
