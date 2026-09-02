@@ -32,7 +32,7 @@ Run the bundled 10-genome example:
 pixi run example
 ```
 
-This writes `runs/example_basic/tree.nwk` in about a minute.
+This writes `runs/example_basic/tree.nwk`. It takes about 90 seconds on 8 threads.
 
 Then run your own data:
 
@@ -305,3 +305,13 @@ normal spread.
 
 SGTree is developed at the DOE Joint Genome Institute, Lawrence Berkeley National
 Laboratory.
+
+## License
+
+SGTree is released under a Berkeley Lab non-commercial use licence. See
+[`LICENSE`](LICENSE) for the terms.
+
+SGTree Copyright (c) 2026, The Regents of the University of California, through
+Lawrence Berkeley National Laboratory. All rights reserved. For questions about
+rights to use or distribute this software, contact Berkeley Lab's Intellectual
+Property Office at IPO@lbl.gov.
