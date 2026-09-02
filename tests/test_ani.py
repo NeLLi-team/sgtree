@@ -102,6 +102,36 @@ class AniTests(unittest.TestCase):
         retained_rows = filter_df[filter_df["retained"]]
         self.assertEqual(set(retained_rows["contig_id"]), {"rep_keep", "q1_keep", "q2_keep"})
 
+    def test_project_alignment_keeps_reverse_strand_seq_in_reference_orientation(self):
+        # SAM SEQ is always stored in reference orientation, so a FLAG 16 record
+        # must be read as-is. Re-complementing it mirrors the sequence and shifts
+        # every CIGAR-derived base index, which called the wrong SNP allele.
+        # Only the minimap2 invocation is stubbed; the parser itself runs for real.
+        sam_records = [
+            # Forward record: reference has A at offset 2, query carries G.
+            "read_fwd\t0\tcontig1\t1\t60\t2=1X7=\t*\t0\t0\tAAGAACCCCC\t*",
+            # Reverse record: aligner already reverse-complemented the read, so the
+            # stored SEQ carries T at offset 2 against the reference.
+            "read_rev\t16\tcontig2\t1\t60\t2=1X7=\t*\t0\t0\tAATAACCCCC\t*",
+        ]
+
+        def fake_run_cmd(cmd: list[str]):
+            import subprocess as _sp
+            stdout = "@HD\tVN:1.6\n" + "\n".join(sam_records) + "\n"
+            return _sp.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+        with patch.object(ani, "_run_cmd", side_effect=fake_run_cmd):
+            projection = ani._project_alignment_to_reference("ref.fna", "query.fna")
+
+        self.assertEqual(
+            projection.mismatches,
+            {("contig1", 2): "G", ("contig2", 2): "T"},
+        )
+        self.assertEqual(
+            projection.coverage,
+            {"contig1": [(0, 10)], "contig2": [(0, 10)]},
+        )
+
     def test_build_snp_trees_writes_alignment_and_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

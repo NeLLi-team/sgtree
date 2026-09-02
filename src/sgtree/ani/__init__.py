@@ -692,6 +692,7 @@ def _run_mcl_binary(
     out_path: Path,
 ) -> list[list[str]]:
     if not shutil.which("mcl"):
+        print("warning: mcl binary not found in PATH; falling back to the pure-Python MCL implementation")
         return _run_python_mcl(
             labels,
             rows,
@@ -976,10 +977,6 @@ def run_ani_clustering(
     }
 
 
-def _reverse_complement(sequence: str) -> str:
-    return sequence.translate(str.maketrans("ACGTNacgtn", "TGCANtgcan"))[::-1]
-
-
 def _parse_cigar(cigar: str) -> list[tuple[int, str]]:
     value = ""
     parsed: list[tuple[int, str]] = []
@@ -1028,9 +1025,9 @@ def _project_alignment_to_reference(
         rname = fields[2]
         if rname == "*" or fields[5] == "*":
             continue
+        # SEQ is stored in reference orientation per the SAM specification, so
+        # reverse-strand records (FLAG 0x10) need no further transformation.
         sequence = fields[9]
-        if flag & 16:
-            sequence = _reverse_complement(sequence)
         qpos = 0
         rpos = _parse_int(fields[3]) - 1
         for length, op in _parse_cigar(fields[5]):
