@@ -12,7 +12,7 @@ from Bio import SeqIO
 from ete3 import Tree
 
 from sgtree.config import Config
-from sgtree.id_schema import parse_savedname, parse_sequence_id
+from sgtree.id_schema import parse_savedname, parse_sequence_id, sanitize_token
 from sgtree.marker_selection.loo_profile import score_loo_profiles
 from sgtree.parallel import map_processed, map_threaded
 
@@ -433,7 +433,7 @@ def _process_tree_worker(args):
         lock_references,
         initial_kept,
     ) = args
-    marker_name = os.path.basename(filepath).split(".")[0]
+    marker_name = _marker_name_from_marker_tree(filepath)
     cleaned_nodes, records = resolve_marker_tree(
         marker_tree_path=filepath,
         species_tree_path=species_tree_path,
@@ -462,7 +462,7 @@ def _process_tree_worker(args):
         format=1,
         outfile=os.path.join(
             outdir, "protTrees", "no_duplicates", "out",
-            f"_no_dups_{marker_name}_.nw",
+            _marker_tree_filename(marker_name),
         ),
     )
     return records
@@ -1340,8 +1340,41 @@ def choose_singleton_prune(
     raise ValueError(f"Unknown singleton mode: {mode}")
 
 
+_MARKER_TREE_PREFIX = "_no_dups_"
+_MARKER_TREE_SUFFIX = "_.nw"
+
+
+_MARKER_TREE_OUT_SUFFIX = "_tree.out"
+
+
+def _marker_name_from_marker_tree(filepath: str) -> str:
+    """Marker name from a per-marker tree path such as ``COG0012.faa_tree.out``.
+
+    Strips the known suffix and then the alignment extension, so a marker name
+    that contains a dot (a Pfam accession such as ``PF00001.21``) survives.
+    """
+    name = os.path.basename(filepath)
+    if name.endswith(_MARKER_TREE_OUT_SUFFIX):
+        name = name[: -len(_MARKER_TREE_OUT_SUFFIX)]
+    return os.path.splitext(name)[0]
+
+
+def _marker_tree_filename(marker_name: str) -> str:
+    """Build the no-duplicates tree filename for ``marker_name``."""
+    return f"{_MARKER_TREE_PREFIX}{marker_name}{_MARKER_TREE_SUFFIX}"
+
+
 def _marker_name_from_tree_path(filepath: str) -> str:
-    return os.path.basename(filepath).split(".")[0].split("_")[-2]
+    """Recover the marker name written by :func:`_marker_tree_filename`.
+
+    Strips the fixed prefix and suffix instead of splitting on ``_`` so
+    marker names that contain underscores (``Ribosomal_S9``,
+    ``RNA_pol_L_2``) round-trip unchanged.
+    """
+    basename = os.path.basename(filepath)
+    if basename.startswith(_MARKER_TREE_PREFIX) and basename.endswith(_MARKER_TREE_SUFFIX):
+        return basename[len(_MARKER_TREE_PREFIX):-len(_MARKER_TREE_SUFFIX)]
+    return os.path.splitext(basename)[0]
 
 
 def _count_genome_marker_support(files: list[str]) -> dict[str, int]:
@@ -1958,6 +1991,7 @@ def singleton_proposals_from_results(
     *,
     mode: str,
     reference_genomes: set[str] | None = None,
+    min_rfdist: float = 0.0,
 ) -> tuple[list[dict], set[tuple[str, str]]]:
     mode = _canonical_singleton_mode(mode)
     reference_genomes = reference_genomes or set()
@@ -1985,6 +2019,11 @@ def singleton_proposals_from_results(
             continue
 
         if reference_genomes:
+            # Same marker/species RF gate the worker applies before it fills
+            # ``chosen``, so --singles_min_rfdist means the same thing with
+            # and without --ref.
+            if float(result.get("rdist", 0.0)) < min_rfdist:
+                continue
             query_candidates = [
                 candidate
                 for candidate in result.get("candidates", [])
@@ -2023,13 +2062,22 @@ def singleton_proposals_from_results(
 
 
 def _reference_genomes_from_dir(ref_dir: str | None) -> set[str]:
+    """Genome ids for the reference proteomes in ``ref_dir``.
+
+    Derived the same way as ``sgtree.input_stage``: strip only the final
+    extension, then sanitize. Splitting on the first dot instead would
+    truncate ids such as ``GCF_000005845.2`` and stop them matching the
+    genome ids used in the trees.
+    """
     if not ref_dir or not os.path.isdir(ref_dir):
         return set()
-    return {
-        os.path.basename(path).split(".")[0]
-        for path in glob.glob(os.path.join(ref_dir, "*"))
-        if os.path.isfile(path)
-    }
+    genomes: set[str] = set()
+    for path in glob.glob(os.path.join(ref_dir, "*")):
+        if not os.path.isfile(path):
+            continue
+        stem = os.path.splitext(os.path.basename(path))[0]
+        genomes.add(sanitize_token(stem, stem))
+    return genomes
 
 
 def _filter_reference_singleton_proposals(
@@ -2515,17 +2563,25 @@ def _singleton_decision(
     *,
     marker_name: str,
     accepted_keys: set[tuple[str, str]],
+    guard_kept: bool = False,
 ) -> str:
+    """Decision label for one candidate.
+
+    ``guard_kept`` reports that the marker/species RF guard kept the whole
+    tree, so an accepted proposal is still in the output tree.
+    """
     if chosen is None:
         return "kept"
     leaf_name = str(chosen.get("leaf_name", ""))
     if (marker_name, leaf_name) in accepted_keys:
-        return "pruned"
+        return "kept_rf_guard" if guard_kept else "pruned"
     singleton_class = chosen.get("singleton_class", "unclassified")
     if singleton_class == "hgt_candidate":
         return "kept_hgt_candidate"
     if singleton_class == "ambiguous":
         return "kept_ambiguous"
+    if singleton_class == "clean":
+        return "kept_clean"
     return "blocked_by_genome_budget"
 
 
@@ -2535,7 +2591,8 @@ def _write_singleton_result(
     species_tree_path: str,
     outdir: str,
     accepted_keys: set[tuple[str, str]],
-) -> None:
+) -> str:
+    """Write the per-marker removal record and tree; return the RF-guard outcome."""
     filepath = result["filepath"]
     marker_name = result["marker_name"]
     classified_candidates = result.get("classified_candidates")
@@ -2562,14 +2619,11 @@ def _write_singleton_result(
         else:
             for candidate in classified_candidates:
                 candidate_leaf = str(candidate.get("leaf_name", ""))
-                decision = (
-                    overall_decision
-                    if (marker_name, candidate_leaf) in accepted_keys and overall_decision == "kept_rf_guard"
-                    else _singleton_decision(
-                        candidate,
-                        marker_name=marker_name,
-                        accepted_keys=accepted_keys,
-                    )
+                decision = _singleton_decision(
+                    candidate,
+                    marker_name=marker_name,
+                    accepted_keys=accepted_keys,
+                    guard_kept=overall_decision == "kept_rf_guard",
                 )
                 f.write(
                     (
@@ -2594,9 +2648,12 @@ def _write_singleton_result(
             outdir,
             "protTrees",
             "no_singles",
-            os.path.basename(filepath).split(".")[0] + ".nw",
+            # Same name the no-duplicates tree carries, so a marker name that
+            # contains a dot (a Pfam accession such as PF00001.21) survives.
+            _marker_tree_filename(marker_name),
         ),
     )
+    return overall_decision
 
 
 def _write_singleton_candidate_table(
@@ -2606,7 +2663,15 @@ def _write_singleton_candidate_table(
     accepted_keys: set[tuple[str, str]],
     proposal_lookup: dict[tuple[str, str], dict],
     proposal_keys: set[tuple[str, str]],
+    guard_kept_markers: set[str] | None = None,
 ) -> None:
+    """Write ``singleton_candidates.tsv``.
+
+    ``guard_kept_markers`` names the markers whose whole tree the RF guard
+    kept, so an accepted proposal there is reported as ``kept_rf_guard``
+    rather than ``pruned``, matching the per-marker removal record.
+    """
+    guard_kept_markers = guard_kept_markers or set()
     path = os.path.join(outdir, "singleton_candidates.tsv")
 
     def format_float(value):
@@ -2764,6 +2829,7 @@ def _write_singleton_candidate_table(
                                 enriched,
                                 marker_name=marker_name,
                                 accepted_keys=accepted_keys,
+                                guard_kept=marker_name in guard_kept_markers,
                             )
                             if selected_candidate
                             else "not_selected"
@@ -2776,7 +2842,7 @@ def _write_singleton_candidate_table(
 
 def remove_singles(cfg: Config, species_tree_path: str | None = None):
     """Remove singleton contaminants with the delta-RF proposal workflow."""
-    files = glob.glob(os.path.join(cfg.outdir, "protTrees", "no_duplicates", "out", "*"))
+    files = sorted(glob.glob(os.path.join(cfg.outdir, "protTrees", "no_duplicates", "out", "*")))
     if species_tree_path is None:
         species_tree_path = os.path.join(cfg.outdir, "tree.nwk")
     duplicate_markers = {
@@ -2835,6 +2901,7 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
         results,
         mode=cfg.singles_mode,
         reference_genomes=reference_genomes,
+        min_rfdist=cfg.singles_min_rfdist,
     )
     proposals, proposal_keys = _filter_reference_singleton_proposals(
         proposals,
@@ -2894,22 +2961,29 @@ def remove_singles(cfg: Config, species_tree_path: str | None = None):
     proposals_by_marker: dict[str, list[dict]] = {}
     for proposal in proposals:
         proposals_by_marker.setdefault(str(proposal["marker_name"]), []).append(proposal)
+    # The RF guard runs per marker inside _write_singleton_result and can keep
+    # an accepted leaf, so the evidence table is written afterwards with the
+    # guard outcomes in hand.
+    guard_kept_markers: set[str] = set()
+    for result in sorted(results, key=lambda item: item["filepath"]):
+        result = dict(result)
+        result["classified_candidates"] = proposals_by_marker.get(str(result["marker_name"]), [])
+        overall_decision = _write_singleton_result(
+            result,
+            species_tree_path=species_tree_path,
+            outdir=cfg.outdir,
+            accepted_keys=accepted_keys,
+        )
+        if overall_decision == "kept_rf_guard":
+            guard_kept_markers.add(str(result["marker_name"]))
     _write_singleton_candidate_table(
         results,
         outdir=cfg.outdir,
         accepted_keys=accepted_keys,
         proposal_lookup=proposal_lookup,
         proposal_keys=proposal_keys,
+        guard_kept_markers=guard_kept_markers,
     )
-    for result in sorted(results, key=lambda item: item["filepath"]):
-        result = dict(result)
-        result["classified_candidates"] = proposals_by_marker.get(str(result["marker_name"]), [])
-        _write_singleton_result(
-            result,
-            species_tree_path=species_tree_path,
-            outdir=cfg.outdir,
-            accepted_keys=accepted_keys,
-        )
 
 
 def _write_cleaned_seq_worker(args):
@@ -2917,7 +2991,7 @@ def _write_cleaned_seq_worker(args):
     filepath, source_dir, output_dir = args
     t = Tree(filepath)
     lst_nodes = [node.name for node in t.traverse("postorder")]
-    marker = os.path.basename(filepath).split("_")[3]
+    marker = _marker_name_from_tree_path(filepath)
     seq_path = os.path.join(source_dir, marker + ".faa")
 
     with open(seq_path) as f:
