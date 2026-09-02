@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -81,7 +82,10 @@ DEFAULT_CLEANUP_PROFILES = {
     },
 }
 
-DEFAULT_TAXONOMY_DB = Path("/home/fschulz/dev/nelli-genomes-db/resources/database/gtdb_genomes.duckdb")
+# Path to the local GTDB genome DuckDB used by the taxonomy-aware generators.
+# There is no portable default, so it comes from the environment and the CLI
+# requires --taxonomy-db when the variable is unset.
+DEFAULT_TAXONOMY_DB = os.environ.get("SGTREE_TAXONOMY_DB")
 ASSEMBLY_ACCESSION_RE = re.compile(r"(GC[AF])[-_]?(\d{9})[-._]?(\d+)")
 TAXONOMY_SCOPE_RULES = {
     "genus": {
@@ -1942,7 +1946,8 @@ def _parse_args() -> argparse.Namespace:
     gentax.add_argument("--models", default="resources/models/UNI56.hmm")
     gentax.add_argument("--outdir", required=True)
     gentax.add_argument("--taxonomy-scope", required=True, choices=sorted(TAXONOMY_SCOPE_RULES))
-    gentax.add_argument("--taxonomy-db", default=str(DEFAULT_TAXONOMY_DB))
+    gentax.add_argument("--taxonomy-db", default=DEFAULT_TAXONOMY_DB,
+                        required=DEFAULT_TAXONOMY_DB is None)
     gentax.add_argument("--lineage-label", default=None)
     gentax.add_argument("--donor-lineage-label", default=None)
     gentax.add_argument("--n-genomes", type=int, default=50)
@@ -1956,7 +1961,8 @@ def _parse_args() -> argparse.Namespace:
     prepburk.add_argument("--lookup", default="benchmarking/testgenomes/burkholderiaceae50.lookup")
     prepburk.add_argument("--taxonomy-tsv", default="benchmarking/testgenomes/burkholderiaceae50_taxonomy.tsv")
     prepburk.add_argument("--selection-tsv", default="benchmarking/testgenomes/burkholderiaceae50_selection.tsv")
-    prepburk.add_argument("--taxonomy-db", default=str(DEFAULT_TAXONOMY_DB))
+    prepburk.add_argument("--taxonomy-db", default=DEFAULT_TAXONOMY_DB,
+                          required=DEFAULT_TAXONOMY_DB is None)
     prepburk.add_argument("--prefix", default="BURK__")
     prepburk.add_argument("--overwrite", action="store_true")
 
