@@ -66,6 +66,7 @@ def _run_iqtree(input_fasta: str, output_tree: str, cpus: int, model: str, fast:
     cmd = [
         "iqtree",
         "--quiet",
+        "-redo",
         "--prefix", prefix,
         "-m", model,
         "-T", str(max(1, cpus)),

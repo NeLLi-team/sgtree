@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -116,6 +117,28 @@ class PhylogenyTests(unittest.TestCase):
                 phylogeny.run_species_tree(cfg, "input.faa", "tree.nwk")
 
         run_fasttree.assert_called_once_with("input.faa", "tree.nwk", 1)
+
+    @unittest.skipUnless(shutil.which("iqtree"), "iqtree is not on PATH")
+    def test_run_iqtree_reruns_on_a_prefix_left_by_an_earlier_call(self):
+        # Marker selection with several global rounds calls _run_iqtree repeatedly
+        # on the same prefix; without -redo the second call exits 2.
+        alignment_fasta = (
+            ">genome_a\nMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEK\n"
+            ">genome_b\nMKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGCEK\n"
+            ">genome_c\nMKTAYIAKQRQISFVKSHFSRQLDDRLGLIEVQAPILSRVGDGTQDNLSGAEK\n"
+            ">genome_d\nMKSAYIAKQRQISFVKSHFSRQLDDRLGLIEVQAPILSRVGEGTQDNLSGAEK\n"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_fasta = os.path.join(tmpdir, "concatenated.faa")
+            with open(input_fasta, "w") as handle:
+                handle.write(alignment_fasta)
+            output_tree = os.path.join(tmpdir, "tree.nwk")
+
+            for attempt in (1, 2):
+                with self.subTest(attempt=attempt):
+                    phylogeny._run_iqtree(input_fasta, output_tree, cpus=1, model="LG", fast=True)
+                    with open(output_tree) as handle:
+                        self.assertIn("genome_a", handle.read())
 
     def test_marker_tree_cache_reuses_canonical_alignment_and_restores_leaf_ids(self):
         with tempfile.TemporaryDirectory() as tmpdir:

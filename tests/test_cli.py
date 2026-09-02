@@ -1,13 +1,19 @@
+import os
 import sys
 import tempfile
 import unittest
 from io import StringIO
 from unittest.mock import DEFAULT, call, patch
 
-from sgtree.cli import main, parse_args
+from sgtree.cli import _clean_previous_run, main, parse_args
 
 
 class CliTests(unittest.TestCase):
+    def _config_for(self, outdir):
+        argv = ["sgtree", "input_dir", "models.hmm", "--save_dir", outdir]
+        with patch.object(sys, "argv", argv):
+            return parse_args()
+
     def test_alignment_defaults_to_hmmalign(self):
         argv = ["sgtree", "input_dir", "models.hmm"]
         with patch.object(sys, "argv", argv):
@@ -51,6 +57,92 @@ class CliTests(unittest.TestCase):
         normalized_help = " ".join(help_text.split())
         self.assertIn("loo_profile", normalized_help)
         self.assertIn("reports evidence without pruning", normalized_help)
+
+    def test_invalid_alignment_method_is_rejected(self):
+        argv = ["sgtree", "input_dir", "models.hmm", "--aln", "hmmaling"]
+        with patch.object(sys, "argv", argv), patch("sys.stderr", StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                parse_args()
+        self.assertNotEqual(raised.exception.code, 0)
+
+    def test_previous_run_cleanup_removes_only_generated_outputs(self):
+        with tempfile.TemporaryDirectory() as outdir:
+            cfg = self._config_for(outdir)
+            generated_dirs = (
+                cfg.ani_dir,
+                cfg.aligned_dir,
+                cfg.tables_dir,
+                os.path.join(outdir, "treeouts_protTrees"),
+            )
+            for directory in generated_dirs:
+                os.makedirs(directory)
+                open(os.path.join(directory, "stale"), "w").close()
+            for name in ("tree.nwk", "tree_final.nwk", "table_elim_dups",
+                         "logfile_2024_01_01_00_00_00.txt", "tree_round_1.nwk",
+                         "tree.nwk.iqtree.log", "hits.hmmout.del.ls"):
+                open(os.path.join(outdir, name), "w").close()
+
+            os.makedirs(os.path.join(outdir, "my_analysis"))
+            open(os.path.join(outdir, "my_analysis", "notes.md"), "w").close()
+            open(os.path.join(outdir, "genomes_of_interest.txt"), "w").close()
+            open(os.path.join(outdir, "logfile_notes.txt"), "w").close()
+
+            _clean_previous_run(cfg)
+
+            self.assertEqual(
+                sorted(os.listdir(outdir)),
+                ["genomes_of_interest.txt", "logfile_notes.txt", "my_analysis"],
+            )
+            self.assertTrue(os.path.exists(os.path.join(outdir, "my_analysis", "notes.md")))
+
+    def test_previous_run_cleanup_is_skipped_without_a_previous_tree(self):
+        with tempfile.TemporaryDirectory() as outdir:
+            cfg = self._config_for(outdir)
+            os.makedirs(cfg.ani_dir)
+            open(cfg.ani_cluster_members_path, "w").close()
+
+            _clean_previous_run(cfg)
+
+            self.assertTrue(os.path.exists(cfg.ani_cluster_members_path))
+
+    def test_previous_run_cleanup_precedes_ani_and_reference_preparation(self):
+        class StopPipeline(Exception):
+            pass
+
+        def fake_prepare_ani(cfg):
+            os.makedirs(cfg.ani_selected_query_dir, exist_ok=True)
+            with open(cfg.ani_cluster_members_path, "w") as handle:
+                handle.write("genome_id\n")
+            cfg.genomedir = cfg.ani_selected_query_dir
+
+        with tempfile.TemporaryDirectory() as outdir:
+            open(os.path.join(outdir, "tree.nwk"), "w").close()
+            os.makedirs(os.path.join(outdir, "ani"))
+            open(os.path.join(outdir, "ani", "stale.tsv"), "w").close()
+
+            argv = [
+                "sgtree", "input_dir", "models.hmm",
+                "--save_dir", outdir,
+                "--ani_cluster", "yes",
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch("builtins.print"),
+                patch(
+                    "sgtree.cli.ani_clustering.prepare_ani_cluster_inputs",
+                    side_effect=fake_prepare_ani,
+                ),
+                patch("sgtree.cli.reference.prepare_reference", side_effect=StopPipeline),
+            ):
+                with self.assertRaises(StopPipeline):
+                    main()
+
+            # cleanup ran (stale ani/ and the old tree are gone) but did not eat the
+            # inputs the ANI step wrote for the rest of the pipeline.
+            self.assertFalse(os.path.exists(os.path.join(outdir, "tree.nwk")))
+            self.assertFalse(os.path.exists(os.path.join(outdir, "ani", "stale.tsv")))
+            self.assertTrue(os.path.exists(os.path.join(outdir, "ani", "ani_clusters.tsv")))
+            self.assertTrue(os.path.isdir(os.path.join(outdir, "ani", "query_representatives")))
 
     def test_snp_defaults_to_disabled(self):
         argv = ["sgtree", "input_dir", "models.hmm"]
