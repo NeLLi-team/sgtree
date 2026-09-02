@@ -8,7 +8,9 @@ import shutil
 import zipfile
 
 from sgtree._subprocess import run_check
+from sgtree.cleanup import _archive_directory, _zip_file_in_place
 from sgtree.config import Config
+from sgtree.id_schema import sanitize_token
 
 
 REF_CACHE_META_FILE = "cache_meta.json"
@@ -89,13 +91,24 @@ def _validate_reference_cache(cfg: Config, ref_dir: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _genome_ids_from_dir(dirpath: str) -> list[str]:
+    """Derive genome ids from proteome filenames, matching input_stage."""
+    paths = sorted(
+        path for path in glob.glob(os.path.join(dirpath, "*"))
+        if os.path.isfile(path)
+    )
+    return [
+        sanitize_token(
+            os.path.splitext(os.path.basename(path))[0], f"genome_{index:05d}"
+        )
+        for index, path in enumerate(paths, start=1)
+    ]
+
+
 def check_duplicate_proteomes(genomedir: str, refdir: str):
     """Check for duplicate proteomes between query and reference directories."""
     if os.path.isdir(genomedir):
-        ls_genomes = [
-            os.path.basename(f).split(".")[0]
-            for f in glob.glob(os.path.join(genomedir, "*"))
-        ]
+        ls_genomes = _genome_ids_from_dir(genomedir)
     else:
         ls_genomes = []
         with open(genomedir) as fi:
@@ -106,10 +119,7 @@ def check_duplicate_proteomes(genomedir: str, refdir: str):
                         ls_genomes.append(gid)
 
     if os.path.isdir(refdir):
-        ls_ref = [
-            os.path.basename(f).split(".")[0]
-            for f in glob.glob(os.path.join(refdir, "*"))
-        ]
+        ls_ref = _genome_ids_from_dir(refdir)
     else:
         ls_ref = []
         with open(refdir) as fi:
@@ -182,11 +192,7 @@ def prepare_reference(cfg: Config) -> list[str] | None:
         if os.path.isdir(filepath):
             if basename in ("tables", "concat", "extracted_seqs"):
                 continue
-            run_check(
-                ["zip", filepath] + glob.glob(os.path.join(filepath, "*")),
-                stdout=subprocess.DEVNULL,
-            )
-            shutil.rmtree(filepath)
+            _archive_directory(filepath)
         else:
             keep_files = (
                 "marker_count_matrix.csv", "proteomes",
@@ -194,8 +200,7 @@ def prepare_reference(cfg: Config) -> list[str] | None:
             )
             if basename in keep_files:
                 continue
-            with zipfile.ZipFile(filepath, "w") as myzip:
-                myzip.write(filepath)
+            _zip_file_in_place(filepath)
 
     os.makedirs(os.path.join(ref_dir, "temp"), exist_ok=True)
 
@@ -210,8 +215,9 @@ def prepare_reference(cfg: Config) -> list[str] | None:
             shutil.move(src, os.path.join(ref_dir, "temp"))
 
     for f in glob.glob(os.path.join(ref_dir, "temp", "*")):
-        with zipfile.ZipFile(f, "w") as myzip:
-            myzip.write(f)
+        if zipfile.is_zipfile(f):
+            continue
+        _zip_file_in_place(f)
 
     _write_cache_meta(cfg, ref_dir)
 
