@@ -5,6 +5,21 @@ All notable changes to SGTree are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-09-02
+
+### Fixed
+
+- `pixi run benchmark-generate` and `pixi run benchmark-run` work. Both spawn
+  `python -m sgtree` as a child process, and the package runs from the source
+  tree rather than an installed distribution, so the child exited with
+  "No module named sgtree". The child now inherits the source directory on
+  `PYTHONPATH`.
+
+### Changed
+
+- `DEVELOPMENT.md` states that the benchmark tasks need genome panels the
+  repository does not ship, so a fresh clone cannot run them.
+
 ## [1.2.1] - 2026-09-02
 
 ### Fixed
