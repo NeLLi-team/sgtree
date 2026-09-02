@@ -25,6 +25,33 @@ class RunCheckTests(unittest.TestCase):
                     run_check(["false"])
             self.assertTrue(any("false" in m and "2" in m for m in cm.output))
 
+    def test_error_message_carries_captured_stderr(self):
+        # Real subprocess: the operator must see why the tool failed.
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            run_check(
+                ["sh", "-c", "echo 'boom detail line' >&2; exit 3"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(ctx.exception.returncode, 3)
+        self.assertIn("boom detail line", str(ctx.exception))
+
+    def test_stderr_tail_is_bounded(self):
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            run_check(
+                ["sh", "-c", "for i in $(seq 1 60); do echo line$i >&2; done; exit 1"],
+                stderr=subprocess.PIPE,
+            )
+        message = str(ctx.exception)
+        self.assertIn("line60", message)
+        self.assertIn("line41", message)
+        self.assertNotIn("line40", message)
+
+    def test_message_unchanged_when_stderr_was_not_captured(self):
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            run_check(["sh", "-c", "exit 4"], stderr=subprocess.DEVNULL)
+        self.assertNotIn("stderr", str(ctx.exception))
+
     def test_forwards_stdout_stderr_env_cwd(self):
         with patch("sgtree._subprocess.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(args=["x"], returncode=0)
