@@ -5,6 +5,22 @@ All notable changes to SGTree are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-09-02
+
+### Fixed
+
+- `gtdbbac.hmm` and `gtdbarc.hmm` are usable. Both files mixed `HMMER3/b` and
+  `HMMER3/f` model blocks, and the parser locks onto the format of the first
+  block, so a run with either set stopped after the leading models and failed
+  in the marker search. Both are rewritten in one format. Model names, model
+  lengths, and emission probabilities are unchanged, and a test now parses
+  every bundled marker set end to end.
+
+### Added
+
+- `LICENSE`: the Berkeley Lab non-commercial use licence, matching the other
+  NeLLi-team repositories. `pyproject.toml` records it.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added
