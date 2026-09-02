@@ -5,28 +5,7 @@ All notable changes to SGTree are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Removed
-
-- Fourteen orphaned `bin/` scripts left over from the removed Nextflow
-  runtime. Their logic lives in `src/sgtree/` and nothing invoked them; the
-  standalone copies had drifted behind the package implementations.
-- Dormant synthetic-benchmark machinery in `sgtree.benchmarks`: the
-  mixed-lineage and cross-family generators, the taxonomic suite wrapper,
-  panel/seed replicate generation, multi-suite running, run aggregation, and
-  the docs table exporter, plus the matching `sgtree_benchmark.py`
-  subcommands and Pixi tasks. `generate`, `generate-taxonomic`,
-  `prepare-burkholderiaceae`, and `run` remain. Scenario names, cleanup
-  profiles, and `evaluate_benchmark_run` are unchanged, so existing panels
-  and result artifacts still evaluate.
-- `SingletonThresholds`/`DEFAULT_SINGLETON_THRESHOLDS` in `sgtree.config`.
-  The bundle was never consumed by the classifier and had drifted from the
-  live module constants it mirrored.
-- Dead code: `phylogeny.run_snp_tree`, `marker_selection.prune_singletons`,
-  the always-true `singleton_mode_uses_global_rf_gate` guard and the
-  `effective_singleton_mode` pass-through, four write-only `Config` path
-  fields, and assorted unused imports and helpers.
+## [1.2.0] - 2026-09-02
 
 ### Added
 
@@ -75,7 +54,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A fixed 12-case aligned-protein benchmark covers native-contig controls
   and held-out near-source and far-source events.
 
+### Changed
+
+- `README.md` is rewritten for users: install, quick start, input, common runs,
+  a complete option reference, outputs, and how marker selection works.
+  Repository layout, tests, benchmarks, and the evidence instruments moved to
+  `DEVELOPMENT.md`.
+- The taxonomy database path for the benchmark generators comes from
+  `SGTREE_TAXONOMY_DB`. The package shipped a hardcoded local path, and
+  `--taxonomy-db` is now required when the variable is unset.
+
 ### Fixed
+
+- Output-directory cleanup no longer deletes files SGTree did not write. The
+  cleanup of a previous run is restricted to the entries SGTree generates, and
+  it now runs before ANI clustering and reference preparation write into the
+  output directory. Re-running with `--ani_cluster yes` into a finished output
+  directory previously deleted `ani/` and then failed with `FileNotFoundError`.
+- Reference-cache archiving destroyed the files it archived. Opening a path for
+  writing as a zip truncated it first, so every archived member was zero bytes.
+- Directory archiving is recursive. A marker-selection run archived `protTrees/`
+  with two empty directory entries and then removed the originals, losing every
+  per-marker tree. Archiving uses `zipfile` instead of the `zip` binary, which
+  was never a declared dependency and fails on an empty directory.
+- End-of-run archiving leaves user files alone, and no longer overwrites or
+  relocates a zip file the user placed in the output directory.
+- `proteomes_header_map.tsv`, `gene_calls.tsv`, `singleton_candidates.tsv`, and
+  the per-round trees stay readable text. They were compressed in place and kept
+  their original names, so opening them returned zip data.
+- SNP alleles on reverse-strand alignments were wrong. SAM stores SEQ in
+  reference orientation, and the parser reverse-complemented it a second time,
+  so every CIGAR-derived base index pointed at the wrong position.
+- `minimap2` is a declared dependency. `--snp yes` and `--ani_backend minimap2`
+  failed with `FileNotFoundError` after the species tree had already been built.
+- A protein that passes the threshold of several markers is assigned to the
+  marker it scores best against, with a deterministic tie-break. It was assigned
+  by HMM file order.
+- The optional length filter checks the exit status of `grep`. A failure
+  replaced the hit table with a partial file.
+- Marker names that contain `_` or `.` work. Marker-selection runs raised
+  `FileNotFoundError` for 4 of the 12 bundled marker sets (`gtdbbac`, `gtdbarc`,
+  `mitomarkers108`, `COX123`), and on `gtdbarc` two distinct markers collapsed
+  onto one name.
+- `--singles_min_rfdist` applies when `--ref` is set. The reference path skipped
+  the gate, so every query leaf with a positive RF gain became a proposal.
+- Reference genome names that contain dots keep their protection from pruning.
+- `singleton_candidates.tsv` reports what happened. A leaf the RF guard kept was
+  recorded as `pruned`, and a candidate classified `clean` was recorded as
+  `blocked_by_genome_budget`.
+- A header with an empty ID field no longer raises `IndexError`.
+- `--aln` rejects an unknown value instead of running `hmmalign` silently.
+- IQ-TREE reruns on an existing prefix, so `--selection_global_rounds 2` with
+  `--tree_method iqtree` completes.
+- A failing external tool reports its captured stderr, not only an exit code.
+- Missing `trimal` or `mcl` reports the fallback it used.
+- Marker-tree scoring reads its input in a fixed order, so `gcp` and
+  `neighbor_ml` scores no longer depend on directory order.
+
 
 - Replacement-event evaluation now uses exact native and contaminant record
   IDs and treats missing or empty alignments as unknown outcomes.
@@ -97,7 +132,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   known third-party invalid-escape `SyntaxWarning`s are now captured or
   suppressed, and the trim fallback closes its parsed FASTA handle.
 
-## [1.2.0] - 2026-04-20
+### Removed
+
+- Fourteen orphaned `bin/` scripts left over from the removed Nextflow
+  runtime. Their logic lives in `src/sgtree/` and nothing invoked them; the
+  standalone copies had drifted behind the package implementations.
+- Dormant synthetic-benchmark machinery in `sgtree.benchmarks`: the
+  mixed-lineage and cross-family generators, the taxonomic suite wrapper,
+  panel/seed replicate generation, multi-suite running, run aggregation, and
+  the docs table exporter, plus the matching `sgtree_benchmark.py`
+  subcommands and Pixi tasks. `generate`, `generate-taxonomic`,
+  `prepare-burkholderiaceae`, and `run` remain. Scenario names, cleanup
+  profiles, and `evaluate_benchmark_run` are unchanged, so existing panels
+  and result artifacts still evaluate.
+- `SingletonThresholds`/`DEFAULT_SINGLETON_THRESHOLDS` in `sgtree.config`.
+  The bundle was never consumed by the classifier and had drifted from the
+  live module constants it mirrored.
+- Dead code: `phylogeny.run_snp_tree`, `marker_selection.prune_singletons`,
+  the always-true `singleton_mode_uses_global_rf_gate` guard and the
+  `effective_singleton_mode` pass-through, four write-only `Config` path
+  fields, and assorted unused imports and helpers.
+
+## [1.2.0-dev] - 2026-04-20
 
 ### Highlights
 
