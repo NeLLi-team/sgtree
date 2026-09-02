@@ -58,15 +58,20 @@ pixi run python -m compileall -q src bin tests
 
 ## Benchmarks
 
-Generate and run the synthetic contamination benchmark:
+The benchmark tasks need genome panels that the repository does not ship. They
+live under `benchmarking/`, which is not tracked, so a fresh clone cannot run
+them: `pixi run benchmark-generate` builds the synthetic contamination
+benchmark from `benchmarking/testgenomes/Chloroflexi`. `runs/` is disposable
+scratch.
+
+With the panels in place:
 
 ```bash
 pixi run benchmark-generate
 pixi run benchmark-run
 ```
 
-Benchmark source panels are local-only and live under `benchmarking/`, which is
-not tracked. `runs/` is disposable scratch.
+The two evidence instruments below need no panel and run from a fresh clone.
 
 `pixi run benchmark-prepare-burkholderiaceae` builds a 50-genome Burkholderiaceae
 panel with taxonomy sidecars. It needs a local GTDB genome DuckDB; set its path

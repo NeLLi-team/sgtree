@@ -1,11 +1,15 @@
 import json
+import os
+import pathlib
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+import sgtree
 from sgtree import benchmark
 
 
@@ -888,3 +892,27 @@ class BenchmarkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChildEnvironmentTests(unittest.TestCase):
+    """A spawned `python -m sgtree` must be able to import the package.
+
+    The package runs from the source tree rather than an installed
+    distribution, so a child process needs the src directory on PYTHONPATH.
+    Without it `pixi run benchmark-generate` failed with "No module named
+    sgtree" while the outer script itself ran fine.
+    """
+
+    def test_child_env_puts_src_on_pythonpath(self) -> None:
+        from sgtree.benchmarks import _child_env
+
+        src_root = str(pathlib.Path(sgtree.__file__).resolve().parents[1])
+        entries = _child_env()["PYTHONPATH"].split(os.pathsep)
+        self.assertIn(src_root, entries)
+
+    def test_child_env_keeps_an_existing_pythonpath(self) -> None:
+        from sgtree.benchmarks import _child_env
+
+        with mock.patch.dict(os.environ, {"PYTHONPATH": "/somewhere/else"}):
+            entries = _child_env()["PYTHONPATH"].split(os.pathsep)
+        self.assertIn("/somewhere/else", entries)

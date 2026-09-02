@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -235,7 +236,23 @@ def _run_sgtree_python(
     if singles:
         cmd.extend(["--singles", "yes"])
     cmd.extend(["--singles-mode", singles_mode])
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=_child_env())
+
+
+def _child_env() -> dict[str, str]:
+    """Environment for a child ``python -m sgtree`` call.
+
+    The package is run from the source tree rather than installed, so a child
+    process needs the src directory on PYTHONPATH. Without it the child exits
+    with "No module named sgtree" whenever the parent was started by a task
+    that does not already export it.
+    """
+    src_root = str(pathlib.Path(__file__).resolve().parents[2])
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    if src_root not in existing.split(os.pathsep):
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (src_root, existing) if p)
+    return env
 
 
 def _read_normalized_proteomes(path: Path) -> dict[str, dict[str, SeqRecord]]:
