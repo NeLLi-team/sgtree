@@ -74,7 +74,7 @@ def _process_file_worker(args):
             for seq_id in kept_ids:
                 SeqIO.write(record_dict[seq_id], out, "fasta")
 
-    except Exception as e:
+    except Exception:
         import sys
         print("elimination of duplicates exception", sys.exc_info())
         raise

@@ -11,7 +11,8 @@ from sgtree.parallel import map_threaded
 
 
 def _trim_alignment_fallback(input_file: str, output_file: str, *, gap_threshold: float = 0.1) -> None:
-    records = list(SeqIO.parse(input_file, "fasta"))
+    with open(input_file) as handle:
+        records = list(SeqIO.parse(handle, "fasta"))
     if not records:
         Path(output_file).write_text("")
         return
@@ -37,6 +38,11 @@ def _run_trimal_or_fallback(input_file: str, output_file: str) -> None:
     try:
         subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
     except FileNotFoundError:
+        print(
+            f"warning: trimal not found; trimming {os.path.basename(input_file)} "
+            "with the built-in fallback trimmer",
+            flush=True,
+        )
         _trim_alignment_fallback(input_file, output_file, gap_threshold=0.1)
 
 

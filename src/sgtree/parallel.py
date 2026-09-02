@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Iterable, TypeVar
+from typing import Callable, TypeVar
 
 
 T = TypeVar("T")

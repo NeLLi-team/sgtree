@@ -20,6 +20,28 @@ from typing import IO, Optional
 
 logger = logging.getLogger("sgtree")
 
+_STDERR_TAIL_LINES = 20
+_STDERR_TAIL_CHARS = 2000
+
+
+class CommandFailed(subprocess.CalledProcessError):
+    """``CalledProcessError`` whose message carries the captured stderr tail.
+
+    Callers that redirect stderr to a pipe (phylogeny, ani) otherwise report
+    only "returned non-zero exit status N" when a tool such as VeryFastTree or
+    IQ-TREE fails. Subclassing keeps ``except CalledProcessError`` callers working.
+    """
+
+    def __str__(self) -> str:
+        text = self.stderr
+        if isinstance(text, (bytes, bytearray)):
+            text = text.decode("utf-8", "replace")
+        text = (text or "").strip()
+        if not text:
+            return super().__str__()
+        tail = "\n".join(text.splitlines()[-_STDERR_TAIL_LINES:])[-_STDERR_TAIL_CHARS:]
+        return f"{super().__str__()}\nstderr (tail):\n{tail}"
+
 
 def run_check(
     cmd: list[str],
@@ -47,7 +69,9 @@ def run_check(
         logger.error(
             "subprocess '%s' exited with code %s", cmd[0], exc.returncode
         )
-        raise
+        raise CommandFailed(
+            exc.returncode, exc.cmd, output=exc.output, stderr=exc.stderr
+        ) from None
     logger.info("subprocess '%s' completed with code 0", cmd[0])
 
 

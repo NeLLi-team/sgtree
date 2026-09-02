@@ -1,5 +1,4 @@
 import os
-import sys
 import glob
 import shutil
 import datetime
@@ -51,6 +50,48 @@ def _normalize_tree_method(value: str) -> str:
     return normalized
 
 
+def _clean_previous_run(cfg: Config) -> None:
+    """Remove the outputs of an earlier run from cfg.outdir.
+
+    Only paths SGTree generates itself are removed, so unrelated files a user
+    keeps in the output directory survive. Call this before any pipeline step
+    writes into cfg.outdir.
+    """
+    if not (os.path.exists(os.path.join(cfg.outdir, "tree.nwk"))
+            or os.path.exists(os.path.join(cfg.outdir, "tree_final.nwk"))):
+        return
+
+    paths = [
+        cfg.models_path,
+        cfg.proteomes_path,
+        cfg.staged_proteomes_dir,
+        cfg.gene_call_map_path,
+        cfg.genome_manifest_path,
+        cfg.tables_dir,
+        cfg.extracted_dir,
+        cfg.extracted_seqs_dir,
+        cfg.aligned_dir,
+        cfg.aln_spectree_dir,
+        cfg.trimmed_dir,
+        cfg.concat_dir,
+        cfg.ref_proteomes_path,
+        cfg.ani_dir,
+        cfg.snp_trees_dir,
+        cfg.hitsoutdir,
+    ]
+    paths += [
+        os.path.join(cfg.outdir, name) for name in cleanup.GENERATED_ENTRY_NAMES
+    ]
+    for pattern in cleanup.GENERATED_ENTRY_GLOBS:
+        paths += glob.glob(os.path.join(cfg.outdir, pattern))
+
+    for path in paths:
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        elif os.path.lexists(path):
+            os.remove(path)
+
+
 def parse_args() -> Config:
     parser = argparse.ArgumentParser(
         description="SGTree - Species tree from marker gene phylogenies",
@@ -79,9 +120,9 @@ def parse_args() -> Config:
                         help="output directory name")
     parser.add_argument("--singles", type=str, default="no",
                         help="remove singleton markers (yes/no)")
-    parser.add_argument("--singles_mode", type=str, default="delta_rf",
-                        choices=["delta_rf", "topoknn", "hybrid", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml", "gcp"],
-                        help="singleton filtering mode")
+    parser.add_argument("--singles-mode", "--singles_mode", dest="singles_mode", type=str, default="delta_rf",
+                        choices=["delta_rf", "topoknn", "hybrid", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml", "gcp", "loo_profile"],
+                        help="singleton mode; loo_profile reports evidence without pruning")
     parser.add_argument("--lflt", type=int, default=0,
                         help="remove sequences shorter than N%% of median length")
     parser.add_argument("--num_nei", type=int, default=0,
@@ -89,6 +130,7 @@ def parse_args() -> Config:
     parser.add_argument("--singles_min_rfdist", type=float, default=0.25,
                         help="minimum marker-tree/global-tree RF distance required to activate singleton filtering")
     parser.add_argument("--aln", type=str, default="hmmalign",
+                        choices=["hmmalign", "mafft", "mafft-linsi", "famsa"],
                         help="alignment method: hmmalign, mafft, mafft-linsi, or famsa")
     parser.add_argument("--tree_method", type=str, default="veryfasttree",
                         choices=["veryfasttree", "fasttree", "iqtree"],
@@ -240,6 +282,9 @@ def main():
     print(f"-... Reference directory and arguments\n"
           f" Reference directory located at {cfg.ref_concat}\n ...starting sgtree...")
 
+    # clean previous runs before any step writes into the output directory
+    _clean_previous_run(cfg)
+
     if cfg.ani_cluster and not cfg.is_ref:
         ani_clustering.prepare_ani_cluster_inputs(cfg)
 
@@ -281,15 +326,6 @@ def main():
     else:
         print("--ref_concat no reference directory\n")
     print("=" * 80)
-
-    # clean previous runs
-    if os.path.exists(os.path.join(cfg.outdir, "tree.nwk")) or \
-       os.path.exists(os.path.join(cfg.outdir, "tree_final.nwk")):
-        for f in glob.glob(os.path.join(cfg.outdir, "*")):
-            if os.path.isdir(f):
-                shutil.rmtree(f)
-            else:
-                os.remove(f)
 
     timings = {}
 
@@ -415,13 +451,14 @@ def main():
             total_rounds = max(1, cfg.selection_global_rounds)
 
             for round_idx in range(1, total_rounds + 1):
-                current_use_singles = cfg.singles and round_idx == total_rounds
                 kept = marker_selection.run_noperm(
                     cfg,
                     ls_refs,
                     species_tree_path=current_species_tree,
                     initial_kept=previous_kept,
                 )
+                converged = previous_kept is not None and kept == previous_kept
+                current_use_singles = cfg.singles and (round_idx == total_rounds or converged)
                 rf_src = os.path.join(cfg.outdir, "marker_selection_rf_values.txt")
                 if total_rounds > 1:
                     shutil.copyfile(
@@ -470,7 +507,7 @@ def main():
                         os.path.join(cfg.outdir, f"tree_round_{round_idx}.nwk"),
                     )
 
-                if previous_kept is not None and kept == previous_kept:
+                if converged:
                     print(f"- ...marker selection converged after round {round_idx}")
                     break
                 previous_kept = kept

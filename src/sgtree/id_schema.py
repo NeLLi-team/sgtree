@@ -14,7 +14,10 @@ GENERIC_CONTIG_PREFIXES = {
 
 
 def sanitize_token(token: str, fallback: str) -> str:
-    text = (token or "").strip().split()[0]
+    parts = (token or "").strip().split()
+    if not parts:
+        return fallback
+    text = parts[0]
     text = text.replace("|", "_").replace("/", "_")
     text = re.sub(r"[^A-Za-z0-9._:-]+", "_", text).strip("_")
     return text or fallback

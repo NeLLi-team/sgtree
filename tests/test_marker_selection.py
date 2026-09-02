@@ -1,14 +1,37 @@
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+warnings.simplefilter("ignore", SyntaxWarning)
+
 import pandas as pd
-from ete3 import Tree
-from sgtree import marker_selection
+from sgtree import input_stage, marker_selection
+
+Tree = marker_selection.Tree
 
 
 class MarkerSelectionTests(unittest.TestCase):
+    def _synthetic_gcp_panel(self, marker_count, genome_count=5):
+        proposals = []
+        for genome_index in range(genome_count):
+            for marker_index in range(marker_count):
+                is_outlier = genome_index == 0 and marker_index == 0
+                proposal = {
+                    "marker_name": f"Marker{marker_index:02d}",
+                    "genome": f"Genome{genome_index:02d}",
+                    "leaf_name": f"Genome{genome_index:02d}|contig1|gene{marker_index:02d}",
+                    "contig_id": "contig1",
+                    "taxa_count": genome_count,
+                }
+                for feature in marker_selection.GCP_KEY_FEATURES:
+                    proposal[feature] = 10.0 if is_outlier else 0.1
+                proposal["anchor_knn_agreement"] = 0.0 if is_outlier else 0.8
+                proposals.append(proposal)
+        return proposals
+
     def test_choose_best_candidate_prefers_bitscore_when_rf_is_uninformative(self):
         candidates = [
             {
@@ -166,6 +189,66 @@ class MarkerSelectionTests(unittest.TestCase):
             self.assertEqual(legacy_kept, {("A", "A/p1"), ("C", "C/p2")})
             self.assertEqual(coordinate_kept, {("A", "A/p1"), ("C", "C/p1")})
 
+    def test_process_tree_worker_preserves_internal_branch_support(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            marker_tree = tmp / "MarkerX.nwk"
+            species_tree = tmp / "species.nwk"
+            table_path = tmp / "table.csv"
+            outdir = tmp / "out"
+            (outdir / "removed").mkdir(parents=True)
+            (outdir / "protTrees" / "no_duplicates" / "out").mkdir(parents=True)
+            marker_tree.write_text(
+                "((A|ctg|a:1,B|ctg|b:1):1,"
+                "(C|ctg|c:1,D|ctg|d:1)1.0:1,"
+                "(E|ctg|e:1,F|ctg|f:1)0.73:1);\n"
+            )
+            species_tree.write_text("((A,B),(C,D),(E,F));\n")
+            pd.DataFrame(
+                [
+                    {"savedname": f"{genome}/ctg/{gene}", "score_bits": 100.0}
+                    for genome, gene in (
+                        ("A", "a"),
+                        ("B", "b"),
+                        ("C", "c"),
+                        ("D", "d"),
+                        ("E", "e"),
+                        ("F", "f"),
+                    )
+                ]
+            ).to_csv(table_path, index=False)
+
+            marker_selection._process_tree_worker(
+                (
+                    str(marker_tree),
+                    str(table_path),
+                    str(species_tree),
+                    str(outdir),
+                    None,
+                    "coordinate",
+                    5,
+                    False,
+                    None,
+                )
+            )
+
+            cached_path = outdir / "protTrees" / "no_duplicates" / "out" / "_no_dups_MarkerX_.nw"
+            cached_labels = Tree(str(cached_path), format=1)
+            internal_labels = {
+                node.name
+                for node in cached_labels.traverse()
+                if not node.is_leaf()
+            }
+            self.assertTrue({"", "1.0", "0.73"}.issubset(internal_labels))
+
+            cached_tree = Tree(str(cached_path))
+            supports = {
+                round(float(node.support), 2)
+                for node in cached_tree.traverse()
+                if not node.is_leaf()
+            }
+            self.assertTrue({0.73, 1.0}.issubset(supports))
+
     def test_choose_tree_by_rf_prefers_original_when_pruning_worsens_rf(self):
         species = Tree("((A,B),(C,D));")
         original = Tree("((A,B),(C,D));")
@@ -178,22 +261,6 @@ class MarkerSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(chosen.write(format=9), original.write(format=9))
-
-    def test_effective_singleton_mode_returns_requested_runtime_mode(self):
-        for mode in ("delta_rf", "composite", "contig_consensus", "recipient_consensus", "neighbor_clade", "neighbor_ml"):
-            self.assertEqual(
-                marker_selection.effective_singleton_mode(
-                    mode,
-                    0.40,
-                    duplicate_resolution_present=True,
-                ),
-                mode,
-            )
-
-    def test_neighbor_clade_mode_skips_global_rf_gate(self):
-        self.assertFalse(marker_selection.singleton_mode_uses_global_rf_gate("neighbor_clade"))
-        self.assertTrue(marker_selection.singleton_mode_uses_global_rf_gate("recipient_consensus"))
-        self.assertFalse(marker_selection.singleton_mode_uses_global_rf_gate("neighbor_ml"))
 
     def test_choose_singleton_prune_prefers_highest_delta_rf(self):
         species = Tree("((A,B),(C,(D,E)));")
@@ -272,45 +339,126 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertIsNone(chosen)
 
-    def test_choose_singleton_prune_recipient_consensus_accepts_sequence_supported_outlier(self):
+    def test_choose_singleton_prune_reuses_candidates_without_mutating_input(self):
         species = Tree("((A,B),(C,(D,E)));")
         working = Tree("((A,B),(C,(D,E)));")
         candidate_a = Tree("(B,(C,(D,E)));")
         candidate_c = Tree("((A,B),(D,E));")
+        scored_candidates = [
+            {
+                "leaf_name": "A",
+                "delta_rf": 0.12,
+                "topoknn_score": 1.8,
+                "branch_outlier": 0.2,
+                "bitscore_outlier": 1.4,
+                "recipient_consensus_score": 3.8,
+                "candidate_tree": candidate_a,
+            },
+            {
+                "leaf_name": "C",
+                "delta_rf": 0.1,
+                "topoknn_score": 0.2,
+                "branch_outlier": 0.0,
+                "bitscore_outlier": 0.0,
+                "recipient_consensus_score": 0.3,
+                "candidate_tree": candidate_c,
+            },
+        ]
+        original_keys = [set(candidate) for candidate in scored_candidates]
 
-        with patch.object(
-            marker_selection,
-            "_score_singleton_candidates",
-            return_value=[
-                {
-                    "leaf_name": "A",
-                    "delta_rf": 0.12,
-                    "topoknn_score": 1.8,
-                    "branch_outlier": 0.2,
-                    "bitscore_outlier": 1.4,
-                    "recipient_consensus_score": 3.8,
-                    "candidate_tree": candidate_a,
-                },
-                {
-                    "leaf_name": "C",
-                    "delta_rf": 0.1,
-                    "topoknn_score": 0.2,
-                    "branch_outlier": 0.0,
-                    "bitscore_outlier": 0.0,
-                    "recipient_consensus_score": 0.3,
-                    "candidate_tree": candidate_c,
-                },
-            ],
-        ):
+        with patch.object(marker_selection, "_score_singleton_candidates") as scorer:
             chosen = marker_selection.choose_singleton_prune(
                 species_tree=species,
                 working_tree=working,
                 mode="recipient_consensus",
                 k=3,
+                scored_candidates=scored_candidates,
             )
 
+        scorer.assert_not_called()
         self.assertIsNotNone(chosen)
         self.assertEqual(chosen["leaf_name"], "A")
+        self.assertGreater(chosen["score"], 0.0)
+        self.assertEqual([set(candidate) for candidate in scored_candidates], original_keys)
+        self.assertNotIn("recipient_rank_score", scored_candidates[0])
+
+    def test_gcp_fallback_uses_recipient_consensus_ranking_for_small_panels(self):
+        proposals = [
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome1",
+                "leaf_name": "Genome1|contig1|gene1",
+                "contig_id": "contig1",
+                "delta_rf": 0.12,
+                "topoknn_score": 1.8,
+                "recipient_consensus_score": 3.8,
+                "taxa_count": 2,
+            },
+            {
+                "marker_name": "MarkerA",
+                "genome": "Genome2",
+                "leaf_name": "Genome2|contig1|gene1",
+                "contig_id": "contig1",
+                "delta_rf": 0.01,
+                "topoknn_score": 0.1,
+                "recipient_consensus_score": 0.1,
+                "taxa_count": 2,
+            },
+        ]
+
+        with self.assertLogs("sgtree", level="WARNING") as logs:
+            classified = marker_selection._classify_gcp_proposals(
+                proposals,
+                contig_marker_context={},
+            )
+
+        by_leaf = {proposal["leaf_name"]: proposal for proposal in classified}
+        self.assertIn("Using recipient_consensus classification.", "\n".join(logs.output))
+        self.assertEqual(
+            by_leaf["Genome1|contig1|gene1"]["singleton_class"],
+            "contamination_candidate",
+        )
+        self.assertEqual(by_leaf["Genome2|contig1|gene1"]["singleton_class"], "clean")
+        self.assertGreater(by_leaf["Genome1|contig1|gene1"]["score"], by_leaf["Genome2|contig1|gene1"]["score"])
+
+    def test_gcp_uses_recipient_consensus_fallback_for_three_and_four_marker_panels(self):
+        for marker_count in (3, 4):
+            with self.subTest(marker_count=marker_count):
+                with self.assertLogs("sgtree", level="WARNING") as logs:
+                    classified = marker_selection._classify_gcp_proposals(
+                        self._synthetic_gcp_panel(marker_count),
+                        contig_marker_context={},
+                    )
+
+                hits = [
+                    proposal
+                    for proposal in classified
+                    if proposal.get("singleton_class") == "contamination_candidate"
+                ]
+                self.assertIn("Using recipient_consensus classification.", "\n".join(logs.output))
+                self.assertEqual([proposal["leaf_name"] for proposal in hits], ["Genome00|contig1|gene00"])
+                self.assertNotIn("gcp_score", hits[0])
+                self.assertIn("recipient_rank_score", hits[0])
+
+    def test_gcp_scores_clear_outlier_for_five_and_ten_marker_panels(self):
+        for marker_count in (5, 10):
+            with self.subTest(marker_count=marker_count):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    with self.assertNoLogs("sgtree", level="WARNING"):
+                        classified = marker_selection._classify_gcp_proposals(
+                            self._synthetic_gcp_panel(marker_count),
+                            contig_marker_context={},
+                        )
+
+                hits = [
+                    proposal
+                    for proposal in classified
+                    if proposal.get("singleton_class") == "contamination_candidate"
+                ]
+                self.assertEqual([proposal["leaf_name"] for proposal in hits], ["Genome00|contig1|gene00"])
+                self.assertIn("gcp_score", hits[0])
+                self.assertGreaterEqual(hits[0]["gcp_score"], marker_selection.GCP_COMBINED_THRESHOLD)
 
     def test_choose_singleton_prune_neighbor_clade_accepts_local_outlier_without_positive_rf(self):
         species = Tree("((A,B),(C,(D,E)));")
@@ -404,27 +552,6 @@ class MarkerSelectionTests(unittest.TestCase):
             )
 
         self.assertIsNone(chosen)
-
-    def test_prune_singletons_removes_only_selected_leaf(self):
-        species = Tree("((A,B),(C,(D,E)));")
-        working = Tree("((A,B),(C,(D,E)));")
-
-        with patch.object(
-            marker_selection,
-            "choose_singleton_prune",
-            return_value={
-                "leaf_name": "A",
-                "candidate_tree": Tree("(B,(C,(D,E)));"),
-            },
-        ):
-            pruned = marker_selection.prune_singletons(
-                species_tree=species,
-                working_tree=working,
-                mode="delta_rf",
-                k=3,
-            )
-
-        self.assertEqual(sorted(leaf.name for leaf in pruned.iter_leaves()), ["B", "C", "D", "E"])
 
     def test_choose_singleton_prune_outlier_picks_obvious_misplaced_leaf(self):
         species = Tree("(((A:1,B:1):1,C:1):1,(D:1,E:1):1);")
@@ -661,16 +788,6 @@ class MarkerSelectionTests(unittest.TestCase):
             {f"Genome{i:03d}" for i in range(70)},
         )
 
-    def test_prune_tree_to_query_genomes_removes_references(self):
-        tree = Tree("((Ref1|r1,Query1|q1),(Ref2|r2,Query2|q2));")
-
-        pruned = marker_selection._prune_tree_to_query_genomes(tree, {"Ref1", "Ref2"})
-
-        self.assertEqual(
-            sorted(leaf.name for leaf in pruned.iter_leaves()),
-            ["Query1|q1", "Query2|q2"],
-        )
-
     def test_propose_singleton_prune_worker_keeps_references_in_scoring_context(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -717,6 +834,205 @@ class MarkerSelectionTests(unittest.TestCase):
             ["Query1|q1", "Query2|q2", "Query3|q3", "Ref1|r1"],
         )
         self.assertEqual(result["candidates"], [])
+
+    def test_propose_singleton_prune_worker_scores_candidates_once(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            marker_tree = tmp / "_no_dups_MarkerA_.nw"
+            species_tree = tmp / "species.nwk"
+            marker_tree.write_text(
+                "(((A|ctg|a,B|ctg|b),C|ctg|c),(D|ctg|d,E|ctg|e));\n"
+            )
+            species_tree.write_text("(((A,B),C),(D,E));\n")
+
+            with patch.object(
+                marker_selection,
+                "_score_singleton_candidates",
+                wraps=marker_selection._score_singleton_candidates,
+            ) as score_candidates:
+                marker_selection._propose_singleton_prune_worker(
+                    (
+                        str(marker_tree),
+                        str(species_tree),
+                        0,
+                        0.0,
+                        "delta_rf",
+                        str(tmp / "missing_table.csv"),
+                        set(),
+                        str(tmp / "missing_alignment.faa"),
+                        None,
+                    )
+                )
+
+            self.assertEqual(score_candidates.call_count, 1)
+
+    def test_propose_loo_profile_worker_bypasses_legacy_candidate_scoring(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            marker_tree = tmp / "_no_dups_MarkerA_.nw"
+            species_tree = tmp / "species.nwk"
+            leaf_names = [f"G{index}|ctg{index}|gene{index}" for index in range(7)]
+            marker_tree.write_text(
+                "(((G0|ctg0|gene0,G1|ctg1|gene1),(G2|ctg2|gene2,G3|ctg3|gene3)),"
+                "((G4|ctg4|gene4,G5|ctg5|gene5),G6|ctg6|gene6));\n"
+            )
+            species_tree.write_text("(((G0,G1),(G2,G3)),((G4,G5),G6));\n")
+
+            with (
+                patch.object(marker_selection, "_score_singleton_candidates") as scorer,
+                patch.object(marker_selection, "choose_singleton_prune") as chooser,
+            ):
+                result = marker_selection._propose_singleton_prune_worker(
+                    (
+                        str(marker_tree),
+                        str(species_tree),
+                        0,
+                        0.0,
+                        "loo_profile",
+                        str(tmp / "missing_table.csv"),
+                        set(),
+                        str(tmp / "missing_alignment.faa"),
+                        None,
+                    )
+                )
+
+            scorer.assert_not_called()
+            chooser.assert_not_called()
+            self.assertIsNone(result["chosen"])
+            self.assertEqual(result["mode"], "loo_profile")
+            self.assertEqual(
+                result["candidates"],
+                [
+                    {
+                        "leaf_name": leaf_name,
+                        "taxa_count": 7,
+                        "genome": f"G{index}",
+                        "contig_id": f"ctg{index}",
+                        "gene_id": f"gene{index}",
+                    }
+                    for index, leaf_name in enumerate(sorted(leaf_names))
+                ],
+            )
+
+    def test_remove_singles_loo_profile_reports_without_pruning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            outdir = tmp / "run"
+            cached_dir = outdir / "protTrees" / "no_duplicates" / "out"
+            no_singles_dir = outdir / "protTrees" / "no_singles"
+            cached_dir.mkdir(parents=True)
+            no_singles_dir.mkdir(parents=True)
+            cached_tree = cached_dir / "_no_dups_MarkerA_.nw"
+            cached_tree.write_text(
+                "(((G0|ctg0|gene0:1,G1|ctg1|gene1:1)0.95:1,"
+                "(G2|ctg2|gene2:1,G3|ctg3|gene3:1)0.95:1)0.95:1,"
+                "((G4|ctg4|gene4:1,G5|ctg5|gene5:1)0.95:1,"
+                "(G6|ctg6|gene6:1,G7|ctg7|gene7:1)0.95:1)0.95:1);\n"
+            )
+            original_bytes = cached_tree.read_bytes()
+            species_tree = outdir / "tree.nwk"
+            species_tree.write_text("(((G0,G1),(G2,G3)),((G4,G5),(G6,G7)));\n")
+            candidates = [
+                {
+                    "leaf_name": f"G{index}|ctg{index}|gene{index}",
+                    "taxa_count": 8,
+                    "genome": f"G{index}",
+                    "contig_id": f"ctg{index}",
+                    "gene_id": f"gene{index}",
+                }
+                for index in range(8)
+            ]
+            worker_result = {
+                "filepath": str(cached_tree),
+                "marker_name": "MarkerA",
+                "mode": "loo_profile",
+                "rdist": 0.0,
+                "num_nei": 7,
+                "chosen": None,
+                "candidates": candidates,
+            }
+            cfg = SimpleNamespace(
+                outdir=str(outdir),
+                num_nei=0,
+                singles_min_rfdist=0.25,
+                singles_mode="loo_profile",
+                num_cpus=1,
+                ref=None,
+            )
+            tree_class = marker_selection.Tree
+            score_impl = marker_selection.score_loo_profiles
+            writer_impl = marker_selection._write_singleton_candidate_table
+
+            with (
+                patch.object(marker_selection, "map_processed", return_value=[worker_result]),
+                patch.object(marker_selection, "Tree", wraps=tree_class) as tree_loader,
+                patch.object(marker_selection, "score_loo_profiles", wraps=score_impl) as scorer,
+                patch.object(
+                    marker_selection,
+                    "_write_singleton_candidate_table",
+                    wraps=writer_impl,
+                ) as table_writer,
+                patch.object(
+                    marker_selection,
+                    "singleton_proposals_from_results",
+                    side_effect=AssertionError("legacy proposal path called"),
+                ),
+                patch.object(
+                    marker_selection,
+                    "classify_singleton_proposals",
+                    side_effect=AssertionError("legacy classification path called"),
+                ),
+                patch.object(
+                    marker_selection,
+                    "select_singleton_proposals",
+                    side_effect=AssertionError("legacy selection path called"),
+                ),
+                patch.object(
+                    marker_selection,
+                    "build_singleton_output_tree",
+                    side_effect=AssertionError("RF/pruning path called"),
+                ),
+            ):
+                marker_selection.remove_singles(cfg, species_tree_path=str(species_tree))
+
+            tree_loader.assert_called_once_with(str(cached_tree), format=1)
+            scorer.assert_called_once()
+            self.assertEqual(scorer.call_args.kwargs["excluded_target_genomes"], set())
+            self.assertEqual(table_writer.call_args.kwargs["accepted_keys"], set())
+            self.assertEqual(table_writer.call_args.kwargs["proposal_keys"], set())
+
+            copied_tree = no_singles_dir / cached_tree.name
+            self.assertEqual(copied_tree.read_bytes(), original_bytes)
+            self.assertEqual(
+                sorted(leaf.name for leaf in tree_class(str(copied_tree), format=1).iter_leaves()),
+                sorted(leaf.name for leaf in tree_class(str(cached_tree), format=1).iter_leaves()),
+            )
+
+            table = pd.read_csv(
+                outdir / "singleton_candidates.tsv",
+                sep="\t",
+                dtype=str,
+                keep_default_na=False,
+            )
+            self.assertEqual(len(table), 8)
+            self.assertEqual(set(table["decision"]), {"kept_report_only"})
+            self.assertEqual(set(table["loo_decision"]), {"kept_report_only"})
+            self.assertEqual(set(table["loo_class"]), {"ambiguous"})
+            self.assertEqual(set(table["loo_abstention_reason"]), {"insufficient_voters"})
+            self.assertEqual(set(table["loo_voter_count"]), {"0"})
+            for column in (
+                "delta_rf",
+                "loo_target_discordance",
+                "loo_voter_center",
+                "loo_voter_mad",
+                "loo_voter_upper",
+                "loo_conflict_margin",
+                "loo_score",
+                "loo_marker_rank",
+                "loo_marker_margin",
+                "loo_conflict_beyond_dispersion",
+            ):
+                self.assertEqual(set(table[column]), {""})
 
     def test_classify_singleton_proposals_marks_hgt_when_contig_has_other_clean_markers(self):
         proposals = [
@@ -810,7 +1126,7 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(classified[0]["singleton_class"], "ambiguous")
 
-    def test_build_singleton_output_tree_neighbor_clade_prunes_multiple_accepted_leaves(self):
+    def test_build_singleton_output_tree_neighbor_clade_applies_rf_guard(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             marker_tree = tmp / "marker.nwk"
@@ -822,14 +1138,13 @@ class MarkerSelectionTests(unittest.TestCase):
                 marker_tree_path=str(marker_tree),
                 species_tree_path=str(species_tree),
                 accepted_leaf_names=["A|a1", "C|c1"],
-                mode="neighbor_clade",
             )
 
             self.assertEqual(
                 sorted(leaf.name for leaf in chosen_tree.iter_leaves()),
-                ["B|b1", "D|d1"],
+                ["A|a1", "B|b1", "C|c1", "D|d1"],
             )
-            self.assertEqual(decision, "pruned")
+            self.assertEqual(decision, "kept_rf_guard")
 
     def test_build_singleton_output_tree_legacy_prunes_multiple_accepted_leaves(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -843,7 +1158,6 @@ class MarkerSelectionTests(unittest.TestCase):
                 marker_tree_path=str(marker_tree),
                 species_tree_path=str(species_tree),
                 accepted_leaf_names=["A|a1", "C|c1"],
-                mode="recipient_consensus",
             )
 
             self.assertEqual(
@@ -983,8 +1297,10 @@ class BuildMarkerNeighborContextTests(unittest.TestCase):
         species_tree.write_text("(((A,B),C),(D,E));\n")
 
         # Two marker trees: MarkerA (congruent with species), MarkerB (shuffled).
-        marker_a = tmpdir / "aln_MarkerA_out.nw"
-        marker_b = tmpdir / "aln_MarkerB_out.nw"
+        # Named the way _process_tree_worker writes them, so the marker name
+        # recovered from the path is the one used in the table.
+        marker_a = tmpdir / "_no_dups_MarkerA_.nw"
+        marker_b = tmpdir / "_no_dups_MarkerB_.nw"
         marker_a.write_text("(((A|contig1|g1,B|contig1|g1),C|contig1|g1),(D|contig1|g1,E|contig1|g1));\n")
         marker_b.write_text("(((A|contig1|g2,D|contig1|g2),C|contig1|g2),(B|contig1|g2,E|contig1|g2));\n")
 
@@ -1149,10 +1465,22 @@ class ScoreNeighborMlProposalsRegression(unittest.TestCase):
     fixture, exercising the mahalanobis=0.0 fallback.
     """
 
+    def _score_synthetic_ml_proposals(self):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The covariance matrix associated to your dataset is not full rank",
+                category=UserWarning,
+            )
+            with self.assertLogs("sgtree", level="WARNING") as logs:
+                scored = marker_selection.score_neighbor_ml_proposals(
+                    _synthetic_ml_proposals()
+                )
+        self.assertTrue(any("MinCovDet fit failed" in msg for msg in logs.output))
+        return scored
+
     def test_pinned_columns_match_golden_snapshot(self):
-        scored = marker_selection.score_neighbor_ml_proposals(
-            _synthetic_ml_proposals()
-        )
+        scored = self._score_synthetic_ml_proposals()
         self.assertEqual(len(scored), 18)
 
         df = (
@@ -1175,9 +1503,7 @@ class ScoreNeighborMlProposalsRegression(unittest.TestCase):
                 )
 
     def test_genome_first_score_identifies_global_outlier(self):
-        scored = marker_selection.score_neighbor_ml_proposals(
-            _synthetic_ml_proposals()
-        )
+        scored = self._score_synthetic_ml_proposals()
         df = pd.DataFrame(scored)
         # genome_first_score_v8 is assigned per genome on the top row; look
         # at the maximum value across all rows of a genome.
@@ -1223,6 +1549,282 @@ class ScoreNeighborMlProposalsRegression(unittest.TestCase):
             "genome_first_score_v8",
         ):
             self.assertEqual(scored[0][col], 0.0, f"{col} should be zero on empty-train path")
+
+
+class MarkerTreeNamingTests(unittest.TestCase):
+    MARKER_NAMES = ("COG0012", "Ribosomal_S9", "RNA_pol_L_2", "Fe-ADH_2")
+    GENOMES = (("A", "a"), ("B", "b"), ("C", "c"), ("D", "d"))
+
+    def test_marker_names_with_underscores_round_trip_through_both_readers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            species_tree = tmp / "species.nwk"
+            species_tree.write_text("((A,B),(C,D));\n")
+            table_path = tmp / "table.csv"
+            pd.DataFrame(
+                [
+                    {"savedname": f"{genome}/ctg/{gene}", "score_bits": 100.0}
+                    for genome, gene in self.GENOMES
+                ]
+            ).to_csv(table_path, index=False)
+            outdir = tmp / "out"
+            (outdir / "removed").mkdir(parents=True)
+            cached_dir = outdir / "protTrees" / "no_duplicates" / "out"
+            cached_dir.mkdir(parents=True)
+            source_dir = tmp / "extracted_seqs"
+            source_dir.mkdir()
+            final_dir = tmp / "extracted_final"
+            final_dir.mkdir()
+
+            for marker_name in self.MARKER_NAMES:
+                marker_tree = tmp / f"{marker_name}.nwk"
+                marker_tree.write_text(
+                    "((A|ctg|a:1,B|ctg|b:1):1,(C|ctg|c:1,D|ctg|d:1):1);\n"
+                )
+                (source_dir / f"{marker_name}.faa").write_text(
+                    "".join(
+                        f">{genome}|ctg|{gene}\nMKV\n" for genome, gene in self.GENOMES
+                    )
+                )
+
+                marker_selection._process_tree_worker(
+                    (
+                        str(marker_tree),
+                        str(table_path),
+                        str(species_tree),
+                        str(outdir),
+                        None,
+                        "coordinate",
+                        5,
+                        False,
+                        None,
+                    )
+                )
+
+                cached_path = cached_dir / f"_no_dups_{marker_name}_.nw"
+                self.assertTrue(cached_path.exists(), f"missing tree for {marker_name}")
+                self.assertEqual(
+                    marker_selection._marker_name_from_tree_path(str(cached_path)),
+                    marker_name,
+                )
+
+                marker_selection._write_cleaned_seq_worker(
+                    (str(cached_path), str(source_dir), str(final_dir))
+                )
+                cleaned = final_dir / f"{marker_name}.faa"
+                self.assertTrue(cleaned.exists(), f"missing cleaned seqs for {marker_name}")
+                self.assertEqual(cleaned.read_text().count(">"), len(self.GENOMES))
+
+
+class SingletonGateAndReportingTests(unittest.TestCase):
+    def _reference_panel_results(self, rdist):
+        return [
+            {
+                "marker_name": "MarkerA",
+                "rdist": rdist,
+                "chosen": None,
+                "candidates": [
+                    {
+                        "leaf_name": "Ref1|contig1|gene1",
+                        "genome": "Ref1",
+                        "delta_rf": 0.9,
+                        "topoknn_score": 2.0,
+                        "recipient_consensus_score": 2.5,
+                    },
+                    {
+                        "leaf_name": "Query1|contig1|gene1",
+                        "genome": "Query1",
+                        "delta_rf": 0.8,
+                        "topoknn_score": 1.9,
+                        "recipient_consensus_score": 2.1,
+                    },
+                    {
+                        "leaf_name": "Query2|contig1|gene1",
+                        "genome": "Query2",
+                        "delta_rf": 0.4,
+                        "topoknn_score": 1.6,
+                        "recipient_consensus_score": 1.7,
+                    },
+                ],
+            }
+        ]
+
+    def test_reference_path_applies_min_rfdist_gate(self):
+        below, below_keys = marker_selection.singleton_proposals_from_results(
+            self._reference_panel_results(0.10),
+            mode="recipient_consensus",
+            reference_genomes={"Ref1"},
+            min_rfdist=0.25,
+        )
+
+        self.assertEqual(below, [])
+        self.assertEqual(below_keys, set())
+
+        above, above_keys = marker_selection.singleton_proposals_from_results(
+            self._reference_panel_results(0.30),
+            mode="recipient_consensus",
+            reference_genomes={"Ref1"},
+            min_rfdist=0.25,
+        )
+
+        self.assertEqual(
+            {proposal["leaf_name"] for proposal in above},
+            {"Query1|contig1|gene1", "Query2|contig1|gene1"},
+        )
+        self.assertEqual(
+            above_keys,
+            {
+                ("MarkerA", "Query1|contig1|gene1"),
+                ("MarkerA", "Query2|contig1|gene1"),
+            },
+        )
+
+    def test_reference_genome_ids_match_input_stage(self):
+        filenames = ("GCF_000005845.2.faa", "GCA_000001405.15.faa", "plain.faa")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            ref_dir = tmp / "refs"
+            ref_dir.mkdir()
+            for name in filenames:
+                (ref_dir / name).write_text(">seq1|ctg|gene1\nMKV\n")
+            manifest_path = tmp / "genome_manifest.tsv"
+            input_stage.write_genome_manifest(
+                str(ref_dir),
+                input_format="faa",
+                manifest_path=str(manifest_path),
+            )
+            manifest = pd.read_csv(manifest_path, sep="\t", dtype=str)
+
+            self.assertEqual(
+                marker_selection._reference_genomes_from_dir(str(ref_dir)),
+                set(manifest["genome_id"]),
+            )
+            self.assertIn("GCF_000005845.2", set(manifest["genome_id"]))
+
+    def test_singleton_decision_labels_clean_and_guard_kept_rows(self):
+        proposal = {"leaf_name": "G1|c1|gene1", "singleton_class": "clean"}
+
+        self.assertEqual(
+            marker_selection._singleton_decision(
+                proposal, marker_name="MarkerA", accepted_keys=set()
+            ),
+            "kept_clean",
+        )
+        self.assertEqual(
+            marker_selection._singleton_decision(
+                {"leaf_name": "G1|c1|gene1"},
+                marker_name="MarkerA",
+                accepted_keys={("MarkerA", "G1|c1|gene1")},
+                guard_kept=True,
+            ),
+            "kept_rf_guard",
+        )
+
+    def test_rf_guard_kept_leaf_is_reported_the_same_in_tsv_and_removal_record(self):
+        contaminated = {
+            "delta_rf": 0.4,
+            "neighbor_overlap": 0.1,
+            "topoknn_score": 2.0,
+            "branch_outlier": 0.0,
+            "bitscore_outlier": 0.0,
+            "recipient_consensus_score": 2.0,
+            "target_neighbor_count": 3,
+            "present_neighbor_count": 3,
+            "present_neighbor_fraction": 1.0,
+            "species_anchor_score": 0.9,
+            "neighbor_anchor_purity": 1.0,
+            "purity_drop": 0.9,
+            "anchor_knn_agreement": 0.0,
+            "neighbor_clade_score": 4.0,
+        }
+        clean = {
+            **contaminated,
+            "delta_rf": 0.0,
+            "purity_drop": 0.0,
+            "anchor_knn_agreement": 1.0,
+            "neighbor_clade_score": 0.1,
+            "recipient_consensus_score": 0.0,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            outdir = tmp / "run"
+            cached_dir = outdir / "protTrees" / "no_duplicates" / "out"
+            cached_dir.mkdir(parents=True)
+            (outdir / "protTrees" / "no_singles").mkdir(parents=True)
+            (outdir / "removed").mkdir(parents=True)
+            species_tree = outdir / "tree.nwk"
+            species_tree.write_text("((A,B),(C,D));\n")
+
+            results = []
+            for marker_name in ("MarkerA", "MarkerB"):
+                tree_path = cached_dir / f"_no_dups_{marker_name}_.nw"
+                tree_path.write_text(
+                    "((A|ctg|a:1,B|ctg|b:1):1,(C|ctg|c:1,D|ctg|d:1):1);\n"
+                )
+                results.append(
+                    {
+                        "filepath": str(tree_path),
+                        "marker_name": marker_name,
+                        "mode": "neighbor_clade",
+                        "rdist": 0.0,
+                        "num_nei": 3,
+                        "chosen": None,
+                        "candidates": [
+                            {
+                                "leaf_name": f"{genome}|ctg|{gene}",
+                                "genome": genome,
+                                "contig_id": "ctg",
+                                "gene_id": gene,
+                                "taxa_count": 4,
+                                **(
+                                    contaminated
+                                    if marker_name == "MarkerA" and genome == "A"
+                                    else clean
+                                ),
+                            }
+                            for genome, gene in (("A", "a"), ("B", "b"), ("C", "c"), ("D", "d"))
+                        ],
+                    }
+                )
+
+            cfg = SimpleNamespace(
+                outdir=str(outdir),
+                num_nei=3,
+                singles_min_rfdist=0.25,
+                singles_mode="neighbor_clade",
+                num_cpus=1,
+                ref=None,
+            )
+            with patch.object(marker_selection, "map_processed", return_value=results):
+                marker_selection.remove_singles(cfg, species_tree_path=str(species_tree))
+
+            record = (outdir / "removed" / "MarkerA").read_text()
+            record_line = next(
+                line for line in record.splitlines() if line.startswith("sinA|ctg|a\t")
+            )
+            self.assertIn("decision=kept_rf_guard", record_line)
+
+            table = pd.read_csv(
+                outdir / "singleton_candidates.tsv",
+                sep="\t",
+                dtype=str,
+                keep_default_na=False,
+            )
+            row = table[
+                (table["marker_name"] == "MarkerA") & (table["leaf_name"] == "A|ctg|a")
+            ]
+            self.assertEqual(len(row), 1)
+            self.assertEqual(row.iloc[0]["decision"], "kept_rf_guard")
+
+            output_tree = marker_selection.Tree(
+                str(outdir / "protTrees" / "no_singles" / "_no_dups_MarkerA_.nw"),
+                format=1,
+            )
+            self.assertIn(
+                "A|ctg|a",
+                {leaf.name for leaf in output_tree.iter_leaves()},
+            )
 
 
 if __name__ == "__main__":

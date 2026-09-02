@@ -224,7 +224,16 @@ def parse_hmmsearch(cfg: Config) -> tuple[pd.DataFrame, dict]:
         filtered_out.to_csv(list_torm_path, index=False, header=False)
         out_lengthfilter = cfg.hitsoutdir + ".lfilt"
         with open(out_lengthfilter, "w") as l_out:
-            subprocess.run(["grep", "-vwFf", list_torm_path, cfg.hitsoutdir], stdout=l_out)
+            grep = subprocess.run(["grep", "-vwFf", list_torm_path, cfg.hitsoutdir], stdout=l_out)
+        # grep exits 1 when it selects no lines, which is an empty but valid filter
+        # result. Anything else is a real error (2+ from grep itself, negative when a
+        # signal killed it mid-write): keep the original hit table.
+        if grep.returncode not in (0, 1):
+            raise RuntimeError(
+                f"length filter failed: grep exited {grep.returncode} "
+                f"(patterns={list_torm_path}, hits={cfg.hitsoutdir}); "
+                "original hit table kept"
+            )
         shutil.move(out_lengthfilter, cfg.hitsoutdir)
 
     # read domtblout as whitespace-separated, all strings
@@ -310,7 +319,12 @@ def build_working_df(cfg: Config, finaldf: pd.DataFrame) -> tuple[pd.DataFrame, 
     df["genome_id"] = finaldf["genome_id"]
     df["contig_id"] = finaldf["contig_id"]
     df["gene_id"] = finaldf["gene_id"]
-    df = df.drop_duplicates(subset='savedname', keep='first')
+    # A protein can pass the threshold of several markers. Keep the marker with the
+    # best bitscore instead of the one that comes first in the HMM file; ties break
+    # on marker name so repeat runs agree.
+    df = df.sort_values(
+        ["score_bits", 3], ascending=[False, True], kind="stable"
+    ).drop_duplicates(subset="savedname", keep="first")
     df.to_csv(os.path.join(cfg.tables_dir, "before_drops_elim_incompletes"))
 
     # cap duplicate copy count per genome+marker group (keep best-scoring copies)

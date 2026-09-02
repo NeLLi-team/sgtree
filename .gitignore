@@ -1,7 +1,4 @@
 # Runtime artifacts
-/.nextflow/
-/.nextflow.log*
-/work/
 /results_*/
 /sgtree_out/
 /.claude_resources.json
@@ -16,15 +13,19 @@
 /benchmarking/
 /DEL/
 
+# Local working notes, memory, and data
+/tasks/
+/.memd/
+/memory.md
+/resources/gunc_db/
+
 # Local environments and caches
 /.pixi/
 /.baseline/
-/nextflow
+/uv.lock
+/src/sgtree.egg-info/
 **/__pycache__/
 *.py[cod]
 
 # Editor/OS
 .DS_Store
-
-# Local migration backup
-sgtree_monolithic.py.bak

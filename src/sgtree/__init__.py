@@ -10,6 +10,13 @@ warnings.filterwarnings(
     category=SyntaxWarning,
     module=r"ete3(\.|$)",
 )
+# Some dependency SyntaxWarnings are emitted during source compilation before
+# reliable module metadata is attached.
+warnings.filterwarnings(
+    "ignore",
+    message=r"invalid escape sequence .*",
+    category=SyntaxWarning,
+)
 
 
-__version__ = "1.2.0"
+from sgtree._version import __version__

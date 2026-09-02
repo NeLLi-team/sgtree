@@ -1,3 +1,5 @@
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -155,13 +157,20 @@ class SupermatrixTests(unittest.TestCase):
                 ">A\nA-\n>B\n--\n>C\nG-\n"
             )
 
+            printed = io.StringIO()
             with patch("sgtree.supermatrix.subprocess.run", side_effect=FileNotFoundError()):
-                _trimal_simple_worker((str(input_path), str(output_path)))
+                with contextlib.redirect_stdout(printed):
+                    _trimal_simple_worker((str(input_path), str(output_path)))
 
             self.assertEqual(
                 output_path.read_text(),
                 ">A\nA\n>B\n-\n>C\nG\n",
             )
+            # The fallback must say so: two machines otherwise produce different
+            # alignments from the same input with no trace.
+            notice = printed.getvalue()
+            self.assertIn("trimal not found", notice)
+            self.assertIn("input.faa", notice)
 
 
 if __name__ == "__main__":
