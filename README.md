@@ -1,12 +1,13 @@
 # SGTree
 
-SGTree builds a species tree from marker genes. You give it genomes and a marker-set HMM
-file. It finds the markers, aligns them, concatenates them, and infers one tree.
+SGTree builds a species tree from genomes and a marker-set HMM file. It finds the markers,
+aligns them, concatenates them, and infers the tree.
 
 Input is a directory of protein FASTA files or genome assemblies. Output is a Newick tree
 plus the tables that show how it was built. An optional marker-selection mode builds one
-tree per marker, resolves duplicate copies against the species tree, and can remove
-single-copy contaminants.
+tree per marker and resolves duplicate copies against the species tree. Experimental
+singleton modes can remove discordant marker copies; `loo_profile` reports candidates
+without changing the marker set.
 
 ## Requirements
 
@@ -32,13 +33,23 @@ Run the bundled 10-genome example:
 pixi run example
 ```
 
-This writes `runs/example_basic/tree.nwk`. It takes about 90 seconds on 8 threads.
+This writes `runs/example_basic/tree.nwk`. A successful run ends with a line like:
+
+```text
+Final tree: /path/to/sgtree/runs/example_basic/tree.nwk
+```
+
+Confirm that the tree exists and is not empty:
+
+```bash
+test -s runs/example_basic/tree.nwk
+```
 
 Then run your own data:
 
 ```bash
 pixi run sgtree \
-  --genomedir <directory of .faa or .fna files> \
+  --genomedir /path/to/genomes \
   --modeldir resources/models/UNI56.hmm \
   --outdir runs/my_first_tree
 ```
@@ -49,8 +60,17 @@ SGTree accepts protein FASTA (`.faa`) or genome assembly FASTA (`.fna`, `.fa`, `
 
 - **Directory input** (usual case): one genome per file. The genome ID comes from the file
   name without its extension.
-- **Single FASTA input**: one file that holds all genomes. Headers must already be in
-  `genome|protein` form. SGTree keeps the genome part.
+- **Single protein FASTA input**: one file can hold all genomes. Headers must already be
+  in `genome|protein` form. SGTree keeps the genome part.
+- **Single assembly FASTA input**: one genome, with one record per contig. To include
+  several assemblies, put each genome in its own file.
+
+Keep only genome FASTA files in the input directory, and use one sequence format throughout.
+Hidden files are ignored. SGTree rejects empty files, files without FASTA headers, and
+mixed protein/assembly input.
+For other filename extensions, it infers the format from the first sequence line; use the
+extensions above when the format is known. For directory input, genome filenames must
+remain distinct after normalization. Contig IDs must also be unique within each assembly.
 
 Assemblies are gene-called with Pyrodigal before the marker search. The gene coordinates
 go to `gene_calls.tsv`.
@@ -100,8 +120,9 @@ pixi run sgtree \
   --num_cpus 24
 ```
 
-**Marker selection with singleton removal.** This builds per-marker trees, resolves
-duplicate copies against the species tree, and removes single-copy contaminants:
+**Marker selection with a report-only singleton diagnostic.** This builds per-marker
+trees, resolves duplicate copies against the species tree, and writes candidate evidence
+without removing single-copy markers:
 
 ```bash
 pixi run sgtree \
@@ -109,10 +130,11 @@ pixi run sgtree \
   --modeldir resources/models/UNI56.hmm \
   --outdir runs/marker_selection \
   --marker_selection yes \
-  --singles yes
+  --singles yes \
+  --singles-mode loo_profile
 ```
 
-**Higher-accuracy tree with IQ-TREE:**
+**Species tree with IQ-TREE:**
 
 ```bash
 pixi run sgtree \
@@ -128,7 +150,7 @@ representative genome per cluster for the species tree:
 
 ```bash
 pixi run sgtree \
-  --genomedir <directory of .fna files> \
+  --genomedir /path/to/assemblies \
   --modeldir resources/models/UNI56.hmm \
   --outdir runs/ani \
   --ani_cluster yes \
@@ -136,14 +158,14 @@ pixi run sgtree \
   --ani_threshold 95
 ```
 
-**Add reference genomes.** References are placed in the tree with your genomes. Their
-concatenated alignment is cached and reused between runs:
+**Add reference genomes.** References are placed in the tree with your genomes. SGTree
+caches their proteins and marker-search results, then combines them with each query run:
 
 ```bash
 pixi run sgtree \
-  --genomedir <query directory> \
+  --genomedir /path/to/queries \
   --modeldir resources/models/UNI56.hmm \
-  --ref <reference directory> \
+  --ref /path/to/references \
   --outdir runs/with_refs
 ```
 
@@ -159,7 +181,7 @@ The positional form `pixi run sgtree <genomedir> <modeldir>` also works.
 | `--modeldir` | required | Marker-set `.hmm` file |
 | `--outdir`, `--save_dir` | `runs/python/SG_<input>_<ref>_<model>_<timestamp>` | Output directory |
 | `--ref` | none | Directory of reference genomes |
-| `--ref_concat` | `runs/reference_cache` | Where reference alignments are cached |
+| `--ref_concat` | `runs/reference_cache` | Where reference proteins and marker results are cached |
 | `--num_cpus` | `8` | Threads |
 | `--keep_intermediates` | `no` | Keep intermediate directories instead of archiving them |
 
@@ -186,8 +208,9 @@ Use `cut_ga` with curated sets such as UNI56. For custom sets start with
 | `--iqtree_fast` | `yes` | Add `-fast` when `--tree_method iqtree` |
 | `--iqtree_model` | `LG+F+I+G4` | IQ-TREE model string |
 
-`hmmalign` aligns each marker against its profile HMM and is the fastest option. `mafft`
-and `famsa` align de novo. `mafft-linsi` is the most accurate and the slowest.
+`hmmalign` aligns each marker against its profile HMM. `mafft`, `mafft-linsi`, and `famsa`
+align marker sequences de novo. Their speed and accuracy depend on the marker set and
+dataset; SGTree does not benchmark them for a universal ranking.
 
 ### Marker selection
 
@@ -196,9 +219,9 @@ and `famsa` align de novo. `mafft-linsi` is the most accurate and the slowest.
 | `--marker_selection` | `no` | Build per-marker trees and resolve duplicates against the species tree |
 | `--selection_mode` | `coordinate` | `coordinate` or `legacy` duplicate resolution |
 | `--selection_max_rounds` | `5` | Maximum coordinate-descent rounds |
-| `--selection_global_rounds` | `1` | Guide-tree rebuild rounds; `2` helps on contaminated panels |
+| `--selection_global_rounds` | `1` | Maximum guide-tree rebuild rounds |
 | `--lock_references` | `no` | Keep reference duplicate choices fixed by score |
-| `--singles` | `no` | Remove single-copy contaminants |
+| `--singles` | `no` | Enable singleton analysis; behavior depends on `--singles-mode` |
 | `--singles-mode` | `delta_rf` | Detector; see the table below |
 | `--singles_min_rfdist` | `0.25` | Minimum marker-tree to species-tree RF distance before singleton removal starts. `neighbor_clade`, `neighbor_ml`, and `gcp` do not use this gate |
 | `--num_nei` | `0` | Neighborhood size; `0` selects it automatically |
@@ -216,6 +239,10 @@ and `famsa` align de novo. `mafft-linsi` is the most accurate and the slowest.
 
 Before SNP alignment SGTree keeps only the contigs that carry shared cluster-core markers
 and that align back to the representative genome at 95% ANI or better.
+
+For each genome, positions covered by more than one primary contig alignment are excluded
+from the core SNP alignment. This avoids arbitrary haploid allele calls and can reduce the
+number of usable sites. A cluster with no variable sites receives an unresolved star tree.
 
 ## Output
 
@@ -239,35 +266,48 @@ of each round as `tree_round_<N>.nwk`. With `--singles yes` it writes
 `singleton_candidates.tsv`, one row per scored marker copy. The first-pass `tree.nwk`
 moves into `temp/`.
 
+Use `tree.nwk` as the result of a basic run. Use `tree_final.nwk` as the result of a
+marker-selection run. In the latter case, the archived `tree.nwk` is the guide tree built
+before marker selection.
+
 `--ani_cluster yes` adds an `ani/` directory with the pairwise ANI table, the clusters,
-the representatives, and the ANI graph. `--snp yes` adds `snp_trees/` with one
-subdirectory per cluster, each holding the members, the contig filter table, the core SNP
-alignment, and the cluster tree.
+the representatives, and the ANI graph. `--snp yes` adds
+`snp_trees/snp_tree_summary.tsv`, which records the outcome for every cluster. Eligible
+clusters have a subdirectory with their members and contig-filter results. A completed
+SNP analysis adds `core_snps.fna` and `tree.nwk`; a cluster without variable sites gets an
+unresolved star tree. Clusters below the size threshold have no subdirectory.
 
 At the end of a run SGTree archives its intermediate directories as zip files under
 `temp/`. Smaller intermediate files are compressed where they are and keep their original
 names. Pass `--keep_intermediates yes` to keep everything readable for debugging.
-Files SGTree did not write are never archived or removed.
+Top-level entries whose names do not match SGTree outputs are left in place. Keep unrelated
+work in a separate directory.
 
-## How marker selection removes contamination
+## Singleton diagnostics and experimental pruning
 
-A contaminated genome carries a marker copy that came from another organism. That copy
-sits in the wrong place in its marker tree, but the concatenated species tree can hide it.
+A marker copy can disagree with the other marker trees because of contamination,
+horizontal transfer, hidden paralogy, taxon error, alignment error, or tree-estimation
+error. The singleton modes detect topological discordance; they do not determine its
+cause.
 
 Marker selection builds one tree per marker. Where a genome has more than one copy of a
 marker, SGTree keeps the copy that makes the marker tree agree best with the species tree,
 measured by Robinson-Foulds distance. `--selection_mode coordinate` revisits that choice
 over several rounds; `legacy` decides once.
 
-With `--singles yes` SGTree also looks at single-copy markers. A detector proposes the leaf
-whose removal most improves agreement. A budget allows at most one removal per genome, and
-an RF guard keeps a removal only when the marker tree improves.
+With `--singles yes` SGTree also evaluates single-copy markers. All modes except
+`loo_profile` can remove proposed leaves. Those automatic modes are experimental and have
+not been validated for field contamination cleanup. Across all markers, the budget admits
+at most one proposed removal per genome and retains at least one marker in that genome. For each
+marker, the proposed leaves are removed together only if their removal strictly lowers
+the normalized Robinson-Foulds distance to the species tree. A rejected proposal does not
+free its genome's budget for a second candidate.
 
 | `--singles-mode` | Behavior |
 |---|---|
-| `delta_rf` | Removes the leaf whose removal most improves marker-to-species RF. The plain baseline. |
-| `composite` | Needs RF gain, local topology mismatch, branch-length and bitscore outlier signal to agree. The most conservative mode. |
-| `recipient_consensus` | Scores the copy against the genome's nearest species-tree neighborhood. Calibrated best on the 50-genome replacement benchmarks. |
+| `delta_rf` | Removes the leaf whose removal most improves marker-to-species RF. |
+| `composite` | Requires RF gain, local topology mismatch, branch-length signal, and bitscore outlier signal to agree. |
+| `recipient_consensus` | Scores the copy against the genome's nearest species-tree neighborhood. |
 | `contig_consensus` | Starts from `composite`, then asks whether other markers on the same contig disagree. Needs reliable contig IDs. |
 | `neighbor_clade` | Asks whether a copy sits where the genome's closest neighbors put theirs, without a whole-tree RF trigger. |
 | `gcp` | Genome Consistency Profiling: per-genome z-scores over marker features, combined with IsolationForest and HDBSCAN. Flags at most one marker per genome. |
@@ -284,9 +324,35 @@ voter-selection mode (`loo_voter_search_mode`), and a review flag
 (`loo_review_candidate`) for a placement whose conflict is strong but stays inside the
 normal spread between markers.
 
-The review flag marks a copy for a human to look at. It confirms nothing on its own.
+The review flag marks a copy for inspection; it does not confirm contamination.
 Contamination from a close relative stays unresolved when its placement falls inside that
 normal spread.
+
+The fixed tree and sequence instruments test mechanism and safety properties. They do not
+estimate biological performance. See
+[`DEVELOPMENT.md`](DEVELOPMENT.md#contamination-detection-evidence-instruments) for the
+commands and evidence boundary.
+
+## Troubleshooting
+
+- **`Input path does not exist`:** check the path passed to `--genomedir` or `--modeldir`.
+  Use `.faa` for proteins or `.fna`, `.fa`, or `.fasta` for assemblies. The marker input
+  must contain valid HMM entries.
+- **Custom HMMs return no hits:** curated marker sets can use the default gathering cutoff.
+  For models without gathering cutoffs, start with `--hmmsearch_cutoff evalue`.
+- **Retrying an interrupted run:** repeat the command with the same `--outdir`. SGTree
+  records ownership in `.sgtree-run` and clears its generated outputs before retrying.
+  It refuses reserved output names in a directory it cannot identify as an SGTree run;
+  use a new output directory in that case.
+- **Reference inputs changed:** SGTree compares the contents of reference FASTA and marker
+  HMM files with the cache metadata and rebuilds a stale or incomplete cache. A cache
+  from an older version is rebuilt if its metadata and required files identify it as an
+  intact SGTree cache. Otherwise, use a new cache directory with `--ref_concat`.
+- **Expected intermediates are missing:** SGTree archives them by default. Add
+  `--keep_intermediates yes` while debugging.
+- **A small marker set produces only LOO abstentions:** `loo_profile` needs at least five
+  voter trees and six shared coordinate taxa. An abstention is a recorded outcome, not a
+  confirmed clean marker.
 
 ## Documentation
 

@@ -1,7 +1,7 @@
 # Development
 
-Notes for people who work on SGTree. User documentation is in
-[`README.md`](README.md).
+User instructions are in [`README.md`](README.md). This page covers source layout,
+validation, and local benchmarks.
 
 ## Repository layout
 
@@ -34,7 +34,7 @@ sgtree/
 
 ## Running the pipeline from source
 
-Every task runs the package from `src/` with `PYTHONPATH=src`:
+The `sgtree` task runs the package from `src/` with `PYTHONPATH=src`:
 
 ```bash
 pixi run sgtree --help
@@ -46,23 +46,24 @@ pixi run sgtree --help
 pixi run test-unit
 ```
 
-The suite uses `unittest`. Use the full discovery command above; a shorter
-invocation can miss test modules.
+The task uses `unittest` discovery to collect all test modules.
 
-Two behavioral checks complete the gate:
+Run the bundled example and check that the Python files compile:
 
 ```bash
 pixi run example                                  # full pipeline to tree.nwk
 pixi run python -m compileall -q src bin tests
 ```
 
+`pixi run example` uses the fixed directory `runs/example_basic`. Do not run two copies
+at the same time. A successful run prints the absolute path to
+`runs/example_basic/tree.nwk`.
+
 ## Benchmarks
 
-The benchmark tasks need genome panels that the repository does not ship. They
-live under `benchmarking/`, which is not tracked, so a fresh clone cannot run
-them: `pixi run benchmark-generate` builds the synthetic contamination
-benchmark from `benchmarking/testgenomes/Chloroflexi`. `runs/` is disposable
-scratch.
+The benchmark tasks require local genome panels under `benchmarking/`. A fresh clone
+does not include them. `pixi run benchmark-generate` builds the synthetic contamination
+benchmark from `benchmarking/testgenomes/Chloroflexi` and writes results under `runs/`.
 
 With the panels in place:
 
@@ -79,9 +80,9 @@ with the `SGTREE_TAXONOMY_DB` environment variable.
 
 ## Contamination-detection evidence instruments
 
-Two fixed instruments gate the contamination-detection code. Both are engineering
-and safety screens, not biological performance estimates, and both keep
-production pruning disabled.
+Two fixed instruments gate the marker-discordance code. They test engineering and safety
+properties and do not estimate biological performance. Their benchmark-only filters can
+label a synthetic action but do not enable production pruning.
 
 Tree fixture screen, 24 mechanism fixtures plus 8 scale fixtures, in memory:
 
@@ -104,11 +105,11 @@ donor gene counts into `donor_gene_sweep.tsv`.
 
 ### Scope of the evidence
 
-The review tier reports only. A review flag marks a marker copy for inspection
-and confirms nothing on its own. The margin threshold that separates true from
-false review warnings is calibrated on two truth events of the development
-instrument. That is calibration, not validation, and it does not transfer to
-empirical assemblies without a new confirmation run.
+The review tier reports marker copies for inspection and does not confirm contamination.
+Its margin threshold was calibrated on two truth events in the development instrument,
+which is too small to establish biological sensitivity or specificity. These fixed tests
+check that the scorer and its safeguards behave as intended. Validation of automatic
+removal requires independent genomes and contamination events.
 
 ## Cleaning the workspace
 
@@ -134,7 +135,9 @@ A basic run executes these stages in order:
 9. Species-tree inference
 10. Archiving of intermediates
 
-`--marker_selection yes` adds a second phase: per-marker trimming and tree
-inference, RF-guided duplicate cleanup, optional singleton removal, then a
-rebuild of the trimmed alignments, the supermatrix, and the final tree.
+`--marker_selection yes` adds a second phase: per-marker trimming and tree inference,
+RF-guided duplicate cleanup, optional singleton analysis, then a rebuild of the trimmed
+alignments, the supermatrix, and the final tree. All singleton modes except `loo_profile`
+can remove markers. `loo_profile` writes evidence and passes the marker trees through
+unchanged.
 `--selection_global_rounds` repeats that phase against the rebuilt guide tree.
