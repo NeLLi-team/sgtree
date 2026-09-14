@@ -1,7 +1,10 @@
+"""Create and parse stable SGTree genome, contig, and sequence identifiers."""
+
 from __future__ import annotations
 
 import re
-
+from collections.abc import Sequence
+from pathlib import Path
 
 GENERIC_CONTIG_PREFIXES = {
     "protein",
@@ -14,6 +17,7 @@ GENERIC_CONTIG_PREFIXES = {
 
 
 def sanitize_token(token: str, fallback: str) -> str:
+    """Return one delimiter-safe identifier token or the supplied fallback."""
     parts = (token or "").strip().split()
     if not parts:
         return fallback
@@ -23,7 +27,26 @@ def sanitize_token(token: str, fallback: str) -> str:
     return text or fallback
 
 
+def assign_genome_ids(paths: Sequence[str]) -> list[tuple[str, str]]:
+    """Assign unique genome IDs from input filenames."""
+    assigned: list[tuple[str, str]] = []
+    sources_by_genome: dict[str, str] = {}
+    for file_index, path in enumerate(paths, start=1):
+        stem = Path(path).stem
+        genome_id = sanitize_token(stem, f"genome_{file_index:05d}")
+        previous_source = sources_by_genome.get(genome_id)
+        if previous_source is not None:
+            raise ValueError(
+                f"Input filenames normalize to duplicate genome ID {genome_id!r}: "
+                f"{previous_source!r} and {path!r}"
+            )
+        sources_by_genome[genome_id] = path
+        assigned.append((path, genome_id))
+    return assigned
+
+
 def infer_contig_id(token: str, *, fallback: str = "unknown_contig") -> tuple[str, str]:
+    """Infer a contig ID from a protein token and report the inference source."""
     text = sanitize_token(token, fallback)
     if text == fallback:
         return fallback, "unknown"
@@ -43,6 +66,7 @@ def infer_contig_id(token: str, *, fallback: str = "unknown_contig") -> tuple[st
 
 
 def build_sequence_id(genome_id: str, contig_id: str, gene_id: str) -> str:
+    """Build a normalized ``genome|contig|gene`` identifier."""
     return "|".join(
         [
             sanitize_token(genome_id, "unknown_genome"),
@@ -53,6 +77,7 @@ def build_sequence_id(genome_id: str, contig_id: str, gene_id: str) -> str:
 
 
 def parse_sequence_id(identifier: str) -> tuple[str, str, str]:
+    """Parse an SGTree sequence identifier, filling absent legacy fields."""
     parts = (identifier or "").split("|")
     if len(parts) >= 3:
         return parts[0], parts[1], "|".join(parts[2:])
@@ -64,4 +89,5 @@ def parse_sequence_id(identifier: str) -> tuple[str, str, str]:
 
 
 def parse_savedname(savedname: str) -> tuple[str, str, str]:
+    """Parse the slash-delimited identifier stored in SGTree tables."""
     return parse_sequence_id(savedname.replace("/", "|"))

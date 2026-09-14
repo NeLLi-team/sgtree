@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 import pandas as pd
@@ -9,6 +10,65 @@ from sgtree import ani
 
 
 class AniTests(unittest.TestCase):
+    def test_skani_preserves_two_aliases_of_one_assembly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            assembly = directory / "original.fna"
+            assembly.write_text(">contig\nACGT\n", encoding="utf-8")
+            aliases = [directory / "sample_a.fna", directory / "sample_b.fna"]
+            records = []
+            for alias in aliases:
+                alias.symlink_to(assembly)
+                records.append(
+                    ani.GenomeRecord(
+                        alias.stem,
+                        "query",
+                        "fna",
+                        str(alias),
+                        str(alias),
+                        None,
+                        4,
+                        1,
+                    )
+                )
+            output = f"{aliases[0]}\t{aliases[1]}\t100\t100\t100\n"
+            with patch.object(
+                ani, "_run_cmd", return_value=CompletedProcess([], 0, stdout=output)
+            ):
+                pairs = ani.compute_pairwise_ani(records, backend="skani", cpus=1)
+            self.assertEqual(
+                [(pair["genome_a"], pair["genome_b"]) for pair in pairs],
+                [("sample_a", "sample_b")],
+            )
+
+    def test_snp_gene_calling_rejects_duplicate_normalized_contigs(self):
+        for headers in (("same", "same"), ("contig|a", "contig_a")):
+            with (
+                self.subTest(headers=headers),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                directory = Path(temporary)
+                assembly = directory / "genome.fna"
+                sequence = "ATG" + "AAA" * 100 + "TAA"
+                assembly.write_text(
+                    "".join(f">{header}\n{sequence}\n" for header in headers),
+                    encoding="utf-8",
+                )
+                record = ani.GenomeRecord(
+                    "genome",
+                    "query",
+                    "fna",
+                    str(assembly),
+                    str(assembly),
+                    None,
+                    2 * len(sequence),
+                    2,
+                )
+                with self.assertRaisesRegex(
+                    ValueError, "Duplicate normalized contig ID"
+                ):
+                    ani._gene_call_record(record, directory / "proteomes")
+
     def test_minimap2_threads_scale_when_pair_count_is_below_cpu_budget(self):
         # 3-genome input with cpus=16 -> 3 pairs, 3 workers, 5 threads each.
         records = [
@@ -33,13 +93,18 @@ class AniTests(unittest.TestCase):
             if cmd and cmd[0] == "minimap2":
                 t_index = cmd.index("-t")
                 threads_seen.append(cmd[t_index + 1])
-            import subprocess as _sp
-            return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        with patch.object(ani, "_run_cmd", side_effect=fake_run_cmd):
-            # Force serial fallback so we observe every call in this process.
-            with patch.object(ani, "_map_with_fallback", side_effect=lambda fn, args, n: [fn(a) for a in args]):
-                ani.compute_pairwise_ani(records, backend="minimap2", cpus=16)
+        # Run workers serially to observe their minimap2 thread arguments.
+        with (
+            patch.object(ani, "_run_cmd", side_effect=fake_run_cmd),
+            patch.object(
+                ani,
+                "map_processed",
+                side_effect=lambda fn, args, n: [fn(a) for a in args],
+            ),
+        ):
+            ani.compute_pairwise_ani(records, backend="minimap2", cpus=16)
 
         # 3 pairs x 2 directions = 6 minimap2 calls; all should use -t 5.
         self.assertEqual(len(threads_seen), 6)
@@ -61,16 +126,24 @@ class AniTests(unittest.TestCase):
 
     def test_choose_cluster_representative_prefers_reference_then_contiguity(self):
         cluster = [
-            ani.GenomeRecord("QueryA", "query", "fna", "QueryA.fna", "QueryA.fna", None, 1000, 10),
-            ani.GenomeRecord("RefA", "ref", "fna", "RefA.fna", "RefA.fna", None, 900, 20),
-            ani.GenomeRecord("RefB", "ref", "fna", "RefB.fna", "RefB.fna", None, 800, 5),
+            ani.GenomeRecord(
+                "QueryA", "query", "fna", "QueryA.fna", "QueryA.fna", None, 1000, 10
+            ),
+            ani.GenomeRecord(
+                "RefA", "ref", "fna", "RefA.fna", "RefA.fna", None, 900, 20
+            ),
+            ani.GenomeRecord(
+                "RefB", "ref", "fna", "RefB.fna", "RefB.fna", None, 800, 5
+            ),
         ]
 
         representative = ani.choose_cluster_representative(cluster)
 
         self.assertEqual(representative.genome_id, "RefB")
 
-    def test_select_shared_marker_backbone_contigs_filters_non_core_and_low_ani_contigs(self):
+    def test_select_shared_marker_backbone_contigs_filters_non_core_and_low_ani_contigs(
+        self,
+    ):
         retained, core_markers, filter_df = ani.select_shared_marker_backbone_contigs(
             genome_ids=["Rep", "Q1", "Q2"],
             representative_genome="Rep",
@@ -100,7 +173,9 @@ class AniTests(unittest.TestCase):
         self.assertEqual(retained["Q1"], {"q1_keep"})
         self.assertEqual(retained["Q2"], {"q2_keep"})
         retained_rows = filter_df[filter_df["retained"]]
-        self.assertEqual(set(retained_rows["contig_id"]), {"rep_keep", "q1_keep", "q2_keep"})
+        self.assertEqual(
+            set(retained_rows["contig_id"]), {"rep_keep", "q1_keep", "q2_keep"}
+        )
 
     def test_project_alignment_keeps_reverse_strand_seq_in_reference_orientation(self):
         # SAM SEQ is always stored in reference orientation, so a FLAG 16 record
@@ -116,9 +191,8 @@ class AniTests(unittest.TestCase):
         ]
 
         def fake_run_cmd(cmd: list[str]):
-            import subprocess as _sp
             stdout = "@HD\tVN:1.6\n" + "\n".join(sam_records) + "\n"
-            return _sp.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+            return CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
         with patch.object(ani, "_run_cmd", side_effect=fake_run_cmd):
             projection = ani._project_alignment_to_reference("ref.fna", "query.fna")
@@ -131,6 +205,31 @@ class AniTests(unittest.TestCase):
             projection.coverage,
             {"contig1": [(0, 10)], "contig2": [(0, 10)]},
         )
+
+    def test_project_alignment_excludes_overlapping_primary_contigs(self):
+        sam = (
+            "copyA\t0\tref\t1\t60\t1=1X4=\t*\t0\t0\tAGAAAA\t*\n"
+            "copyB\t0\tref\t1\t60\t1=1X2=\t*\t0\t0\tATAA\t*\n"
+            "unique\t0\tref\t9\t60\t1=1X2=\t*\t0\t0\tACAA\t*\n"
+        )
+        reordered_sam = (
+            "unique\t0\tref\t9\t60\t1=1X2=\t*\t0\t0\tACAA\t*\n"
+            "copyB\t0\tref\t1\t60\t1=1X2=\t*\t0\t0\tATAA\t*\n"
+            "copyA\t0\tref\t1\t60\t1=1X4=\t*\t0\t0\tAGAAAA\t*\n"
+        )
+        with patch(
+            "sgtree.ani._run_cmd", return_value=CompletedProcess([], 0, sam, "")
+        ):
+            projection = ani._project_alignment_to_reference("ref.fna", "query.fna")
+        with patch(
+            "sgtree.ani._run_cmd",
+            return_value=CompletedProcess([], 0, reordered_sam, ""),
+        ):
+            reordered = ani._project_alignment_to_reference("ref.fna", "query.fna")
+
+        self.assertEqual(projection.coverage, {"ref": [(4, 6), (8, 12)]})
+        self.assertEqual(projection.mismatches, {("ref", 9): "C"})
+        self.assertEqual(projection, reordered)
 
     def test_build_snp_trees_writes_alignment_and_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -151,22 +250,28 @@ class AniTests(unittest.TestCase):
                 + "\n"
             )
             clusters.write_text(
-                "\n".join(
-                    [
-                        "cluster_id\trepresentative_genome\tgenome_id\tsource_role\tcluster_size\ttotal_bases\tcontigs\tkept_for_species_tree\tbackend\tani_threshold\tmcl_inflation",
-                        "ani_cluster_001\tRep\tRep\tquery\t3\t4\t1\tyes\tminimap2\t0.9500\t2.00",
-                        "ani_cluster_001\tRep\tQ1\tquery\t3\t4\t1\tno\tminimap2\t0.9500\t2.00",
-                        "ani_cluster_001\tRep\tQ2\tquery\t3\t4\t1\tno\tminimap2\t0.9500\t2.00",
-                    ]
-                )
-                + "\n"
+                "cluster_id\trepresentative_genome\tgenome_id\tsource_role\t"
+                "cluster_size\ttotal_bases\tcontigs\tkept_for_species_tree\t"
+                "backend\tani_threshold\tmcl_inflation\n"
+                "ani_cluster_001\tRep\tRep\tquery\t3\t4\t1\tyes\tminimap2\t0.9500\t2.00\n"
+                "ani_cluster_001\tRep\tQ1\tquery\t3\t4\t1\tno\tminimap2\t0.9500\t2.00\n"
+                "ani_cluster_001\tRep\tQ2\tquery\t3\t4\t1\tno\tminimap2\t0.9500\t2.00"
+                "\n"
             )
-            for genome_id, sequence in [("Rep", "AAAA"), ("Q1", "AATA"), ("Q2", "AACA")]:
+            for genome_id, sequence in [
+                ("Rep", "AAAA"),
+                ("Q1", "AATA"),
+                ("Q2", "AACA"),
+            ]:
                 (tmp / f"{genome_id}.fna").write_text(f">contig1\n{sequence}\n")
 
             projections = {
-                "Q1.fna": ani.SamProjection(coverage={"contig1": [(0, 4)]}, mismatches={("contig1", 2): "T"}),
-                "Q2.fna": ani.SamProjection(coverage={"contig1": [(0, 4)]}, mismatches={("contig1", 2): "C"}),
+                "Q1.fna": ani.SamProjection(
+                    coverage={"contig1": [(0, 4)]}, mismatches={("contig1", 2): "T"}
+                ),
+                "Q2.fna": ani.SamProjection(
+                    coverage={"contig1": [(0, 4)]}, mismatches={("contig1", 2): "C"}
+                ),
             }
 
             def fake_projection(reference_path: str, query_path: str):
@@ -175,9 +280,15 @@ class AniTests(unittest.TestCase):
             def fake_fasttree(alignment_path: Path, tree_path: Path):
                 tree_path.write_text("(Rep,Q1,Q2);\n")
 
-            with patch("sgtree.ani._project_alignment_to_reference", side_effect=fake_projection), patch(
-                "sgtree.ani._run_fasttree_nt",
-                side_effect=fake_fasttree,
+            with (
+                patch(
+                    "sgtree.ani._project_alignment_to_reference",
+                    side_effect=fake_projection,
+                ),
+                patch(
+                    "sgtree.ani._run_fasttree_nt",
+                    side_effect=fake_fasttree,
+                ),
             ):
                 summary_path = ani.build_snp_trees(
                     clusters_path=clusters,

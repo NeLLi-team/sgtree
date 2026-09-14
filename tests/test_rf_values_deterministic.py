@@ -8,12 +8,27 @@ from sgtree.marker_selection import _write_rf_values_file
 def _records_bundle() -> list[list[dict]]:
     return [
         [
-            {"protein_id": "gB/p1", "marker": "M2", "rf_distance": 0.31234, "status": "Kept"},
-            {"protein_id": "gA/p2", "marker": "M1", "rf_distance": 0.05, "status": "Removed"},
+            {
+                "protein_id": "gB/p1",
+                "marker": "M2",
+                "rf_distance": 0.31234,
+                "status": "Kept",
+            },
+            {
+                "protein_id": "gA/p2",
+                "marker": "M1",
+                "rf_distance": 0.05,
+                "status": "Removed",
+            },
         ],
         [],
         [
-            {"protein_id": "gA/p1", "marker": "M1", "rf_distance": 0.1, "status": "Kept"},
+            {
+                "protein_id": "gA/p1",
+                "marker": "M1",
+                "rf_distance": 0.1,
+                "status": "Kept",
+            },
         ],
     ]
 
@@ -38,17 +53,21 @@ class RfValuesDeterministicTests(unittest.TestCase):
             lines = out.read_text().splitlines()
             self.assertEqual(lines[0], "ProteinID MarkerGene RFdistance Status")
             data = lines[1:]
-            keys = [(parts[1], parts[0]) for parts in (l.split() for l in data)]
+            keys = [(parts[1], parts[0]) for parts in (line.split() for line in data)]
             self.assertEqual(keys, sorted(keys))
 
     def test_handles_empty_and_none_worker_results(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "rf.txt"
             _write_rf_values_file(str(out), None)
-            self.assertEqual(out.read_text(), "ProteinID MarkerGene RFdistance Status\n")
+            self.assertEqual(
+                out.read_text(), "ProteinID MarkerGene RFdistance Status\n"
+            )
 
             _write_rf_values_file(str(out), [[]])
-            self.assertEqual(out.read_text(), "ProteinID MarkerGene RFdistance Status\n")
+            self.assertEqual(
+                out.read_text(), "ProteinID MarkerGene RFdistance Status\n"
+            )
 
 
 if __name__ == "__main__":

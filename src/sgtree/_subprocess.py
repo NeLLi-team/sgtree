@@ -1,7 +1,8 @@
 """Shared subprocess helpers used by the pipeline stages.
 
-Two helpers intentionally, not one. See `docs/plans/active/2026-04-17-subprocess-audit.md`
-for the call-site inventory. Callers have genuinely different needs:
+Two helpers intentionally, not one. See
+`docs/plans/active/2026-04-17-subprocess-audit.md` for the call-site inventory.
+Callers have genuinely different needs:
 
 - ``run_check`` for fire-and-check callers that only care whether the process
   succeeded. Raises ``CalledProcessError`` on non-zero exit.
@@ -16,7 +17,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from collections.abc import Mapping
-from typing import IO, Optional
+from typing import IO
 
 logger = logging.getLogger("sgtree")
 
@@ -46,10 +47,10 @@ class CommandFailed(subprocess.CalledProcessError):
 def run_check(
     cmd: list[str],
     *,
-    stdout: Optional[IO | int] = None,
-    stderr: Optional[IO | int] = None,
-    env: Optional[Mapping[str, str]] = None,
-    cwd: Optional[str] = None,
+    stdout: IO | int | None = None,
+    stderr: IO | int | None = None,
+    env: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> None:
     """Run ``cmd`` with ``check=True``. Log and re-raise on failure.
 
@@ -66,9 +67,7 @@ def run_check(
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        logger.error(
-            "subprocess '%s' exited with code %s", cmd[0], exc.returncode
-        )
+        logger.error("subprocess '%s' exited with code %s", cmd[0], exc.returncode)
         raise CommandFailed(
             exc.returncode, exc.cmd, output=exc.output, stderr=exc.stderr
         ) from None
@@ -78,8 +77,8 @@ def run_check(
 def run_capture(
     cmd: list[str],
     *,
-    env: Optional[Mapping[str, str]] = None,
-    cwd: Optional[str] = None,
+    env: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``cmd`` with stdout/stderr captured as text. Does not raise.
 
@@ -97,9 +96,7 @@ def run_capture(
         check=False,
     )
     if result.returncode == 0:
-        logger.info(
-            "subprocess '%s' completed with code 0", cmd[0]
-        )
+        logger.info("subprocess '%s' completed with code 0", cmd[0])
     else:
         logger.error(
             "subprocess '%s' exited with code %s\nstderr:\n%s",

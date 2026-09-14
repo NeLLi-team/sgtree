@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pyhmmer
 
-
 MODEL_DIR = Path(__file__).resolve().parents[1] / "resources" / "models"
 
 
@@ -23,20 +22,24 @@ class BundledMarkerSetTests(unittest.TestCase):
         for path in paths:
             with self.subTest(marker_set=path.name):
                 text = path.read_text()
-                declared = len(re.findall(r"^NAME", text, re.M))
+                declared = len(re.findall(r"^NAME", text, re.MULTILINE))
                 with pyhmmer.plan7.HMMFile(path) as handle:
                     parsed = sum(1 for _ in handle)
                 self.assertEqual(
-                    parsed, declared,
+                    parsed,
+                    declared,
                     f"{path.name}: parsed {parsed} of {declared} declared models",
                 )
 
     def test_each_set_uses_one_hmm_format(self) -> None:
         for path in sorted(MODEL_DIR.glob("*.hmm")):
             with self.subTest(marker_set=path.name):
-                formats = set(re.findall(r"^HMMER3/[a-z]", path.read_text(), re.M))
+                formats = set(
+                    re.findall(r"^HMMER3/[a-z]", path.read_text(), re.MULTILINE)
+                )
                 self.assertEqual(
-                    len(formats), 1,
+                    len(formats),
+                    1,
                     f"{path.name} mixes model formats: {sorted(formats)}",
                 )
 

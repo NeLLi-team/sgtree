@@ -11,9 +11,7 @@ class FastaContigBasesStatsTests(unittest.TestCase):
     def test_counts_contigs_and_bases(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "genome.fna"
-            path.write_text(
-                ">contig1\nACGT\n>contig2\nAAAACCCC\n>contig3\nGG\n"
-            )
+            path.write_text(">contig1\nACGT\n>contig2\nAAAACCCC\n>contig3\nGG\n")
             contigs, bases = fasta_contig_bases_stats(path)
             self.assertEqual(contigs, 3)
             self.assertEqual(bases, 4 + 8 + 2)
@@ -55,10 +53,7 @@ class HeaderWithEmptyIdFieldTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             (tmp / "genome.faa").write_text(
-                ">GENOME|\nMKT\n"
-                ">a||b\nMKT\n"
-                ">GENOME|c1|\nMKT\n"
-                ">\nMKT\n"
+                ">GENOME|\nMKT\n>a||b\nMKT\n>GENOME|c1|\nMKT\n>\nMKT\n"
             )
             out_fasta = tmp / "proteomes"
 
@@ -82,6 +77,43 @@ class HeaderWithEmptyIdFieldTests(unittest.TestCase):
             for identifier in ids:
                 genome, contig, gene = parse_sequence_id(identifier)
                 self.assertTrue(all([genome, contig, gene]), identifier)
+
+
+class FilenameCollisionTests(unittest.TestCase):
+    def test_normalization_keeps_uppercase_and_content_detected_fasta_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            for filename in ("sample_a.faa", "sample_b.FAA", "sample_c.fsa"):
+                (inputs / filename).write_text(">protein\nMPEPTIDE\n", encoding="utf-8")
+            (inputs / ".hidden.faa").write_text(">hidden\nMPEPTIDE\n", encoding="utf-8")
+            output = root / "proteomes"
+
+            stats = normalize_and_concat_proteomes(str(inputs), str(output))
+
+            self.assertEqual(stats["genomes"], 3)
+            self.assertEqual(stats["records"], 3)
+            for genome in ("sample_a", "sample_b", "sample_c"):
+                self.assertIn(f">{genome}|", output.read_text(encoding="utf-8"))
+
+    def test_normalization_rejects_colliding_sanitized_filenames_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "Genome.faa").write_text(">p1\nMKT\n")
+            (tmp / "Genome extra.faa").write_text(">p2\nMKT\n")
+            out_fasta = tmp / "proteomes"
+            map_path = tmp / "map.tsv"
+
+            with self.assertRaisesRegex(ValueError, "duplicate genome ID 'Genome'"):
+                normalize_and_concat_proteomes(
+                    str(tmp),
+                    str(out_fasta),
+                    str(map_path),
+                )
+
+            self.assertFalse(out_fasta.exists())
+            self.assertFalse(map_path.exists())
 
 
 if __name__ == "__main__":

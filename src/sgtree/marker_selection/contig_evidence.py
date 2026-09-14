@@ -1,8 +1,9 @@
+"""Evaluate gene-level evidence for candidate contaminant marker genes."""
+
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
-
 
 MIN_INFORMATIVE_GENES = 3
 MIN_AGREEMENT_NUMERATOR = 2
@@ -17,10 +18,33 @@ def _clean_id(value: object) -> str | None:
     return cleaned or None
 
 
+def _collect_informative_votes(
+    votes: Iterable[Mapping[str, object]],
+) -> tuple[list[tuple[str, str]], int, int]:
+    informative: list[tuple[str, str]] = []
+    seen_gene_ids: set[str] = set()
+    invalid_count = 0
+    duplicate_count = 0
+    for vote in votes:
+        if vote.get("informative") is not True:
+            continue
+        gene_id = _clean_id(vote.get("gene_id"))
+        assigned_clade = _clean_id(vote.get("assigned_clade"))
+        if gene_id is None or assigned_clade is None:
+            invalid_count += 1
+            continue
+        if gene_id in seen_gene_ids:
+            duplicate_count += 1
+            continue
+        seen_gene_ids.add(gene_id)
+        informative.append((gene_id, assigned_clade))
+    return informative, invalid_count, duplicate_count
+
+
 def contig_gene_vote_gate(
     votes: Iterable[Mapping[str, object]],
     proposed_clade: str | None,
-) -> dict:
+) -> dict[str, object]:
     """Test whether non-marker genes support the marker's attachment clade.
 
     Each informative vote must provide a distinct ``gene_id`` and a non-empty
@@ -28,42 +52,22 @@ def contig_gene_vote_gate(
     proposed clade. The function only scores evidence; it does not remove a marker.
     """
     proposed = _clean_id(proposed_clade)
-    informative: list[tuple[str, str]] = []
-    seen_gene_ids: set[str] = set()
-    invalid_gene_vote_count = 0
-    duplicate_gene_vote_count = 0
-    for vote in votes:
-        if vote.get("informative") is not True:
-            continue
-        gene_id = _clean_id(vote.get("gene_id"))
-        assigned_clade = _clean_id(vote.get("assigned_clade"))
-        if gene_id is None or assigned_clade is None:
-            invalid_gene_vote_count += 1
-            continue
-        if gene_id in seen_gene_ids:
-            duplicate_gene_vote_count += 1
-            continue
-        seen_gene_ids.add(gene_id)
-        informative.append((gene_id, assigned_clade))
+    informative, invalid_gene_vote_count, duplicate_gene_vote_count = (
+        _collect_informative_votes(votes)
+    )
 
     clades = [assigned_clade for _gene_id, assigned_clade in informative]
     counts = Counter(clades)
     top_clade = (
-        min(counts, key=lambda clade: (-counts[clade], clade))
-        if counts
-        else None
+        min(counts, key=lambda clade: (-counts[clade], clade)) if counts else None
     )
     agreement_count = counts.get(proposed, 0) if proposed is not None else 0
     informative_count = len(informative)
     agreement_fraction = (
-        agreement_count / informative_count
-        if informative_count
-        else 0.0
+        agreement_count / informative_count if informative_count else 0.0
     )
     conflicting_counts = {
-        clade: count
-        for clade, count in counts.items()
-        if clade != proposed
+        clade: count for clade, count in counts.items() if clade != proposed
     }
     strongest_conflict_clade = (
         min(
@@ -79,9 +83,7 @@ def contig_gene_vote_gate(
         else 0
     )
     strongest_conflict_fraction = (
-        strongest_conflict_count / informative_count
-        if informative_count
-        else 0.0
+        strongest_conflict_count / informative_count if informative_count else 0.0
     )
     strong_conflict_count = (
         strongest_conflict_count

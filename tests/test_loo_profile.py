@@ -1,12 +1,8 @@
 import unittest
-import warnings
-
-warnings.simplefilter("ignore", SyntaxWarning)
-
-from ete3 import Tree
 
 from sgtree.marker_selection import loo_profile
 
+Tree = loo_profile.Tree
 
 TAXA = ("G", "A", "B", "C", "D", "E", "F", "H")
 
@@ -68,14 +64,14 @@ def _without_genome(tree: Tree, genome: str) -> Tree:
 
 def _row(rows: list[dict], marker: str, genome: str = "G") -> dict:
     return next(
-        row
-        for row in rows
-        if row["marker_name"] == marker and row["genome"] == genome
+        row for row in rows if row["marker_name"] == marker and row["genome"] == genome
     )
 
 
 def _nearest_genomes(tree: Tree, genome: str, count: int) -> list[str]:
-    target = next(leaf for leaf in tree.iter_leaves() if leaf.name.split("|", 1)[0] == genome)
+    target = next(
+        leaf for leaf in tree.iter_leaves() if leaf.name.split("|", 1)[0] == genome
+    )
     neighbors = sorted(
         (
             float(target.get_distance(other)),
@@ -122,9 +118,15 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
         self.assertEqual(result["loo_marker_rank"], 1)
         self.assertEqual(result["loo_attachment_taxa"], ["F"])
         self.assertEqual(result["loo_attachment_clade"], "F")
-        self.assertGreaterEqual(result["loo_marker_margin"], loo_profile.MIN_MARKER_MARGIN)
+        self.assertGreaterEqual(
+            result["loo_marker_margin"], loo_profile.MIN_MARKER_MARGIN
+        )
         self.assertEqual(
-            {row["genome"] for row in target_rows if row["loo_class"] == "discordant_marker"},
+            {
+                row["genome"]
+                for row in target_rows
+                if row["loo_class"] == "discordant_marker"
+            },
             {"G"},
         )
 
@@ -145,7 +147,9 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
         result = _row(target_rows, "M0")
 
         self.assertGreater(result["loo_target_discordance"], 0.0)
-        self.assertFalse(any(row["loo_class"] == "discordant_marker" for row in target_rows))
+        self.assertFalse(
+            any(row["loo_class"] == "discordant_marker" for row in target_rows)
+        )
         self.assertIn(
             "marker_rank_not_unique",
             {row["loo_abstention_reason"] for row in target_rows},
@@ -161,7 +165,9 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
             if row["marker_name"] == "M0"
         ]
 
-        self.assertFalse(any(row["loo_class"] == "discordant_marker" for row in target_rows))
+        self.assertFalse(
+            any(row["loo_class"] == "discordant_marker" for row in target_rows)
+        )
         self.assertTrue(
             all(
                 row["loo_abstention_reason"] == "discordance_below_effect_floor"
@@ -327,13 +333,11 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
 
     def test_complementary_support_merge_is_conservative_and_order_independent(self):
         left_first = Tree(
-            "((A|c|a:1,B|c|b:1)0.6999999999998:1,"
-            "(G|c|g:1,C|c|c:1)0.7000000000002:1);",
+            "((A|c|a:1,B|c|b:1)0.6999999999998:1,(G|c|g:1,C|c|c:1)0.7000000000002:1);",
             format=1,
         )
         right_first = Tree(
-            "((G|c|g:1,C|c|c:1)0.7000000000002:1,"
-            "(A|c|a:1,B|c|b:1)0.6999999999998:1);",
+            "((G|c|g:1,C|c|c:1)0.7000000000002:1,(A|c|a:1,B|c|b:1)0.6999999999998:1);",
             format=1,
         )
 
@@ -477,7 +481,9 @@ class LeaveOneMarkerOutProfileTests(unittest.TestCase):
             {row["loo_abstention_reason"] for row in reference_rows},
             {"reference_target"},
         )
-        self.assertTrue(all(row["loo_decision"] == "kept_report_only" for row in reference_rows))
+        self.assertTrue(
+            all(row["loo_decision"] == "kept_report_only" for row in reference_rows)
+        )
 
     def test_output_order_and_fields_are_deterministic(self):
         ascending = {f"M{index}": _base_tree(f"M{index}") for index in range(6)}

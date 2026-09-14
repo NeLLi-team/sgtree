@@ -1,13 +1,14 @@
 import io
 import tempfile
-import tomllib
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import tomllib
+
 import sgtree
-from sgtree._version import DISPLAY_VERSION
 from sgtree import sgtree_logging
+from sgtree._version import DISPLAY_VERSION
 from sgtree.config import Config
 
 
@@ -15,6 +16,7 @@ def _make_config(tmp: Path) -> Config:
     genomes = tmp / "genomes"
     genomes.mkdir()
     (genomes / "GenomeA.faa").write_text(">proteinA\nMKT\n")
+    (genomes / ".metadata").write_text("ignored sidecar\n")
     model = tmp / "models.hmm"
     model.write_text("NAME  marker_one\nNAME  marker_two\n")
     outdir = tmp / "run"
@@ -69,6 +71,7 @@ class VersionBannerTests(unittest.TestCase):
             text = output.getvalue()
             self.assertIn(DISPLAY_VERSION, text)
             self.assertNotIn("Sg_Tree v.2", text)
+            self.assertIn("1 genomes", text)
 
     def test_logfile_header_uses_package_display_version(self):
         with tempfile.TemporaryDirectory() as tmpdir:

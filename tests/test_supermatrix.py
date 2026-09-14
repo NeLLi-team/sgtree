@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+from Bio import SeqIO
 
 from sgtree.supermatrix import (
     _fill_nan_gaps,
@@ -38,16 +39,47 @@ class SupermatrixTests(unittest.TestCase):
                     str(tmp / "concat.faa"),
                 )
 
+    def test_build_supermatrix_rejects_unequal_alignment_widths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            trimmed_dir = tmp / "trimmed"
+            trimmed_dir.mkdir()
+            marker_path = trimmed_dir / "M1.faa"
+            marker_path.write_text(">GenomeA|p1\nAAAA\n>GenomeB|p1\nCCCCC\n")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"unequal lengths.*M1\.faa.*\[4, 5\]",
+            ):
+                build_supermatrix(
+                    str(trimmed_dir),
+                    str(tmp / "out"),
+                    str(tmp / "table.csv"),
+                    str(tmp / "concat.faa"),
+                )
+
+    def test_trim_alignment_fallback_rejects_unequal_widths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_path = tmp / "input.faa"
+            output_path = tmp / "output.faa"
+            input_path.write_text(">A\nAAAA\n>B\nCCCCC\n")
+
+            with self.assertRaisesRegex(ValueError, r"unequal lengths.*\[4, 5\]"):
+                _trim_alignment_fallback(str(input_path), str(output_path))
+
+            self.assertFalse(output_path.exists())
+
     def test_trim_alignment_fallback_drops_all_gap_columns(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             input_path = tmp / "input.faa"
             output_path = tmp / "output.faa"
-            input_path.write_text(
-                ">A\nA-\n>B\n--\n>C\nG-\n"
-            )
+            input_path.write_text(">A\nA-\n>B\n--\n>C\nG-\n")
 
-            _trim_alignment_fallback(str(input_path), str(output_path), gap_threshold=0.1)
+            _trim_alignment_fallback(
+                str(input_path), str(output_path), gap_threshold=0.1
+            )
 
             self.assertEqual(
                 output_path.read_text(),
@@ -86,8 +118,6 @@ class SupermatrixTests(unittest.TestCase):
         # 3 genomes x 3 markers with missing cells. Pins: table CSV columns,
         # concat FASTA record ids and per-record length, X-gap fill widths per
         # marker, column order (alphabetical after SeqID).
-        from Bio import SeqIO
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             trimmed_dir = tmp / "trimmed"
@@ -121,7 +151,7 @@ class SupermatrixTests(unittest.TestCase):
             self.assertEqual(cell("g2", "M2.faa"), "X" * 5)
             self.assertEqual(cell("g1", "M3.faa"), "X" * 2)
 
-            with open(concat_path) as handle:
+            with Path(concat_path).open(encoding="utf-8") as handle:
                 records = list(SeqIO.parse(handle, "fasta"))
             self.assertEqual(sorted(r.id for r in records), ["g1", "g2", "g3"])
             # Each genome's supermatrix row has width 4 + 5 + 2 = 11.
@@ -153,14 +183,17 @@ class SupermatrixTests(unittest.TestCase):
             tmp = Path(tmpdir)
             input_path = tmp / "input.faa"
             output_path = tmp / "output.faa"
-            input_path.write_text(
-                ">A\nA-\n>B\n--\n>C\nG-\n"
-            )
+            input_path.write_text(">A\nA-\n>B\n--\n>C\nG-\n")
 
             printed = io.StringIO()
-            with patch("sgtree.supermatrix.subprocess.run", side_effect=FileNotFoundError()):
-                with contextlib.redirect_stdout(printed):
-                    _trimal_simple_worker((str(input_path), str(output_path)))
+            with (
+                patch(
+                    "sgtree.supermatrix.subprocess.run",
+                    side_effect=FileNotFoundError(),
+                ),
+                contextlib.redirect_stdout(printed),
+            ):
+                _trimal_simple_worker((str(input_path), str(output_path)))
 
             self.assertEqual(
                 output_path.read_text(),

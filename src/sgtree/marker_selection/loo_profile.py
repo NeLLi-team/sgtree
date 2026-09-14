@@ -1,14 +1,16 @@
+"""Score marker-tree leaves against leave-one-out phylogenetic profiles."""
+
 from __future__ import annotations
 
 import math
 import statistics
 from collections.abc import Mapping
 from itertools import combinations
+from typing import TypedDict
 
 from ete3 import Tree
 
 from sgtree.id_schema import parse_sequence_id
-
 
 MIN_VOTERS = 5
 MIN_COORDINATES = 6
@@ -18,6 +20,17 @@ MIN_MARKER_MARGIN = 0.02
 MAX_EXACT_VOTERS = 12
 REVIEW_ROBUST_Z = 3.0
 TOLERANCE = 1e-12
+
+
+class _ProfileStatistics(TypedDict):
+    loo_target_discordance: float
+    loo_voter_center: float
+    loo_voter_mad: float
+    loo_voter_upper: float
+    loo_conflict_margin: float
+    loo_robust_z: float | None
+    loo_score: float
+    loo_conflict_beyond_dispersion: bool
 
 
 def _genome_id(leaf_name: str) -> str:
@@ -33,7 +46,9 @@ def _canonical_split(
     return sides[0], sides[1]
 
 
-def _explicit_split_supports(tree: Tree) -> dict[
+def _explicit_split_supports(
+    tree: Tree,
+) -> dict[
     tuple[tuple[str, ...], tuple[str, ...]],
     float | None,
 ]:
@@ -69,9 +84,7 @@ def _explicit_split_supports(tree: Tree) -> dict[
     merged: dict[tuple[tuple[str, ...], tuple[str, ...]], float | None] = {}
     for key, values in observations.items():
         numeric = [value for value in values if value is not None]
-        if key in invalid or not numeric:
-            merged[key] = None
-        elif max(numeric) - min(numeric) > TOLERANCE:
+        if key in invalid or not numeric or max(numeric) - min(numeric) > TOLERANCE:
             merged[key] = None
         else:
             merged[key] = min(numeric)
@@ -108,10 +121,7 @@ def _prepare_tree(tree: Tree) -> dict:
     }
     distances: dict[tuple[str, str], float] = {}
     if valid and not duplicate_genomes:
-        node_by_genome = {
-            _genome_id(str(leaf.name)): leaf
-            for leaf in leaves
-        }
+        node_by_genome = {_genome_id(str(leaf.name)): leaf for leaf in leaves}
         for left, right in combinations(sorted(node_by_genome), 2):
             distance = float(node_by_genome[left].get_distance(node_by_genome[right]))
             if not math.isfinite(distance) or distance < 0.0:
@@ -166,7 +176,9 @@ def _target_attachment_evidence(
     distinct_sides = {tuple(sorted(side)) for side, _key in minimal}
     support_sides = []
     for side in sorted(distinct_sides, key=lambda item: (len(item), item)):
-        key = next(key for candidate, key in minimal if tuple(sorted(candidate)) == side)
+        key = next(
+            key for candidate, key in minimal if tuple(sorted(candidate)) == side
+        )
         support_sides.append(
             {
                 "taxa": sorted(_genome_id(name) for name in side),
@@ -175,9 +187,7 @@ def _target_attachment_evidence(
         )
     attachment_taxa = (
         sorted(
-            _genome_id(name)
-            for name in next(iter(distinct_sides))
-            if name != leaf_name
+            _genome_id(name) for name in next(iter(distinct_sides)) if name != leaf_name
         )
         if len(distinct_sides) == 1
         else []
@@ -214,13 +224,12 @@ def _normalized_profile(
     total = sum(distances.values())
     if not math.isfinite(total) or total <= 0.0:
         return None
-    return {
-        coordinate: distances[coordinate] / total
-        for coordinate in coordinates
-    }
+    return {coordinate: distances[coordinate] / total for coordinate in coordinates}
 
 
-def _consensus(profiles: list[dict[str, float]], coordinates: list[str]) -> dict[str, float] | None:
+def _consensus(
+    profiles: list[dict[str, float]], coordinates: list[str]
+) -> dict[str, float] | None:
     values = {
         coordinate: statistics.median(profile[coordinate] for profile in profiles)
         for coordinate in coordinates
@@ -228,10 +237,7 @@ def _consensus(profiles: list[dict[str, float]], coordinates: list[str]) -> dict
     total = sum(values.values())
     if not math.isfinite(total) or total <= 0.0:
         return None
-    return {
-        coordinate: values[coordinate] / total
-        for coordinate in coordinates
-    }
+    return {coordinate: values[coordinate] / total for coordinate in coordinates}
 
 
 def _total_variation(
@@ -277,7 +283,9 @@ def _base_row(marker_name: str, leaf_name: str) -> dict:
     }
 
 
-def _shared_coordinates(target: dict, voters: list[tuple[str, dict]], genome: str) -> list[str]:
+def _shared_coordinates(
+    target: dict, voters: list[tuple[str, dict]], genome: str
+) -> list[str]:
     coordinates = set(target["taxa"])
     for _voter_name, voter in voters:
         coordinates &= voter["taxa"]
@@ -347,9 +355,7 @@ def _apply_within_marker_gate(rows: list[dict]) -> None:
             row["loo_marker_rank"] = rank
         top = ranked[0]
         runner_up_score = (
-            float(ranked[1]["loo_target_discordance"])
-            if len(ranked) > 1
-            else 0.0
+            float(ranked[1]["loo_target_discordance"]) if len(ranked) > 1 else 0.0
         )
         top["loo_marker_margin"] = (
             float(top["loo_target_discordance"]) - runner_up_score
@@ -368,6 +374,168 @@ def _apply_within_marker_gate(rows: list[dict]) -> None:
                 row["loo_abstention_reason"] = "marker_rank_not_unique"
 
 
+def _target_abstention_reason(
+    target: dict,
+    genome: str,
+    excluded_target_genomes: set[str],
+) -> str | None:
+    if genome in excluded_target_genomes:
+        return "reference_target"
+    if genome in target["duplicate_genomes"]:
+        return "target_not_single_copy"
+    if not target["valid"] or target["duplicate_genomes"]:
+        return "invalid_target_tree"
+    return None
+
+
+def _eligible_voters(
+    prepared: dict[str, dict],
+    marker_name: str,
+    target: dict,
+    genome: str,
+) -> list[tuple[str, dict]]:
+    voters: list[tuple[str, dict]] = []
+    for voter_name in sorted(prepared):
+        if voter_name == marker_name:
+            continue
+        voter = prepared[voter_name]
+        if not voter["valid"] or voter["duplicate_genomes"]:
+            continue
+        if genome not in voter["leaf_by_genome"]:
+            continue
+        shared = (target["taxa"] & voter["taxa"]) - {genome}
+        if len(shared) >= MIN_COORDINATES:
+            voters.append((voter_name, voter))
+    return voters
+
+
+def _profile_statistics(
+    target: dict,
+    voters: list[tuple[str, dict]],
+    genome: str,
+    coordinates: list[str],
+) -> _ProfileStatistics | None:
+    target_profile = _normalized_profile(target, genome, coordinates)
+    voter_profiles = [
+        _normalized_profile(voter, genome, coordinates) for _voter_name, voter in voters
+    ]
+    if target_profile is None or any(profile is None for profile in voter_profiles):
+        return None
+
+    complete_voter_profiles = [
+        profile for profile in voter_profiles if profile is not None
+    ]
+    voter_consensus = _consensus(complete_voter_profiles, coordinates)
+    if voter_consensus is None:
+        return None
+
+    target_discordance = _total_variation(
+        target_profile,
+        voter_consensus,
+        coordinates,
+    )
+    voter_discordances: list[float] = []
+    for index, voter_profile in enumerate(complete_voter_profiles):
+        leave_one_out = (
+            complete_voter_profiles[:index] + complete_voter_profiles[index + 1 :]
+        )
+        consensus = _consensus(leave_one_out, coordinates)
+        if consensus is None:
+            return None
+        voter_discordances.append(
+            _total_variation(voter_profile, consensus, coordinates)
+        )
+    if not voter_discordances:
+        return None
+
+    center = statistics.median(voter_discordances)
+    mad = statistics.median(abs(value - center) for value in voter_discordances)
+    upper = max(*voter_discordances, center + (3.0 * 1.4826 * mad))
+    beyond_dispersion = target_discordance > upper + TOLERANCE
+    robust_z = (target_discordance - center) / (1.4826 * mad) if mad > 0 else None
+    return {
+        "loo_target_discordance": target_discordance,
+        "loo_voter_center": center,
+        "loo_voter_mad": mad,
+        "loo_voter_upper": upper,
+        "loo_conflict_margin": target_discordance - upper,
+        "loo_robust_z": robust_z,
+        "loo_score": target_discordance,
+        "loo_conflict_beyond_dispersion": beyond_dispersion,
+    }
+
+
+def _classify_profile(row: dict, statistics_: _ProfileStatistics) -> None:
+    support = row["loo_target_support"]
+    target_discordance = float(statistics_["loo_target_discordance"])
+    center = float(statistics_["loo_voter_center"])
+    beyond_dispersion = bool(statistics_["loo_conflict_beyond_dispersion"])
+    if support is None:
+        row["loo_abstention_reason"] = "missing_target_support"
+    elif support < MIN_TARGET_SUPPORT:
+        row["loo_abstention_reason"] = "target_support_below_threshold"
+    elif target_discordance <= center + TOLERANCE:
+        row["loo_class"] = "clean"
+    elif beyond_dispersion:
+        row["loo_class"] = "discordant_marker"
+    else:
+        row["loo_abstention_reason"] = "within_voter_dispersion"
+
+
+def _score_leaf_profile(
+    marker_name: str,
+    leaf_name: str,
+    target: dict,
+    prepared: dict[str, dict],
+    excluded_target_genomes: set[str],
+) -> dict:
+    row = _base_row(marker_name, leaf_name)
+    genome = row["genome"]
+    abstention_reason = _target_abstention_reason(
+        target,
+        genome,
+        excluded_target_genomes,
+    )
+    if abstention_reason is not None:
+        row["loo_abstention_reason"] = abstention_reason
+        return row
+
+    support, support_sides, attachment_taxa = _target_attachment_evidence(
+        target,
+        leaf_name,
+    )
+    row["loo_target_support"] = support
+    row["loo_target_support_sides"] = support_sides
+    row["loo_attachment_taxa"] = attachment_taxa
+    row["loo_attachment_clade"] = ",".join(attachment_taxa) or None
+
+    voters = _eligible_voters(prepared, marker_name, target, genome)
+    row["loo_voter_count"] = len(voters)
+    row["loo_voter_markers"] = [name for name, _voter in voters]
+    if len(voters) < MIN_VOTERS:
+        row["loo_abstention_reason"] = "insufficient_voters"
+        return row
+
+    voters, coordinates, search_mode = _select_voters(target, voters, genome)
+    row["loo_voter_count"] = len(voters)
+    row["loo_voter_markers"] = [name for name, _voter in voters]
+    row["loo_voter_search_mode"] = search_mode
+    row["loo_coordinate_count"] = len(coordinates)
+    row["loo_coordinate_taxa"] = coordinates
+    if len(coordinates) < MIN_COORDINATES:
+        row["loo_abstention_reason"] = "insufficient_coordinates"
+        return row
+
+    profile_statistics = _profile_statistics(target, voters, genome, coordinates)
+    if profile_statistics is None:
+        row["loo_abstention_reason"] = "invalid_patristic_profile"
+        return row
+
+    row.update(profile_statistics)
+    _classify_profile(row, profile_statistics)
+    return row
+
+
 def score_loo_profiles(
     marker_trees: Mapping[str, Tree],
     excluded_target_genomes: set[str] | None = None,
@@ -380,140 +548,21 @@ def score_loo_profiles(
     excluded_target_genomes = excluded_target_genomes or set()
     prepared = {
         str(marker_name): _prepare_tree(tree)
-        for marker_name, tree in sorted(marker_trees.items(), key=lambda item: str(item[0]))
+        for marker_name, tree in sorted(
+            marker_trees.items(), key=lambda item: str(item[0])
+        )
     }
-    rows: list[dict] = []
-
-    for marker_name in sorted(prepared):
-        target = prepared[marker_name]
-        for leaf_name in target["leaf_names"]:
-            row = _base_row(marker_name, leaf_name)
-            genome = row["genome"]
-            if genome in excluded_target_genomes:
-                row["loo_abstention_reason"] = "reference_target"
-                rows.append(row)
-                continue
-            if genome in target["duplicate_genomes"]:
-                row["loo_abstention_reason"] = "target_not_single_copy"
-                rows.append(row)
-                continue
-            if not target["valid"] or target["duplicate_genomes"]:
-                row["loo_abstention_reason"] = "invalid_target_tree"
-                rows.append(row)
-                continue
-
-            support, support_sides, attachment_taxa = _target_attachment_evidence(
-                target,
-                leaf_name,
-            )
-            row["loo_target_support"] = support
-            row["loo_target_support_sides"] = support_sides
-            row["loo_attachment_taxa"] = attachment_taxa
-            row["loo_attachment_clade"] = ",".join(attachment_taxa) or None
-            voters: list[tuple[str, dict]] = []
-            for voter_name in sorted(prepared):
-                if voter_name == marker_name:
-                    continue
-                voter = prepared[voter_name]
-                if not voter["valid"] or voter["duplicate_genomes"]:
-                    continue
-                if genome not in voter["leaf_by_genome"]:
-                    continue
-                shared = (target["taxa"] & voter["taxa"]) - {genome}
-                if len(shared) >= MIN_COORDINATES:
-                    voters.append((voter_name, voter))
-
-            if len(voters) < MIN_VOTERS:
-                row["loo_voter_count"] = len(voters)
-                row["loo_voter_markers"] = [name for name, _voter in voters]
-                row["loo_abstention_reason"] = "insufficient_voters"
-                rows.append(row)
-                continue
-
-            voters, coordinates, search_mode = _select_voters(target, voters, genome)
-            row["loo_voter_count"] = len(voters)
-            row["loo_voter_markers"] = [name for name, _voter in voters]
-            row["loo_voter_search_mode"] = search_mode
-            row["loo_coordinate_count"] = len(coordinates)
-            row["loo_coordinate_taxa"] = coordinates
-            if len(coordinates) < MIN_COORDINATES:
-                row["loo_abstention_reason"] = "insufficient_coordinates"
-                rows.append(row)
-                continue
-
-            target_profile = _normalized_profile(target, genome, coordinates)
-            voter_profiles = [
-                _normalized_profile(voter, genome, coordinates)
-                for _voter_name, voter in voters
-            ]
-            if target_profile is None or any(profile is None for profile in voter_profiles):
-                row["loo_abstention_reason"] = "invalid_patristic_profile"
-                rows.append(row)
-                continue
-            complete_voter_profiles = [
-                profile for profile in voter_profiles if profile is not None
-            ]
-            voter_consensus = _consensus(complete_voter_profiles, coordinates)
-            if voter_consensus is None:
-                row["loo_abstention_reason"] = "invalid_patristic_profile"
-                rows.append(row)
-                continue
-
-            target_discordance = _total_variation(
-                target_profile,
-                voter_consensus,
-                coordinates,
-            )
-            voter_discordances: list[float] = []
-            for index, voter_profile in enumerate(complete_voter_profiles):
-                leave_one_out = complete_voter_profiles[:index] + complete_voter_profiles[index + 1 :]
-                consensus = _consensus(leave_one_out, coordinates)
-                if consensus is None:
-                    voter_discordances = []
-                    break
-                voter_discordances.append(
-                    _total_variation(voter_profile, consensus, coordinates)
-                )
-            if not voter_discordances:
-                row["loo_abstention_reason"] = "invalid_patristic_profile"
-                rows.append(row)
-                continue
-
-            center = statistics.median(voter_discordances)
-            mad = statistics.median(abs(value - center) for value in voter_discordances)
-            upper = max(max(voter_discordances), center + (3.0 * 1.4826 * mad))
-            margin = target_discordance - upper
-            beyond_dispersion = target_discordance > upper + TOLERANCE
-            robust_z = (
-                (target_discordance - center) / (1.4826 * mad)
-                if mad > 0
-                else None
-            )
-            row.update(
-                {
-                    "loo_target_discordance": target_discordance,
-                    "loo_voter_center": center,
-                    "loo_voter_mad": mad,
-                    "loo_voter_upper": upper,
-                    "loo_conflict_margin": margin,
-                    "loo_robust_z": robust_z,
-                    "loo_score": target_discordance,
-                    "loo_conflict_beyond_dispersion": beyond_dispersion,
-                }
-            )
-
-            support = row["loo_target_support"]
-            if support is None:
-                row["loo_abstention_reason"] = "missing_target_support"
-            elif support < MIN_TARGET_SUPPORT:
-                row["loo_abstention_reason"] = "target_support_below_threshold"
-            elif target_discordance <= center + TOLERANCE:
-                row["loo_class"] = "clean"
-            elif beyond_dispersion:
-                row["loo_class"] = "discordant_marker"
-            else:
-                row["loo_abstention_reason"] = "within_voter_dispersion"
-            rows.append(row)
+    rows = [
+        _score_leaf_profile(
+            marker_name,
+            leaf_name,
+            prepared[marker_name],
+            prepared,
+            excluded_target_genomes,
+        )
+        for marker_name in sorted(prepared)
+        for leaf_name in prepared[marker_name]["leaf_names"]
+    ]
 
     _apply_within_marker_gate(rows)
     for row in rows:

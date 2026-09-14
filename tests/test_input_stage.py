@@ -5,17 +5,29 @@ import types
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 
 from sgtree.config import Config
 from sgtree.fasta_normalize import normalize_and_concat_proteomes
-from sgtree.input_stage import detect_input_format, gene_call_inputs, write_genome_manifest
+from sgtree.input_stage import (
+    detect_input_format,
+    gene_call_inputs,
+    write_genome_manifest,
+)
 from sgtree.search import build_working_df
 
 
 class _FakeGene:
-    def __init__(self, protein: str, begin: int = 1, end: int = 12, strand: int = 1, translation_table: int = 11):
+    def __init__(
+        self,
+        protein: str,
+        begin: int = 1,
+        end: int = 12,
+        strand: int = 1,
+        translation_table: int = 11,
+    ):
         self._protein = protein
         self.begin = begin
         self.end = end
@@ -48,6 +60,13 @@ class InputStageTests(unittest.TestCase):
             self.assertEqual(detect_input_format(str(faa_dir)), "faa")
             self.assertEqual(detect_input_format(str(fna_dir)), "fna")
 
+    def test_detect_input_format_rejects_empty_directory(self):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self.assertRaisesRegex(ValueError, "No input files found"),
+        ):
+            detect_input_format(tmpdir)
+
     def test_normalize_and_concat_proteomes_infers_contig_from_protein_suffix(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -59,7 +78,9 @@ class InputStageTests(unittest.TestCase):
             out_fasta = tmp / "proteomes"
             map_path = tmp / "map.tsv"
 
-            stats = normalize_and_concat_proteomes(str(faa_dir), str(out_fasta), str(map_path))
+            stats = normalize_and_concat_proteomes(
+                str(faa_dir), str(out_fasta), str(map_path)
+            )
 
             self.assertEqual(stats["genomes"], 1)
             self.assertEqual(stats["contigs"], 2)
@@ -78,12 +99,17 @@ class InputStageTests(unittest.TestCase):
             fna_dir.mkdir()
             (fna_dir / "GenomeA.fna").write_text(">contigAlpha\nATGAAATTTAAATAG\n")
 
-            fake_module = types.SimpleNamespace(GeneFinder=_FakeGeneFinder)
+            fake_module = cast(
+                types.ModuleType,
+                types.SimpleNamespace(GeneFinder=_FakeGeneFinder),
+            )
             original = sys.modules.get("pyrodigal")
             sys.modules["pyrodigal"] = fake_module
             try:
                 with redirect_stdout(io.StringIO()):
-                    stats = gene_call_inputs(str(fna_dir), str(out_dir), str(tmp / "gene_calls.tsv"))
+                    stats = gene_call_inputs(
+                        str(fna_dir), str(out_dir), str(tmp / "gene_calls.tsv")
+                    )
             finally:
                 if original is None:
                     del sys.modules["pyrodigal"]
@@ -95,6 +121,67 @@ class InputStageTests(unittest.TestCase):
             self.assertIn(">GenomeA|contigAlpha|gene_000001", called)
             self.assertIn(">GenomeA|contigAlpha|gene_000002", called)
 
+    def test_gene_call_rejects_colliding_sanitized_filenames_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fna_dir = tmp / "fna"
+            out_dir = tmp / "called"
+            map_path = tmp / "gene_calls.tsv"
+            fna_dir.mkdir()
+            (fna_dir / "Genome.fna").write_text(">c1\nATGAAATTTAAATAG\n")
+            (fna_dir / "Genome extra.fna").write_text(">c2\nATGAAATTTAAATAG\n")
+
+            fake_module = cast(
+                types.ModuleType,
+                types.SimpleNamespace(GeneFinder=_FakeGeneFinder),
+            )
+            original = sys.modules.get("pyrodigal")
+            sys.modules["pyrodigal"] = fake_module
+            try:
+                with self.assertRaisesRegex(ValueError, "duplicate genome ID 'Genome'"):
+                    gene_call_inputs(str(fna_dir), str(out_dir), str(map_path))
+            finally:
+                if original is None:
+                    del sys.modules["pyrodigal"]
+                else:
+                    sys.modules["pyrodigal"] = original
+
+            self.assertFalse(out_dir.exists())
+            self.assertFalse(map_path.exists())
+
+    def test_gene_call_rejects_duplicate_normalized_contigs_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fna_dir = tmp / "fna"
+            out_dir = tmp / "called"
+            map_path = tmp / "gene_calls.tsv"
+            fna_dir.mkdir()
+            (fna_dir / "Genome.fna").write_text(
+                ">contig first description\nATGAAATTTAAATAG\n"
+                ">contig second description\nATGAAATTTAAATAG\n"
+            )
+
+            fake_module = cast(
+                types.ModuleType,
+                types.SimpleNamespace(GeneFinder=_FakeGeneFinder),
+            )
+            original = sys.modules.get("pyrodigal")
+            sys.modules["pyrodigal"] = fake_module
+            try:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Duplicate normalized contig ID 'contig'",
+                ):
+                    gene_call_inputs(str(fna_dir), str(out_dir), str(map_path))
+            finally:
+                if original is None:
+                    del sys.modules["pyrodigal"]
+                else:
+                    sys.modules["pyrodigal"] = original
+
+            self.assertFalse(out_dir.exists())
+            self.assertFalse(map_path.exists())
+
     def test_write_genome_manifest_records_fna_paths_and_sizes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -102,7 +189,9 @@ class InputStageTests(unittest.TestCase):
             staged = tmp / "staged"
             fna_dir.mkdir()
             staged.mkdir()
-            (fna_dir / "GenomeA.fna").write_text(">contigAlpha\nATGAAATTTAAATAG\n>contigBeta\nATGAAATTT\n")
+            (fna_dir / "GenomeA.fna").write_text(
+                ">contigAlpha\nATGAAATTTAAATAG\n>contigBeta\nATGAAATTT\n"
+            )
             manifest = tmp / "manifest.tsv"
 
             write_genome_manifest(

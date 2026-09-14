@@ -3,12 +3,18 @@ import unittest
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
+
+import pandas as pd
 
 warnings.simplefilter("ignore", SyntaxWarning)
 
-import pandas as pd
-from sgtree import input_stage, marker_selection
+from sgtree import (  # noqa: E402  # Suppress ETE SyntaxWarnings before import.
+    input_stage,
+    marker_selection,
+)
+from sgtree.config import Config  # noqa: E402  # Keep the ETE warning filter active.
 
 Tree = marker_selection.Tree
 
@@ -22,7 +28,9 @@ class MarkerSelectionTests(unittest.TestCase):
                 proposal = {
                     "marker_name": f"Marker{marker_index:02d}",
                     "genome": f"Genome{genome_index:02d}",
-                    "leaf_name": f"Genome{genome_index:02d}|contig1|gene{marker_index:02d}",
+                    "leaf_name": (
+                        f"Genome{genome_index:02d}|contig1|gene{marker_index:02d}"
+                    ),
                     "contig_id": "contig1",
                     "taxa_count": genome_count,
                 }
@@ -232,12 +240,12 @@ class MarkerSelectionTests(unittest.TestCase):
                 )
             )
 
-            cached_path = outdir / "protTrees" / "no_duplicates" / "out" / "_no_dups_MarkerX_.nw"
+            cached_path = (
+                outdir / "protTrees" / "no_duplicates" / "out" / "_no_dups_MarkerX_.nw"
+            )
             cached_labels = Tree(str(cached_path), format=1)
             internal_labels = {
-                node.name
-                for node in cached_labels.traverse()
-                if not node.is_leaf()
+                node.name for node in cached_labels.traverse() if not node.is_leaf()
             }
             self.assertTrue({"", "1.0", "0.73"}.issubset(internal_labels))
 
@@ -298,6 +306,7 @@ class MarkerSelectionTests(unittest.TestCase):
             )
 
         self.assertIsNotNone(chosen)
+        assert chosen is not None
         self.assertEqual(chosen["leaf_name"], "A")
 
     def test_choose_singleton_prune_composite_abstains_on_low_signal(self):
@@ -377,9 +386,12 @@ class MarkerSelectionTests(unittest.TestCase):
 
         scorer.assert_not_called()
         self.assertIsNotNone(chosen)
+        assert chosen is not None
         self.assertEqual(chosen["leaf_name"], "A")
         self.assertGreater(chosen["score"], 0.0)
-        self.assertEqual([set(candidate) for candidate in scored_candidates], original_keys)
+        self.assertEqual(
+            [set(candidate) for candidate in scored_candidates], original_keys
+        )
         self.assertNotIn("recipient_rank_score", scored_candidates[0])
 
     def test_gcp_fallback_uses_recipient_consensus_ranking_for_small_panels(self):
@@ -413,15 +425,22 @@ class MarkerSelectionTests(unittest.TestCase):
             )
 
         by_leaf = {proposal["leaf_name"]: proposal for proposal in classified}
-        self.assertIn("Using recipient_consensus classification.", "\n".join(logs.output))
+        self.assertIn(
+            "Using recipient_consensus classification.", "\n".join(logs.output)
+        )
         self.assertEqual(
             by_leaf["Genome1|contig1|gene1"]["singleton_class"],
             "contamination_candidate",
         )
         self.assertEqual(by_leaf["Genome2|contig1|gene1"]["singleton_class"], "clean")
-        self.assertGreater(by_leaf["Genome1|contig1|gene1"]["score"], by_leaf["Genome2|contig1|gene1"]["score"])
+        self.assertGreater(
+            by_leaf["Genome1|contig1|gene1"]["score"],
+            by_leaf["Genome2|contig1|gene1"]["score"],
+        )
 
-    def test_gcp_uses_recipient_consensus_fallback_for_three_and_four_marker_panels(self):
+    def test_gcp_uses_recipient_consensus_fallback_for_three_and_four_marker_panels(
+        self,
+    ):
         for marker_count in (3, 4):
             with self.subTest(marker_count=marker_count):
                 with self.assertLogs("sgtree", level="WARNING") as logs:
@@ -435,8 +454,13 @@ class MarkerSelectionTests(unittest.TestCase):
                     for proposal in classified
                     if proposal.get("singleton_class") == "contamination_candidate"
                 ]
-                self.assertIn("Using recipient_consensus classification.", "\n".join(logs.output))
-                self.assertEqual([proposal["leaf_name"] for proposal in hits], ["Genome00|contig1|gene00"])
+                self.assertIn(
+                    "Using recipient_consensus classification.", "\n".join(logs.output)
+                )
+                self.assertEqual(
+                    [proposal["leaf_name"] for proposal in hits],
+                    ["Genome00|contig1|gene00"],
+                )
                 self.assertNotIn("gcp_score", hits[0])
                 self.assertIn("recipient_rank_score", hits[0])
 
@@ -456,11 +480,18 @@ class MarkerSelectionTests(unittest.TestCase):
                     for proposal in classified
                     if proposal.get("singleton_class") == "contamination_candidate"
                 ]
-                self.assertEqual([proposal["leaf_name"] for proposal in hits], ["Genome00|contig1|gene00"])
+                self.assertEqual(
+                    [proposal["leaf_name"] for proposal in hits],
+                    ["Genome00|contig1|gene00"],
+                )
                 self.assertIn("gcp_score", hits[0])
-                self.assertGreaterEqual(hits[0]["gcp_score"], marker_selection.GCP_COMBINED_THRESHOLD)
+                self.assertGreaterEqual(
+                    hits[0]["gcp_score"], marker_selection.GCP_COMBINED_THRESHOLD
+                )
 
-    def test_choose_singleton_prune_neighbor_clade_accepts_local_outlier_without_positive_rf(self):
+    def test_neighbor_clade_accepts_local_outlier_without_positive_rf(
+        self,
+    ):
         species = Tree("((A,B),(C,(D,E)));")
         working = Tree("((A,B),(C,(D,E)));")
         candidate_a = Tree("(B,(C,(D,E)));")
@@ -514,6 +545,7 @@ class MarkerSelectionTests(unittest.TestCase):
             )
 
         self.assertIsNotNone(chosen)
+        assert chosen is not None
         self.assertEqual(chosen["leaf_name"], "A")
 
     def test_choose_singleton_prune_hybrid_requires_consistent_support(self):
@@ -565,6 +597,7 @@ class MarkerSelectionTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(chosen)
+        assert chosen is not None
         self.assertEqual(chosen["leaf_name"], "D")
         self.assertEqual(chosen["genome"], "D")
         self.assertGreater(chosen["score"], 0.0)
@@ -606,6 +639,62 @@ class MarkerSelectionTests(unittest.TestCase):
             {"MarkerA", "MarkerC"},
         )
 
+    def test_neighbor_ml_keeps_a_genomes_last_marker(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outdir = Path(tmpdir)
+            tree_dir = outdir / "protTrees" / "no_duplicates" / "out"
+            tree_dir.mkdir(parents=True)
+            tree_path = tree_dir / "_no_dups_MarkerA_.nw"
+            tree_path.write_text("(Genome1|c1|p1,Genome2|c1|p1);\n")
+            candidate = {
+                "marker_name": "MarkerA",
+                "leaf_name": "Genome1|c1|p1",
+                "genome": "Genome1",
+                "singleton_class": "contamination_candidate",
+                "score": 5.0,
+            }
+            result = {
+                "filepath": str(tree_path),
+                "marker_name": "MarkerA",
+                "mode": "neighbor_ml",
+                "rdist": 0.5,
+                "num_nei": 1,
+                "chosen": None,
+                "candidates": [candidate],
+            }
+            cfg = cast(
+                Config,
+                SimpleNamespace(
+                    outdir=str(outdir),
+                    num_nei=1,
+                    singles_min_rfdist=0.25,
+                    singles_mode="neighbor_ml",
+                    num_cpus=1,
+                    ref=None,
+                ),
+            )
+
+            with (
+                patch.object(marker_selection, "map_processed", return_value=[result]),
+                patch.object(
+                    marker_selection,
+                    "classify_singleton_proposals",
+                    return_value=[candidate],
+                ),
+                patch.object(
+                    marker_selection,
+                    "_write_singleton_result",
+                    return_value="kept",
+                ) as write_result,
+                patch.object(marker_selection, "_write_singleton_candidate_table"),
+            ):
+                marker_selection.remove_singles(
+                    cfg,
+                    species_tree_path=str(outdir / "species.nwk"),
+                )
+
+            self.assertEqual(write_result.call_args.kwargs["accepted_keys"], set())
+
     def test_singleton_proposals_from_results_neighbor_clade_keeps_all_candidates(self):
         results = [
             {
@@ -624,7 +713,10 @@ class MarkerSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in proposals},
+            {
+                (proposal["marker_name"], proposal["leaf_name"])
+                for proposal in proposals
+            },
             {
                 ("MarkerA", "Genome1|contig1|gene1"),
                 ("MarkerA", "Genome2|contig1|gene1"),
@@ -656,7 +748,10 @@ class MarkerSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in proposals},
+            {
+                (proposal["marker_name"], proposal["leaf_name"])
+                for proposal in proposals
+            },
             {("MarkerA", "Genome1|contig1|gene1")},
         )
         self.assertEqual(
@@ -664,7 +759,9 @@ class MarkerSelectionTests(unittest.TestCase):
             {("MarkerA", "Genome1|contig1|gene1")},
         )
 
-    def test_singleton_proposals_from_results_legacy_with_refs_keeps_all_query_candidates(self):
+    def test_legacy_results_keep_all_query_candidates_with_references(
+        self,
+    ):
         results = [
             {
                 "marker_name": "MarkerA",
@@ -702,7 +799,10 @@ class MarkerSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            {(proposal["marker_name"], proposal["leaf_name"]) for proposal in proposals},
+            {
+                (proposal["marker_name"], proposal["leaf_name"])
+                for proposal in proposals
+            },
             {
                 ("MarkerA", "Query1|contig1|gene1"),
                 ("MarkerA", "Query2|contig1|gene1"),
@@ -715,23 +815,37 @@ class MarkerSelectionTests(unittest.TestCase):
                 ("MarkerA", "Query2|contig1|gene1"),
             },
         )
-        scores = {proposal["leaf_name"]: float(proposal["score"]) for proposal in proposals}
-        self.assertGreater(scores["Query1|contig1|gene1"], scores["Query2|contig1|gene1"])
+        scores = {
+            proposal["leaf_name"]: float(proposal["score"]) for proposal in proposals
+        }
+        self.assertGreater(
+            scores["Query1|contig1|gene1"], scores["Query2|contig1|gene1"]
+        )
 
     def test_filter_reference_singleton_proposals_removes_reference_candidates(self):
         proposals = [
-            {"marker_name": "MarkerA", "leaf_name": "Ref1|contig1|gene1", "genome": "Ref1"},
-            {"marker_name": "MarkerA", "leaf_name": "Query1|contig1|gene1", "genome": "Query1"},
+            {
+                "marker_name": "MarkerA",
+                "leaf_name": "Ref1|contig1|gene1",
+                "genome": "Ref1",
+            },
+            {
+                "marker_name": "MarkerA",
+                "leaf_name": "Query1|contig1|gene1",
+                "genome": "Query1",
+            },
         ]
         proposal_keys = {
             ("MarkerA", "Ref1|contig1|gene1"),
             ("MarkerA", "Query1|contig1|gene1"),
         }
 
-        filtered, filtered_keys = marker_selection._filter_reference_singleton_proposals(
-            proposals,
-            proposal_keys,
-            reference_genomes={"Ref1"},
+        filtered, filtered_keys = (
+            marker_selection._filter_reference_singleton_proposals(
+                proposals,
+                proposal_keys,
+                reference_genomes={"Ref1"},
+            )
         )
 
         self.assertEqual(
@@ -740,7 +854,9 @@ class MarkerSelectionTests(unittest.TestCase):
         )
         self.assertEqual(filtered_keys, {("MarkerA", "Query1|contig1|gene1")})
 
-    def test_select_neighbor_ml_proposals_uses_genome_first_policy_for_small_panels(self):
+    def test_select_neighbor_ml_proposals_uses_genome_first_policy_for_small_panels(
+        self,
+    ):
         scored = [
             {
                 "marker_name": f"Marker{i:02d}",
@@ -754,10 +870,19 @@ class MarkerSelectionTests(unittest.TestCase):
             for i in range(40)
         ]
 
-        with patch.object(marker_selection, "score_neighbor_ml_proposals", return_value=scored):
-            proposals, accepted = marker_selection.select_neighbor_ml_proposals([{"marker_name": "unused"}])
+        with patch.object(
+            marker_selection, "score_neighbor_ml_proposals", return_value=scored
+        ):
+            proposals, accepted = marker_selection.select_neighbor_ml_proposals(
+                [{"marker_name": "unused"}]
+            )
 
-        self.assertTrue(all(proposal["policy_variant"] == "genome_first_score_v8" for proposal in proposals))
+        self.assertTrue(
+            all(
+                proposal["policy_variant"] == "genome_first_score_v8"
+                for proposal in proposals
+            )
+        )
         self.assertEqual(len(accepted), 40)
         self.assertEqual(
             {proposal["genome"] for proposal in accepted},
@@ -778,10 +903,19 @@ class MarkerSelectionTests(unittest.TestCase):
             for i in range(70)
         ]
 
-        with patch.object(marker_selection, "score_neighbor_ml_proposals", return_value=scored):
-            proposals, accepted = marker_selection.select_neighbor_ml_proposals([{"marker_name": "unused"}])
+        with patch.object(
+            marker_selection, "score_neighbor_ml_proposals", return_value=scored
+        ):
+            proposals, accepted = marker_selection.select_neighbor_ml_proposals(
+                [{"marker_name": "unused"}]
+            )
 
-        self.assertTrue(all(proposal["policy_variant"] == "shape_penalized_score_v4" for proposal in proposals))
+        self.assertTrue(
+            all(
+                proposal["policy_variant"] == "shape_penalized_score_v4"
+                for proposal in proposals
+            )
+        )
         self.assertEqual(len(accepted), 70)
         self.assertEqual(
             {proposal["genome"] for proposal in accepted},
@@ -802,8 +936,12 @@ class MarkerSelectionTests(unittest.TestCase):
             seen = {}
 
             def _fake_score_singleton_candidates(species_tree, working_tree, **_kwargs):
-                seen["species_leaves"] = sorted(leaf.name for leaf in species_tree.iter_leaves())
-                seen["working_leaves"] = sorted(leaf.name for leaf in working_tree.iter_leaves())
+                seen["species_leaves"] = sorted(
+                    leaf.name for leaf in species_tree.iter_leaves()
+                )
+                seen["working_leaves"] = sorted(
+                    leaf.name for leaf in working_tree.iter_leaves()
+                )
                 return []
 
             with patch.object(
@@ -840,9 +978,7 @@ class MarkerSelectionTests(unittest.TestCase):
             tmp = Path(tmpdir)
             marker_tree = tmp / "_no_dups_MarkerA_.nw"
             species_tree = tmp / "species.nwk"
-            marker_tree.write_text(
-                "(((A|ctg|a,B|ctg|b),C|ctg|c),(D|ctg|d,E|ctg|e));\n"
-            )
+            marker_tree.write_text("(((A|ctg|a,B|ctg|b),C|ctg|c),(D|ctg|d,E|ctg|e));\n")
             species_tree.write_text("(((A,B),C),(D,E));\n")
 
             with patch.object(
@@ -951,22 +1087,29 @@ class MarkerSelectionTests(unittest.TestCase):
                 "chosen": None,
                 "candidates": candidates,
             }
-            cfg = SimpleNamespace(
-                outdir=str(outdir),
-                num_nei=0,
-                singles_min_rfdist=0.25,
-                singles_mode="loo_profile",
-                num_cpus=1,
-                ref=None,
+            cfg = cast(
+                Config,
+                SimpleNamespace(
+                    outdir=str(outdir),
+                    num_nei=0,
+                    singles_min_rfdist=0.25,
+                    singles_mode="loo_profile",
+                    num_cpus=1,
+                    ref=None,
+                ),
             )
             tree_class = marker_selection.Tree
             score_impl = marker_selection.score_loo_profiles
             writer_impl = marker_selection._write_singleton_candidate_table
 
             with (
-                patch.object(marker_selection, "map_processed", return_value=[worker_result]),
+                patch.object(
+                    marker_selection, "map_processed", return_value=[worker_result]
+                ),
                 patch.object(marker_selection, "Tree", wraps=tree_class) as tree_loader,
-                patch.object(marker_selection, "score_loo_profiles", wraps=score_impl) as scorer,
+                patch.object(
+                    marker_selection, "score_loo_profiles", wraps=score_impl
+                ) as scorer,
                 patch.object(
                     marker_selection,
                     "_write_singleton_candidate_table",
@@ -993,7 +1136,9 @@ class MarkerSelectionTests(unittest.TestCase):
                     side_effect=AssertionError("RF/pruning path called"),
                 ),
             ):
-                marker_selection.remove_singles(cfg, species_tree_path=str(species_tree))
+                marker_selection.remove_singles(
+                    cfg, species_tree_path=str(species_tree)
+                )
 
             tree_loader.assert_called_once_with(str(cached_tree), format=1)
             scorer.assert_called_once()
@@ -1004,8 +1149,14 @@ class MarkerSelectionTests(unittest.TestCase):
             copied_tree = no_singles_dir / cached_tree.name
             self.assertEqual(copied_tree.read_bytes(), original_bytes)
             self.assertEqual(
-                sorted(leaf.name for leaf in tree_class(str(copied_tree), format=1).iter_leaves()),
-                sorted(leaf.name for leaf in tree_class(str(cached_tree), format=1).iter_leaves()),
+                sorted(
+                    leaf.name
+                    for leaf in tree_class(str(copied_tree), format=1).iter_leaves()
+                ),
+                sorted(
+                    leaf.name
+                    for leaf in tree_class(str(cached_tree), format=1).iter_leaves()
+                ),
             )
 
             table = pd.read_csv(
@@ -1018,7 +1169,9 @@ class MarkerSelectionTests(unittest.TestCase):
             self.assertEqual(set(table["decision"]), {"kept_report_only"})
             self.assertEqual(set(table["loo_decision"]), {"kept_report_only"})
             self.assertEqual(set(table["loo_class"]), {"ambiguous"})
-            self.assertEqual(set(table["loo_abstention_reason"]), {"insufficient_voters"})
+            self.assertEqual(
+                set(table["loo_abstention_reason"]), {"insufficient_voters"}
+            )
             self.assertEqual(set(table["loo_voter_count"]), {"0"})
             for column in (
                 "delta_rf",
@@ -1034,7 +1187,9 @@ class MarkerSelectionTests(unittest.TestCase):
             ):
                 self.assertEqual(set(table[column]), {""})
 
-    def test_classify_singleton_proposals_marks_hgt_when_contig_has_other_clean_markers(self):
+    def test_classify_singleton_proposals_marks_hgt_when_contig_has_other_clean_markers(
+        self,
+    ):
         proposals = [
             {
                 "marker_name": "MarkerA",
@@ -1051,7 +1206,9 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(classified[0]["singleton_class"], "hgt_candidate")
 
-    def test_classify_singleton_proposals_marks_contamination_when_all_markers_on_contig_are_suspect(self):
+    def test_contig_marker_set_marks_contamination_when_all_are_suspect(
+        self,
+    ):
         proposals = [
             {
                 "marker_name": "MarkerA",
@@ -1077,7 +1234,9 @@ class MarkerSelectionTests(unittest.TestCase):
             {"contamination_candidate"},
         )
 
-    def test_classify_singleton_proposals_contig_consensus_rescues_native_contig_contaminant(self):
+    def test_contig_consensus_rescues_native_contig_contaminant(
+        self,
+    ):
         proposals = [
             {
                 "marker_name": "MarkerA",
@@ -1091,7 +1250,9 @@ class MarkerSelectionTests(unittest.TestCase):
 
         classified = marker_selection.classify_singleton_proposals(
             proposals,
-            contig_marker_context={("Genome1", "contig1"): {"MarkerA", "MarkerB", "MarkerC"}},
+            contig_marker_context={
+                ("Genome1", "contig1"): {"MarkerA", "MarkerB", "MarkerC"}
+            },
             marker_neighbor_context={
                 ("Genome1", "contig1", "MarkerB"): {"recipient_neighbor_overlap": 0.9},
                 ("Genome1", "contig1", "MarkerC"): {"recipient_neighbor_overlap": 0.8},
@@ -1102,7 +1263,9 @@ class MarkerSelectionTests(unittest.TestCase):
         self.assertEqual(classified[0]["singleton_class"], "contamination_candidate")
         self.assertGreaterEqual(classified[0]["contig_consensus_score"], 0.8)
 
-    def test_classify_singleton_proposals_contig_consensus_marks_fully_discordant_contig_ambiguous(self):
+    def test_contig_consensus_marks_fully_discordant_contig_ambiguous(
+        self,
+    ):
         proposals = [
             {
                 "marker_name": "MarkerA",
@@ -1116,7 +1279,9 @@ class MarkerSelectionTests(unittest.TestCase):
 
         classified = marker_selection.classify_singleton_proposals(
             proposals,
-            contig_marker_context={("Genome1", "contig1"): {"MarkerA", "MarkerB", "MarkerC"}},
+            contig_marker_context={
+                ("Genome1", "contig1"): {"MarkerA", "MarkerB", "MarkerC"}
+            },
             marker_neighbor_context={
                 ("Genome1", "contig1", "MarkerB"): {"recipient_neighbor_overlap": 0.2},
                 ("Genome1", "contig1", "MarkerC"): {"recipient_neighbor_overlap": 0.3},
@@ -1166,7 +1331,9 @@ class MarkerSelectionTests(unittest.TestCase):
             )
             self.assertEqual(decision, "pruned")
 
-    def test_classify_singleton_proposals_neighbor_clade_marks_high_confidence_candidate(self):
+    def test_neighbor_clade_marks_high_confidence_candidate(
+        self,
+    ):
         proposals = [
             {
                 "marker_name": "MarkerA",
@@ -1193,7 +1360,9 @@ class MarkerSelectionTests(unittest.TestCase):
 
         self.assertEqual(classified[0]["singleton_class"], "contamination_candidate")
 
-    def test_classify_singleton_proposals_neighbor_clade_marks_weak_anchor_ambiguous(self):
+    def test_classify_singleton_proposals_neighbor_clade_marks_weak_anchor_ambiguous(
+        self,
+    ):
         proposals = [
             {
                 "marker_name": "MarkerA",
@@ -1301,8 +1470,12 @@ class BuildMarkerNeighborContextTests(unittest.TestCase):
         # recovered from the path is the one used in the table.
         marker_a = tmpdir / "_no_dups_MarkerA_.nw"
         marker_b = tmpdir / "_no_dups_MarkerB_.nw"
-        marker_a.write_text("(((A|contig1|g1,B|contig1|g1),C|contig1|g1),(D|contig1|g1,E|contig1|g1));\n")
-        marker_b.write_text("(((A|contig1|g2,D|contig1|g2),C|contig1|g2),(B|contig1|g2,E|contig1|g2));\n")
+        marker_a.write_text(
+            "(((A|contig1|g1,B|contig1|g1),C|contig1|g1),(D|contig1|g1,E|contig1|g1));\n"
+        )
+        marker_b.write_text(
+            "(((A|contig1|g2,D|contig1|g2),C|contig1|g2),(B|contig1|g2,E|contig1|g2));\n"
+        )
 
         # Minimal table with the contig-hit rows for both markers. The
         # marker id is the last '/'-separated segment of ``namemodel`` per
@@ -1310,14 +1483,14 @@ class BuildMarkerNeighborContextTests(unittest.TestCase):
         table = tmpdir / "table_elim_dups"
         rows = []
         for marker, suffix in [("MarkerA", "g1"), ("MarkerB", "g2")]:
-            for genome in ["A", "B", "C", "D", "E"]:
-                rows.append(
-                    {
-                        "savedname": f"{genome}/contig1/{suffix}",
-                        "score_bits": 100.0,
-                        "namemodel": f"pfam/{marker}",
-                    }
-                )
+            rows.extend(
+                {
+                    "savedname": f"{genome}/contig1/{suffix}",
+                    "score_bits": 100.0,
+                    "namemodel": f"pfam/{marker}",
+                }
+                for genome in ["A", "B", "C", "D", "E"]
+            )
         pd.DataFrame(rows).to_csv(table, index=False)
 
         return {
@@ -1360,7 +1533,9 @@ class BuildMarkerNeighborContextTests(unittest.TestCase):
             # Drop the namemodel column so _load_contig_marker_hit_map
             # returns an empty dict, short-circuiting the builder.
             table = Path(fixture["table_path"])
-            pd.DataFrame([{"savedname": "A/contig1/g1", "score_bits": 100.0}]).to_csv(table, index=False)
+            pd.DataFrame([{"savedname": "A/contig1/g1", "score_bits": 100.0}]).to_csv(
+                table, index=False
+            )
             result = marker_selection._build_marker_neighbor_context(
                 fixture["files"],
                 species_tree_path=fixture["species_tree_path"],
@@ -1369,6 +1544,39 @@ class BuildMarkerNeighborContextTests(unittest.TestCase):
                 num_cpus=4,
             )
             self.assertEqual(result, {})
+
+    def test_uses_duplicate_copy_retained_in_marker_tree(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            species_tree = tmp / "species.nwk"
+            species_tree.write_text("(((G,H),I),(J,K));\n")
+            marker_tree = tmp / "_no_dups_MarkerA_.nw"
+            marker_tree.write_text("(((G|c|keep,H|c|h),I|c|i),(J|c|j,K|c|k));\n")
+            other_rows = [
+                {
+                    "savedname": f"{genome}/c/{gene}",
+                    "namemodel": "pfam/MarkerA",
+                }
+                for genome, gene in (("H", "h"), ("I", "i"), ("J", "j"), ("K", "k"))
+            ]
+            duplicate_rows = [
+                {"savedname": "G/c/keep", "namemodel": "pfam/MarkerA"},
+                {"savedname": "G/c/removed", "namemodel": "pfam/MarkerA"},
+            ]
+            table_path = tmp / "table_elim_dups"
+
+            for order in (duplicate_rows, list(reversed(duplicate_rows))):
+                with self.subTest(order=order):
+                    pd.DataFrame(other_rows + order).to_csv(table_path, index=False)
+                    context = marker_selection._build_marker_neighbor_context(
+                        [str(marker_tree)],
+                        species_tree_path=str(species_tree),
+                        table_path=str(table_path),
+                        k=2,
+                        num_cpus=1,
+                    )
+
+                    self.assertIn(("G", "c", "MarkerA"), context)
 
 
 def _synthetic_ml_proposals():
@@ -1469,7 +1677,9 @@ class ScoreNeighborMlProposalsRegression(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore",
-                message="The covariance matrix associated to your dataset is not full rank",
+                message=(
+                    "The covariance matrix associated to your dataset is not full rank"
+                ),
                 category=UserWarning,
             )
             with self.assertLogs("sgtree", level="WARNING") as logs:
@@ -1548,7 +1758,9 @@ class ScoreNeighborMlProposalsRegression(unittest.TestCase):
             "shape_penalized_score_v4",
             "genome_first_score_v8",
         ):
-            self.assertEqual(scored[0][col], 0.0, f"{col} should be zero on empty-train path")
+            self.assertEqual(
+                scored[0][col], 0.0, f"{col} should be zero on empty-train path"
+            )
 
 
 class MarkerTreeNamingTests(unittest.TestCase):
@@ -1612,7 +1824,9 @@ class MarkerTreeNamingTests(unittest.TestCase):
                     (str(cached_path), str(source_dir), str(final_dir))
                 )
                 cleaned = final_dir / f"{marker_name}.faa"
-                self.assertTrue(cleaned.exists(), f"missing cleaned seqs for {marker_name}")
+                self.assertTrue(
+                    cleaned.exists(), f"missing cleaned seqs for {marker_name}"
+                )
                 self.assertEqual(cleaned.read_text().count(">"), len(self.GENOMES))
 
 
@@ -1783,21 +1997,31 @@ class SingletonGateAndReportingTests(unittest.TestCase):
                                     else clean
                                 ),
                             }
-                            for genome, gene in (("A", "a"), ("B", "b"), ("C", "c"), ("D", "d"))
+                            for genome, gene in (
+                                ("A", "a"),
+                                ("B", "b"),
+                                ("C", "c"),
+                                ("D", "d"),
+                            )
                         ],
                     }
                 )
 
-            cfg = SimpleNamespace(
-                outdir=str(outdir),
-                num_nei=3,
-                singles_min_rfdist=0.25,
-                singles_mode="neighbor_clade",
-                num_cpus=1,
-                ref=None,
+            cfg = cast(
+                Config,
+                SimpleNamespace(
+                    outdir=str(outdir),
+                    num_nei=3,
+                    singles_min_rfdist=0.25,
+                    singles_mode="neighbor_clade",
+                    num_cpus=1,
+                    ref=None,
+                ),
             )
             with patch.object(marker_selection, "map_processed", return_value=results):
-                marker_selection.remove_singles(cfg, species_tree_path=str(species_tree))
+                marker_selection.remove_singles(
+                    cfg, species_tree_path=str(species_tree)
+                )
 
             record = (outdir / "removed" / "MarkerA").read_text()
             record_line = next(

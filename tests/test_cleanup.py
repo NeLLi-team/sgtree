@@ -1,4 +1,5 @@
 import io
+import json
 import shutil
 import sys
 import tempfile
@@ -10,10 +11,15 @@ from unittest.mock import patch
 
 from sgtree._subprocess import run_check
 from sgtree.cleanup import cleanup_basic, cleanup_marker_selection
-from sgtree.cli import parse_args
+from sgtree.cli import _clean_previous_run, _mark_run_directory, parse_args
 from sgtree.input_stage import write_genome_manifest
-from sgtree.reference import check_duplicate_proteomes, prepare_reference
-
+from sgtree.reference import (
+    REF_CACHE_META_FILE,
+    _legacy_cache_signature,
+    _validate_reference_cache,
+    check_duplicate_proteomes,
+    prepare_reference,
+)
 
 HEADER_MAP = "source_file\tcontig_header\nassembly.fna\tcontig_1\n"
 GENE_CALLS = "genome_id\tgene_id\tbegin\tend\ng1\tgene_000001\t1\t99\n"
@@ -51,20 +57,28 @@ class ReferenceArchivingTests(unittest.TestCase):
         refdir.mkdir()
         _write(genomedir / "q1.faa", ">q1|c1|gene_000001\nMKV\n")
         _write(refdir / "r1.faa", ">r1|c1|gene_000001\nMKV\n")
+        _write(self.tmp / "UNI56.hmm", "HMMER3/f\nNAME PF00001\n")
 
         argv = [
-            "sgtree", str(genomedir), str(self.tmp / "UNI56.hmm"),
-            "--save_dir", str(self.tmp / "out"),
-            "--ref", str(refdir),
-            "--ref_concat", str(self.tmp / "cache"),
+            "sgtree",
+            str(genomedir),
+            str(self.tmp / "UNI56.hmm"),
+            "--save_dir",
+            str(self.tmp / "out"),
+            "--ref",
+            str(refdir),
+            "--ref_concat",
+            str(self.tmp / "cache"),
         ]
         with patch.object(sys, "argv", argv):
             self.cfg = parse_args()
         self.ref_dir = Path(self.cfg.ref_dir_path())
 
-        with patch("sgtree.reference.run_check", side_effect=self._fake_run_check):
-            with redirect_stdout(io.StringIO()):
-                prepare_reference(self.cfg)
+        with (
+            patch("sgtree.reference.run_check", side_effect=self._fake_run_check),
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
 
     def tearDown(self) -> None:
         shutil.rmtree(self._tmp, ignore_errors=True)
@@ -73,13 +87,23 @@ class ReferenceArchivingTests(unittest.TestCase):
         """Stand in for the reference sgtree run; run real `zip` calls."""
         if cmd[0] == "zip":
             return run_check(cmd, **kwargs)
-        self.ref_dir.mkdir(parents=True)
+        self.ref_dir.mkdir(parents=True, exist_ok=True)
+        with patch.object(sys, "argv", ["sgtree", *cmd[3:]]):
+            ref_cfg = parse_args()
+        _clean_previous_run(ref_cfg)
+        _mark_run_directory(ref_cfg)
         _write(self.ref_dir / "log_genomes_removed.txt", "genome_a\ngenome_b\n")
         _write(self.ref_dir / "tree.nwk", NEWICK)
         _write(self.ref_dir / "ref_and_query_proteomes", ">r1|c1|gene_000001\nMKV\n")
         _write(self.ref_dir / "proteomes_header_map.tsv", HEADER_MAP)
         _write(self.ref_dir / "hits.hmmout", "# hmmsearch output\n")
+        _write(self.ref_dir / "proteomes", ">r1|c1|gene_000001\nMKV\n")
         _write(self.ref_dir / "table_elim_dups", "savedname,namemodel,score_bits\n")
+        (self.ref_dir / "tables").mkdir()
+        _write(
+            self.ref_dir / "tables" / "merged_final",
+            "savedname,namemodel,score_bits\n",
+        )
         (self.ref_dir / "models").mkdir()
         _write(self.ref_dir / "models" / "PF00001.hmm", "HMMER3/f\n")
         return None
@@ -88,7 +112,9 @@ class ReferenceArchivingTests(unittest.TestCase):
         cases = {
             self.ref_dir / "temp" / "log_genomes_removed.txt": "genome_a\ngenome_b\n",
             self.ref_dir / "temp" / "tree.nwk": NEWICK,
-            self.ref_dir / "temp" / "ref_and_query_proteomes": ">r1|c1|gene_000001\nMKV\n",
+            self.ref_dir
+            / "temp"
+            / "ref_and_query_proteomes": ">r1|c1|gene_000001\nMKV\n",
             self.ref_dir / "proteomes_header_map.tsv": HEADER_MAP,
         }
         for path, expected in cases.items():
@@ -106,6 +132,9 @@ class ReferenceArchivingTests(unittest.TestCase):
                 self.assertFalse(zipfile.is_zipfile(path))
                 self.assertTrue(path.read_text().strip())
 
+        marker = self.ref_dir / ".sgtree-run"
+        self.assertEqual(marker.read_text(), "SGTree managed output directory\n")
+
     def test_directory_archive_is_not_archived_a_second_time(self) -> None:
         archive = self.ref_dir / "temp" / "models.zip"
         self.assertTrue(zipfile.is_zipfile(archive))
@@ -117,6 +146,128 @@ class ReferenceArchivingTests(unittest.TestCase):
             self.assertFalse(any(name.endswith(".zip") for name in names), names)
             member = next(n for n in names if n.endswith("models/PF00001.hmm"))
             self.assertEqual(zf.read(member).decode(), "HMMER3/f\n")
+
+    def test_unchanged_cache_is_reused(self) -> None:
+        with (
+            patch("sgtree.reference.run_check") as run,
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
+        run.assert_not_called()
+
+    def test_same_size_reference_edit_rebuilds_cache(self) -> None:
+        keep = _write(self.ref_dir / "keep.txt", "user data\n")
+        _write(Path(self.cfg.ref) / "r1.faa", ">r1|c1|gene_000001\nMKA\n")
+        with (
+            patch(
+                "sgtree.reference.run_check", side_effect=self._fake_run_check
+            ) as run,
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
+        run.assert_called_once()
+        self.assertEqual(keep.read_text(), "user data\n")
+        valid, reason = _validate_reference_cache(self.cfg, str(self.ref_dir))
+        self.assertTrue(valid, reason)
+
+    def test_same_size_model_edit_rebuilds_cache(self) -> None:
+        _write(Path(self.cfg.modeldir), "HMMER3/f\nNAME PF00002\n")
+        with (
+            patch(
+                "sgtree.reference.run_check", side_effect=self._fake_run_check
+            ) as run,
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
+        run.assert_called_once()
+
+    def test_failed_rebuild_cannot_reuse_old_metadata(self) -> None:
+        def fail_after_search(cmd: list[str], **kwargs: object) -> None:
+            self._fake_run_check(cmd, **kwargs)
+            raise RuntimeError("alignment failed")
+
+        with (
+            patch.object(self.cfg, "percent_models", self.cfg.percent_models + 1),
+            patch("sgtree.reference.run_check", side_effect=fail_after_search),
+            redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(RuntimeError, "alignment failed"),
+        ):
+            prepare_reference(self.cfg)
+
+        valid, reason = _validate_reference_cache(self.cfg, str(self.ref_dir))
+        self.assertFalse(valid, reason)
+        with (
+            patch(
+                "sgtree.reference.run_check", side_effect=self._fake_run_check
+            ) as rebuild,
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
+        rebuild.assert_called_once()
+        valid, reason = _validate_reference_cache(self.cfg, str(self.ref_dir))
+        self.assertTrue(valid, reason)
+
+    def test_corrupt_json_and_non_object_roots_invalidate_cache(self) -> None:
+        meta_path = self.ref_dir / REF_CACHE_META_FILE
+        for content in ("{", "[]", "null"):
+            with self.subTest(content=content):
+                _write(meta_path, content)
+                valid, reason = _validate_reference_cache(self.cfg, str(self.ref_dir))
+                self.assertFalse(valid)
+                self.assertIn("invalid cache_meta.json", reason)
+
+    def test_missing_merged_table_invalidates_cache(self) -> None:
+        (self.ref_dir / "tables" / "merged_final").unlink()
+        valid, reason = _validate_reference_cache(self.cfg, str(self.ref_dir))
+        self.assertFalse(valid)
+        self.assertIn("merged_final", reason)
+
+    def test_missing_proteomes_invalidates_cache(self) -> None:
+        (self.ref_dir / "proteomes").unlink()
+        valid, reason = _validate_reference_cache(self.cfg, str(self.ref_dir))
+        self.assertFalse(valid)
+        self.assertIn("proteomes", reason)
+
+    def test_unowned_reserved_cache_collision_is_preserved_and_rejected(self) -> None:
+        shutil.rmtree(self.ref_dir)
+        self.ref_dir.mkdir()
+        collision = _write(self.ref_dir / "hits.hmmout", "user data\n")
+        keep = _write(self.ref_dir / "keep.txt", "keep\n")
+
+        with (
+            patch("sgtree.reference.run_check", side_effect=self._fake_run_check),
+            redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(FileExistsError, "ownership marker"),
+        ):
+            prepare_reference(self.cfg)
+
+        self.assertEqual(collision.read_text(), "user data\n")
+        self.assertEqual(keep.read_text(), "keep\n")
+
+    def test_schema_one_cache_rebuilds_once_then_is_reused(self) -> None:
+        legacy_metadata = _legacy_cache_signature(self.cfg)
+        legacy_metadata["percent_models"] = self.cfg.percent_models + 1
+        _write(
+            self.ref_dir / REF_CACHE_META_FILE,
+            json.dumps(legacy_metadata),
+        )
+        (self.ref_dir / ".sgtree-run").unlink()
+
+        with (
+            patch(
+                "sgtree.reference.run_check", side_effect=self._fake_run_check
+            ) as rebuild,
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
+        rebuild.assert_called_once()
+
+        with (
+            patch("sgtree.reference.run_check") as reuse,
+            redirect_stdout(io.StringIO()),
+        ):
+            prepare_reference(self.cfg)
+        reuse.assert_not_called()
 
 
 class ReferenceGenomeIdTests(unittest.TestCase):
@@ -160,9 +311,11 @@ class ReferenceGenomeIdTests(unittest.TestCase):
     def test_identical_genome_in_both_directories_still_fails(self) -> None:
         query = self._dir_with("query", "GCF_000005845.2.faa")
         refdir = self._dir_with("ref", "GCF_000005845.2.faa")
-        with redirect_stdout(io.StringIO()) as out:
-            with self.assertRaises(SystemExit):
-                check_duplicate_proteomes(str(query), str(refdir))
+        with (
+            redirect_stdout(io.StringIO()) as out,
+            self.assertRaises(SystemExit),
+        ):
+            check_duplicate_proteomes(str(query), str(refdir))
         self.assertIn("GCF_000005845.2", out.getvalue())
 
 
@@ -273,7 +426,100 @@ class CleanupOutputTests(unittest.TestCase):
         self._assert_plain("singleton_candidates.tsv", SINGLETONS)
         self._assert_plain("tree_round_1.nwk", NEWICK)
         self._assert_archived("table_elim_dups")
-        self.assertFalse((self.outdir / "tree.nwk").exists())
+        tree = self.outdir / "temp" / "tree.nwk"
+        self.assertTrue(zipfile.is_zipfile(tree))
+        self.assertEqual(_archived_text(tree), NEWICK)
+
+    def test_generated_suffix_notes_are_not_archived(self) -> None:
+        self._populate()
+        notes = _write(self.outdir / "hits.hmmout.notes", "user notes\n")
+
+        cleanup_basic(str(self.outdir))
+
+        self.assertEqual(notes.read_text(), "user notes\n")
+        self.assertFalse(zipfile.is_zipfile(notes))
+
+    def test_existing_archive_sidecar_is_preserved(self) -> None:
+        self._populate()
+        sidecar = _write(self.outdir / "table_elim_dups.zip", "user archive\n")
+
+        cleanup_basic(str(self.outdir))
+
+        self.assertEqual(sidecar.read_text(), "user archive\n")
+        self._assert_archived("table_elim_dups")
+
+    def test_symlinks_are_preserved_without_archiving_targets(self) -> None:
+        self._populate()
+        external = self.outdir.parent / f"{self.outdir.name}_external"
+        external.mkdir()
+        secret = _write(external / "secret.txt", "outside\n")
+        (self.outdir / "models").symlink_to(external, target_is_directory=True)
+        (self.outdir / "hits.hmmout.del.ls").symlink_to(secret)
+        (self.outdir / "hits.hmmout.lfilt").symlink_to(external / "missing")
+        nested = self.outdir / "protTrees"
+        nested.mkdir()
+        (nested / "external").symlink_to(external, target_is_directory=True)
+
+        cleanup_marker_selection(str(self.outdir))
+
+        self.assertTrue((self.outdir / "models").is_symlink())
+        self.assertTrue((self.outdir / "hits.hmmout.del.ls").is_symlink())
+        self.assertTrue((self.outdir / "hits.hmmout.lfilt").is_symlink())
+        self.assertTrue((nested / "external").is_symlink())
+        self.assertEqual(secret.read_text(), "outside\n")
+        self.assertFalse((self.outdir / "temp" / "protTrees.zip").exists())
+        shutil.rmtree(external)
+
+    def test_existing_directory_archive_is_not_overwritten(self) -> None:
+        source = self.outdir / "protTrees"
+        source.mkdir()
+        _write(source / "tree.nwk", NEWICK)
+        archive = _write(self.outdir / "protTrees.zip", "user archive\n")
+
+        with self.assertRaises(FileExistsError):
+            cleanup_marker_selection(str(self.outdir))
+
+        self.assertTrue(source.is_dir())
+        self.assertEqual(archive.read_text(), "user archive\n")
+
+    def test_existing_temp_destination_is_not_overwritten(self) -> None:
+        source = self.outdir / "protTrees"
+        source.mkdir()
+        _write(source / "tree.nwk", NEWICK)
+        temp = self.outdir / "temp"
+        temp.mkdir()
+        destination = _write(temp / "protTrees.zip", "existing\n")
+
+        with self.assertRaises(FileExistsError):
+            cleanup_marker_selection(str(self.outdir))
+
+        self.assertTrue(source.is_dir())
+        self.assertEqual(destination.read_text(), "existing\n")
+
+    def test_archive_collisions_are_checked_before_mutation(self) -> None:
+        for destination_name in ("protTrees.zip", "temp/protTrees.zip"):
+            with self.subTest(destination=destination_name):
+                output_dir = self.outdir / destination_name.replace("/", "_")
+                first = output_dir / "models"
+                first.mkdir(parents=True)
+                _write(first / "model.hmm", "HMMER3/f\n")
+                second = output_dir / "protTrees"
+                second.mkdir()
+                _write(second / "tree.nwk", NEWICK)
+                destination = output_dir / destination_name
+                destination.parent.mkdir(exist_ok=True)
+                _write(destination, "existing\n")
+
+                with (
+                    patch.object(Path, "iterdir", return_value=iter([first, second])),
+                    self.assertRaises(FileExistsError),
+                ):
+                    cleanup_marker_selection(str(output_dir))
+
+                self.assertTrue(first.is_dir())
+                self.assertTrue(second.is_dir())
+                self.assertFalse((output_dir / "models.zip").exists())
+                self.assertEqual(destination.read_text(), "existing\n")
 
 
 if __name__ == "__main__":

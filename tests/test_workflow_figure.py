@@ -3,8 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
-MODULE_PATH = Path(__file__).resolve().parents[1] / "docs" / "figures" / "generate_workflow_figure.py"
+MODULE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "figures"
+    / "generate_workflow_figure.py"
+)
 workflow_figure = None
 if MODULE_PATH.exists():
     SPEC = importlib.util.spec_from_file_location("workflow_figure", MODULE_PATH)
@@ -13,14 +17,20 @@ if MODULE_PATH.exists():
     SPEC.loader.exec_module(workflow_figure)
 
 
-@unittest.skipUnless(MODULE_PATH.exists(), "docs/figures/generate_workflow_figure.py is not present in this checkout")
+@unittest.skipUnless(
+    MODULE_PATH.exists(),
+    "docs/figures/generate_workflow_figure.py is not present in this checkout",
+)
 class WorkflowFigureTests(unittest.TestCase):
     def test_normalize_spec_fills_missing_fields_from_defaults(self):
         spec = workflow_figure.normalize_spec(
             {
                 "title": "Custom Title",
                 "core_boxes": [{"title": "Only One", "lines": ["Line A"]}],
-                "selection_boxes": [{"title": "Marker Trees", "lines": ["Per-marker trees"]}, {"title": "", "lines": []}],
+                "selection_boxes": [
+                    {"title": "Marker Trees", "lines": ["Per-marker trees"]},
+                    {"title": "", "lines": []},
+                ],
                 "benchmark_lines": ["One line only"],
             }
         )
@@ -29,7 +39,10 @@ class WorkflowFigureTests(unittest.TestCase):
         self.assertEqual(spec["core_boxes"][0]["title"], "Only One")
         self.assertEqual(spec["core_boxes"][1]["title"], "Search and Parse")
         self.assertEqual(spec["selection_boxes"][1]["title"], "RF-guided Selection")
-        self.assertEqual(spec["selection_boxes"][1]["lines"], ["Copy retained if it minimizes", "species-tree RF distance"])
+        self.assertEqual(
+            spec["selection_boxes"][1]["lines"],
+            ["Copy retained if it minimizes", "species-tree RF distance"],
+        )
         self.assertEqual(spec["benchmark_lines"], ["One line only"])
 
     def test_choose_spec_uses_openrouter_when_available(self):
@@ -37,9 +50,14 @@ class WorkflowFigureTests(unittest.TestCase):
             "title": "OpenRouter Title",
             "subtitle": "Subtitle",
             "core_heading": "Core",
-            "core_boxes": [{"title": f"Core {idx}", "lines": [f"Line {idx}"]} for idx in range(5)],
+            "core_boxes": [
+                {"title": f"Core {idx}", "lines": [f"Line {idx}"]} for idx in range(5)
+            ],
             "selection_heading": "Selection",
-            "selection_boxes": [{"title": f"Sel {idx}", "lines": [f"Sel Line {idx}"]} for idx in range(4)],
+            "selection_boxes": [
+                {"title": f"Sel {idx}", "lines": [f"Sel Line {idx}"]}
+                for idx in range(4)
+            ],
             "bridge_label": "bridge",
             "benchmark_heading": "Harness",
             "benchmark_lines": ["Line 1", "Line 2"],

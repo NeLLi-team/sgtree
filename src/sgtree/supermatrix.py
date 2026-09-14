@@ -1,5 +1,5 @@
-import os
-import glob
+"""Trim marker alignments and combine them into a supermatrix."""
+
 import subprocess
 from pathlib import Path
 
@@ -9,26 +9,45 @@ from Bio import SeqIO
 from sgtree.config import Config
 from sgtree.parallel import map_threaded
 
+FilePair = tuple[str, str]
 
-def _trim_alignment_fallback(input_file: str, output_file: str, *, gap_threshold: float = 0.1) -> None:
-    with open(input_file) as handle:
+
+def _alignment_width(sequences: list[str], input_file: str | Path) -> int:
+    """Return the shared sequence width or reject a malformed alignment."""
+    widths = {len(sequence) for sequence in sequences}
+    if len(widths) > 1:
+        raise ValueError(
+            f"Alignment sequences have unequal lengths in {input_file}: "
+            f"{sorted(widths)}"
+        )
+    return next(iter(widths), 0)
+
+
+def _trim_alignment_fallback(
+    input_file: str, output_file: str, *, gap_threshold: float = 0.1
+) -> None:
+    input_path = Path(input_file)
+    output_path = Path(output_file)
+    with input_path.open(encoding="utf-8") as handle:
         records = list(SeqIO.parse(handle, "fasta"))
     if not records:
-        Path(output_file).write_text("")
+        output_path.write_text("", encoding="utf-8")
         return
 
     sequences = [str(record.seq) for record in records]
-    width = min(len(sequence) for sequence in sequences)
+    width = _alignment_width(sequences, input_path)
     keep_columns = []
     for idx in range(width):
-        nongap_fraction = sum(sequence[idx] != "-" for sequence in sequences) / len(sequences)
+        nongap_fraction = sum(sequence[idx] != "-" for sequence in sequences) / len(
+            sequences
+        )
         if nongap_fraction >= gap_threshold:
             keep_columns.append(idx)
     if not keep_columns:
         keep_columns = list(range(width))
 
-    with open(output_file, "w") as handle:
-        for record, sequence in zip(records, sequences):
+    with output_path.open("w", encoding="utf-8") as handle:
+        for record, sequence in zip(records, sequences, strict=True):
             trimmed = "".join(sequence[idx] for idx in keep_columns)
             handle.write(f">{record.id}\n{trimmed}\n")
 
@@ -39,20 +58,21 @@ def _run_trimal_or_fallback(input_file: str, output_file: str) -> None:
         subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
     except FileNotFoundError:
         print(
-            f"warning: trimal not found; trimming {os.path.basename(input_file)} "
+            f"warning: trimal not found; trimming {Path(input_file).name} "
             "with the built-in fallback trimmer",
             flush=True,
         )
         _trim_alignment_fallback(input_file, output_file, gap_threshold=0.1)
 
 
-def _run_trimal_worker(args):
+def _run_trimal_worker(args: FilePair) -> None:
     """Run trimal on a single alignment file."""
     input_file, output_file = args
     _run_trimal_or_fallback(input_file, output_file)
     # clean up fasta headers in input without using global fileinput state.
     normalized_lines: list[str] = []
-    with open(input_file) as handle:
+    input_path = Path(input_file)
+    with input_path.open(encoding="utf-8") as handle:
         for raw_line in handle:
             line = raw_line.rstrip()
             if not line:
@@ -61,66 +81,76 @@ def _run_trimal_worker(args):
                 normalized_lines.append("|".join(line.split("|")[0:]))
             else:
                 normalized_lines.append(line)
-    with open(input_file, "w") as handle:
+    with input_path.open("w", encoding="utf-8") as handle:
         handle.write("\n".join(normalized_lines) + ("\n" if normalized_lines else ""))
 
 
-def run_trimal(cfg: Config, input_dir: str, output_dir: str):
+def run_trimal(cfg: Config, input_dir: str, output_dir: str) -> None:
     """Run trimal -gt 0.1 on all .faa files in input_dir, writing to output_dir."""
-    os.makedirs(output_dir, exist_ok=True)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    files = sorted(glob.glob(os.path.join(input_dir, "*.faa")))
-    args = [
-        (f, os.path.join(output_dir, os.path.basename(f)))
-        for f in files
-    ]
+    files = sorted(Path(input_dir).glob("*.faa"))
+    args = [(str(path), str(output_path / path.name)) for path in files]
 
     map_threaded(_run_trimal_worker, args, cfg.num_cpus)
 
 
-def _trimal_simple_worker(args):
+def _trimal_simple_worker(args: FilePair) -> None:
     """Worker: run trimal without header cleanup."""
     input_file, output_file = args
     _run_trimal_or_fallback(input_file, output_file)
 
 
-def run_trimal_simple(cfg: Config, input_dir: str, output_dir: str):
+def run_trimal_simple(cfg: Config, input_dir: str, output_dir: str) -> None:
     """Run trimal without header cleanup (for protein tree trimming)."""
-    os.makedirs(output_dir, exist_ok=True)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    files = sorted(glob.glob(os.path.join(input_dir, "*.faa")))
-    args = [(f, os.path.join(output_dir, os.path.basename(f))) for f in files]
+    files = sorted(Path(input_dir).glob("*.faa"))
+    args = [(str(path), str(output_path / path.name)) for path in files]
 
     map_threaded(_trimal_simple_worker, args, cfg.num_cpus)
 
 
-def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat_path: str):
+def build_supermatrix(
+    trimmed_dir: str, output_dir: str, table_path: str, concat_path: str
+) -> None:
     """Build concatenated alignment (supermatrix) from trimmed per-marker alignments.
 
     Fills missing markers with 'X' gap characters.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     marker_frames: list[pd.DataFrame] = []
-    for filepath in sorted(glob.glob(os.path.join(trimmed_dir, "*.faa"))):
-        marker_name = os.path.basename(filepath)
-        with open(filepath) as handle:
+    for filepath in sorted(Path(trimmed_dir).glob("*.faa")):
+        marker_name = filepath.name
+        with filepath.open(encoding="utf-8") as handle:
             record_dict = SeqIO.to_dict(SeqIO.parse(handle, "fasta"))
+        _alignment_width(
+            [str(record.seq) for record in record_dict.values()],
+            filepath,
+        )
         seqs: dict[str, str] = {}
         for key, rec in record_dict.items():
             genome_id = key.split("|")[0]
             if genome_id in seqs:
                 raise ValueError(
-                    f"Duplicate genome id '{genome_id}' remains in alignment {marker_name}"
+                    f"Duplicate genome id '{genome_id}' remains in alignment "
+                    f"{marker_name}"
                 )
             seqs[genome_id] = rec.format("fasta").split("\n", 1)[1]
         marker_frames.append(pd.DataFrame({marker_name: pd.Series(seqs)}))
 
     if not marker_frames:
-        raise ValueError(f"build_supermatrix: no marker alignments found in {trimmed_dir}")
+        raise ValueError(
+            f"build_supermatrix: no marker alignments found in {trimmed_dir}"
+        )
 
     # One outer join across all markers in a single pass (O(markers), not O(markers^2)).
-    df_conc = pd.concat(marker_frames, axis=1, join="outer").sort_index(axis=1).sort_index()
+    df_conc = (
+        pd.concat(marker_frames, axis=1, join="outer").sort_index(axis=1).sort_index()
+    )
     df_conc.index.name = "SeqID"
     df_conc = df_conc.reset_index()
 
@@ -129,17 +159,17 @@ def build_supermatrix(trimmed_dir: str, output_dir: str, table_path: str, concat
     df_conc.to_csv(table_path)
 
     # Build the concatenated FASTA directly from the in-memory DataFrame.
-    # Index once by SeqID + sort, then iterate rows — avoids O(n^2) boolean mask lookups.
+    # Index once by SeqID and sort, then iterate rows to avoid repeated mask lookups.
     marker_cols = [c for c in df_conc.columns if c != "SeqID"]
     indexed = df_conc.set_index("SeqID").sort_index()
-    with open(concat_path, "w") as fp:
+    with Path(concat_path).open("w", encoding="utf-8") as handle:
         for seq_id, row in indexed[marker_cols].iterrows():
             seq = "".join(str(v).replace("\n", "") for v in row.values)
-            fp.write(f">{seq_id}\n{seq}\n")
+            handle.write(f">{seq_id}\n{seq}\n")
 
 
-def _fill_nan_gaps(df_conc: pd.DataFrame):
-    """Replace NaN cells with synthetic gap strings matching each column's alignment width.
+def _fill_nan_gaps(df_conc: pd.DataFrame) -> None:
+    """Replace NaN cells with gaps matching each column's alignment width.
 
     Vectorized: for every marker column (all columns except the first), compute
     the width of each non-NaN cell, then fill NaN cells in place with ``"X" * w``

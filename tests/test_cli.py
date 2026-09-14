@@ -1,11 +1,13 @@
-import os
 import sys
 import tempfile
 import unittest
 from io import StringIO
+from pathlib import Path
 from unittest.mock import DEFAULT, call, patch
 
-from sgtree.cli import _clean_previous_run, main, parse_args
+from sgtree.cleanup import is_generated_entry
+from sgtree.cli import _clean_previous_run, _mark_run_directory, main, parse_args
+from sgtree.sgtree_logging import _logfile_path
 
 
 class CliTests(unittest.TestCase):
@@ -47,9 +49,12 @@ class CliTests(unittest.TestCase):
 
     def test_help_lists_preferred_and_legacy_singles_mode_spellings(self):
         output = StringIO()
-        with patch.object(sys, "argv", ["sgtree", "--help"]), patch("sys.stdout", output):
-            with self.assertRaises(SystemExit) as raised:
-                parse_args()
+        with (
+            patch.object(sys, "argv", ["sgtree", "--help"]),
+            patch("sys.stdout", output),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            parse_args()
         self.assertEqual(raised.exception.code, 0)
         help_text = output.getvalue()
         self.assertIn("--singles-mode", help_text)
@@ -57,73 +62,167 @@ class CliTests(unittest.TestCase):
         normalized_help = " ".join(help_text.split())
         self.assertIn("loo_profile", normalized_help)
         self.assertIn("reports evidence without pruning", normalized_help)
+        self.assertIn(
+            "mode-dependent singleton diagnostics or experimental pruning",
+            normalized_help,
+        )
 
     def test_invalid_alignment_method_is_rejected(self):
         argv = ["sgtree", "input_dir", "models.hmm", "--aln", "hmmaling"]
-        with patch.object(sys, "argv", argv), patch("sys.stderr", StringIO()):
-            with self.assertRaises(SystemExit) as raised:
-                parse_args()
+        with (
+            patch.object(sys, "argv", argv),
+            patch("sys.stderr", StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            parse_args()
         self.assertNotEqual(raised.exception.code, 0)
 
     def test_previous_run_cleanup_removes_only_generated_outputs(self):
         with tempfile.TemporaryDirectory() as outdir:
+            output_dir = Path(outdir)
             cfg = self._config_for(outdir)
             generated_dirs = (
                 cfg.ani_dir,
                 cfg.aligned_dir,
                 cfg.tables_dir,
-                os.path.join(outdir, "treeouts_protTrees"),
+                str(output_dir / "treeouts_protTrees"),
             )
             for directory in generated_dirs:
-                os.makedirs(directory)
-                open(os.path.join(directory, "stale"), "w").close()
-            for name in ("tree.nwk", "tree_final.nwk", "table_elim_dups",
-                         "logfile_2024_01_01_00_00_00.txt", "tree_round_1.nwk",
-                         "tree.nwk.iqtree.log", "hits.hmmout.del.ls"):
-                open(os.path.join(outdir, name), "w").close()
+                Path(directory).mkdir()
+                (Path(directory) / "stale").touch()
+            for name in (
+                "tree.nwk",
+                "tree_final.nwk",
+                "table_elim_dups",
+                "logfile_2024_01_01_00_00_00.txt",
+                "tree_round_1.nwk",
+                "tree.nwk.iqtree.log",
+                "hits.hmmout.del.ls",
+            ):
+                (output_dir / name).touch()
 
-            os.makedirs(os.path.join(outdir, "my_analysis"))
-            open(os.path.join(outdir, "my_analysis", "notes.md"), "w").close()
-            open(os.path.join(outdir, "genomes_of_interest.txt"), "w").close()
-            open(os.path.join(outdir, "logfile_notes.txt"), "w").close()
+            analysis_dir = output_dir / "my_analysis"
+            analysis_dir.mkdir()
+            (analysis_dir / "notes.md").touch()
+            (output_dir / "genomes_of_interest.txt").touch()
+            (output_dir / "logfile_notes.txt").touch()
 
             _clean_previous_run(cfg)
 
             self.assertEqual(
-                sorted(os.listdir(outdir)),
+                sorted(path.name for path in output_dir.iterdir()),
                 ["genomes_of_interest.txt", "logfile_notes.txt", "my_analysis"],
             )
-            self.assertTrue(os.path.exists(os.path.join(outdir, "my_analysis", "notes.md")))
+            self.assertTrue((analysis_dir / "notes.md").exists())
 
-    def test_previous_run_cleanup_is_skipped_without_a_previous_tree(self):
+    def test_unmarked_reserved_output_is_preserved_and_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as outdir:
             cfg = self._config_for(outdir)
-            os.makedirs(cfg.ani_dir)
-            open(cfg.ani_cluster_members_path, "w").close()
+            Path(cfg.ani_dir).mkdir()
+            Path(cfg.ani_cluster_members_path).touch()
+
+            with self.assertRaisesRegex(FileExistsError, "ownership marker"):
+                _clean_previous_run(cfg)
+
+            self.assertTrue(Path(cfg.ani_cluster_members_path).exists())
+
+    def test_marker_allows_cleanup_after_a_partial_run(self) -> None:
+        with tempfile.TemporaryDirectory() as outdir:
+            cfg = self._config_for(outdir)
+            _mark_run_directory(cfg)
+            models_dir = Path(outdir) / "models"
+            models_dir.mkdir()
+            (models_dir / "partial").touch()
 
             _clean_previous_run(cfg)
 
-            self.assertTrue(os.path.exists(cfg.ani_cluster_members_path))
+            self.assertFalse(models_dir.exists())
+
+    def test_ani_rerun_unlinks_nested_symlinks_without_touching_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_dir = Path(tmpdir)
+            outdir = temp_dir / "run"
+            outdir.mkdir()
+            cfg = self._config_for(str(outdir))
+            _mark_run_directory(cfg)
+            representatives = Path(cfg.ani_dir) / "query_representatives"
+            representatives.mkdir(parents=True)
+            target = temp_dir / "genome.fna"
+            target.write_text(">contig\nACGT\n")
+            (representatives / "genome.fna").symlink_to(target)
+
+            _clean_previous_run(cfg)
+
+            self.assertFalse(Path(cfg.ani_dir).exists())
+            self.assertEqual(target.read_text(), ">contig\nACGT\n")
+
+    def test_top_level_generated_symlink_is_preserved_and_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_dir = Path(tmpdir)
+            outdir = temp_dir / "run"
+            outdir.mkdir()
+            cfg = self._config_for(str(outdir))
+            _mark_run_directory(cfg)
+            target = temp_dir / "external"
+            target.mkdir()
+            linked = outdir / "models"
+            linked.symlink_to(target, target_is_directory=True)
+
+            with self.assertRaisesRegex(FileExistsError, "linked generated path"):
+                _clean_previous_run(cfg)
+
+            self.assertTrue(linked.is_symlink())
+            self.assertTrue(target.is_dir())
+
+    def test_previous_run_cleanup_leaves_user_suffix_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as outdir:
+            cfg = self._config_for(outdir)
+            output_dir = Path(outdir)
+            (output_dir / "tree.nwk").touch()
+            notes = output_dir / "hits.hmmout.notes"
+            notes.write_text("keep\n")
+
+            _clean_previous_run(cfg)
+
+            self.assertEqual(notes.read_text(), "keep\n")
+
+    def test_actual_logfile_name_is_generated_but_notes_are_not(self) -> None:
+        with tempfile.TemporaryDirectory() as outdir:
+            cfg = self._config_for(outdir)
+            cfg.start_time = "2026-09-14 12:30:32.123456"
+            basename = _logfile_path(cfg).name
+
+        self.assertEqual(basename, "logfile_2026_09_14_12:30:32.txt")
+        self.assertTrue(is_generated_entry(basename))
+        self.assertTrue(is_generated_entry("logfile_2026_09_14_12_30_32.txt"))
+        self.assertFalse(is_generated_entry("logfile_2026_09_14_12:30_32.txt"))
+        self.assertFalse(is_generated_entry(f"{basename}.notes"))
 
     def test_previous_run_cleanup_precedes_ani_and_reference_preparation(self):
-        class StopPipeline(Exception):
+        class StopPipelineError(Exception):
             pass
 
         def fake_prepare_ani(cfg):
-            os.makedirs(cfg.ani_selected_query_dir, exist_ok=True)
-            with open(cfg.ani_cluster_members_path, "w") as handle:
+            Path(cfg.ani_selected_query_dir).mkdir(parents=True, exist_ok=True)
+            with Path(cfg.ani_cluster_members_path).open("w") as handle:
                 handle.write("genome_id\n")
             cfg.genomedir = cfg.ani_selected_query_dir
 
         with tempfile.TemporaryDirectory() as outdir:
-            open(os.path.join(outdir, "tree.nwk"), "w").close()
-            os.makedirs(os.path.join(outdir, "ani"))
-            open(os.path.join(outdir, "ani", "stale.tsv"), "w").close()
+            output_dir = Path(outdir)
+            (output_dir / "tree.nwk").touch()
+            ani_dir = output_dir / "ani"
+            ani_dir.mkdir()
+            (ani_dir / "stale.tsv").touch()
 
             argv = [
-                "sgtree", "input_dir", "models.hmm",
-                "--save_dir", outdir,
-                "--ani_cluster", "yes",
+                "sgtree",
+                "input_dir",
+                "models.hmm",
+                "--save_dir",
+                outdir,
+                "--ani_cluster",
+                "yes",
             ]
             with (
                 patch.object(sys, "argv", argv),
@@ -132,17 +231,20 @@ class CliTests(unittest.TestCase):
                     "sgtree.cli.ani_clustering.prepare_ani_cluster_inputs",
                     side_effect=fake_prepare_ani,
                 ),
-                patch("sgtree.cli.reference.prepare_reference", side_effect=StopPipeline),
+                patch(
+                    "sgtree.cli.reference.prepare_reference",
+                    side_effect=StopPipelineError,
+                ),
+                self.assertRaises(StopPipelineError),
             ):
-                with self.assertRaises(StopPipeline):
-                    main()
+                main()
 
             # cleanup ran (stale ani/ and the old tree are gone) but did not eat the
             # inputs the ANI step wrote for the rest of the pipeline.
-            self.assertFalse(os.path.exists(os.path.join(outdir, "tree.nwk")))
-            self.assertFalse(os.path.exists(os.path.join(outdir, "ani", "stale.tsv")))
-            self.assertTrue(os.path.exists(os.path.join(outdir, "ani", "ani_clusters.tsv")))
-            self.assertTrue(os.path.isdir(os.path.join(outdir, "ani", "query_representatives")))
+            self.assertFalse((output_dir / "tree.nwk").exists())
+            self.assertFalse((ani_dir / "stale.tsv").exists())
+            self.assertTrue((ani_dir / "ani_clusters.tsv").exists())
+            self.assertTrue((ani_dir / "query_representatives").is_dir())
 
     def test_snp_defaults_to_disabled(self):
         argv = ["sgtree", "input_dir", "models.hmm"]
@@ -159,15 +261,70 @@ class CliTests(unittest.TestCase):
             "--genomedir",
             "other_input_dir",
         ]
-        with patch.object(sys, "argv", argv), patch("sys.stderr", StringIO()):
-            with self.assertRaises(SystemExit):
-                parse_args()
+        with (
+            patch.object(sys, "argv", argv),
+            patch("sys.stderr", StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            parse_args()
 
     def test_snp_requires_ani_cluster(self):
         argv = ["sgtree", "input_dir", "models.hmm", "--snp", "yes"]
+        with (
+            patch.object(sys, "argv", argv),
+            self.assertRaisesRegex(ValueError, "--snp requires --ani_cluster yes"),
+        ):
+            parse_args()
+
+    def test_num_cpus_must_be_positive(self) -> None:
+        argv = ["sgtree", "input_dir", "models.hmm", "--num_cpus", "0"]
+        with (
+            patch.object(sys, "argv", argv),
+            self.assertRaisesRegex(ValueError, "num_cpus must be >= 1"),
+        ):
+            parse_args()
+
+    def test_percent_models_must_be_a_percentage(self) -> None:
+        argv = ["sgtree", "input_dir", "models.hmm", "--percent_models", "101"]
+        with (
+            patch.object(sys, "argv", argv),
+            self.assertRaisesRegex(ValueError, "percent_models must be between"),
+        ):
+            parse_args()
+
+    def test_lflt_must_be_a_percentage(self) -> None:
+        argv = ["sgtree", "input_dir", "models.hmm", "--lflt", "-1"]
+        with (
+            patch.object(sys, "argv", argv),
+            self.assertRaisesRegex(ValueError, "lflt must be between"),
+        ):
+            parse_args()
+
+    def test_max_sdup_rejects_values_below_disabled_sentinel(self) -> None:
+        argv = ["sgtree", "input_dir", "models.hmm", "--max_sdup", "-2"]
+        with (
+            patch.object(sys, "argv", argv),
+            self.assertRaisesRegex(ValueError, "max_sdup must be >= -1"),
+        ):
+            parse_args()
+
+    def test_root_input_paths_are_preserved(self) -> None:
+        argv = [
+            "sgtree",
+            "/",
+            "/",
+            "--ref",
+            "/",
+            "--ref_concat",
+            "/cache",
+        ]
         with patch.object(sys, "argv", argv):
-            with self.assertRaisesRegex(ValueError, "--snp requires --ani_cluster yes"):
-                parse_args()
+            cfg = parse_args()
+
+        self.assertEqual(cfg.genomedir, "/")
+        self.assertEqual(cfg.modeldir, "/")
+        self.assertEqual(cfg.ref, "/")
+        self.assertEqual(cfg.ref_dir_path(), "/cache/root_root")
 
     def test_snp_enabled_with_ani_cluster(self):
         argv = [
@@ -207,7 +364,9 @@ class CliTests(unittest.TestCase):
             with (
                 patch.object(sys, "argv", argv),
                 patch("builtins.print"),
-                patch("sgtree.cli.reference.prepare_reference", return_value=[]) as prepare_reference,
+                patch(
+                    "sgtree.cli.reference.prepare_reference", return_value=[]
+                ) as prepare_reference,
                 patch.multiple(
                     "sgtree.cli.search",
                     concat_inputs=DEFAULT,
@@ -251,7 +410,9 @@ class CliTests(unittest.TestCase):
                 search_mocks["parse_hmmsearch"].return_value = (object(), {})
                 search_mocks["build_working_df"].return_value = (object(), object())
                 marker_selection_mocks["run_noperm"].side_effect = [kept, kept]
-                marker_selection_mocks["write_cleaned_sequences"].return_value = f"{tmpdir}/cleaned"
+                marker_selection_mocks[
+                    "write_cleaned_sequences"
+                ].return_value = f"{tmpdir}/cleaned"
                 main()
 
             cfg = prepare_reference.call_args.args[0]

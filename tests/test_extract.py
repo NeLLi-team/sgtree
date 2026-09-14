@@ -15,7 +15,7 @@ def _write(path: Path, text: str) -> None:
 
 
 def _records(path: Path) -> list[tuple[str, str]]:
-    with open(path) as handle:
+    with path.open() as handle:
         return [(r.id, str(r.seq)) for r in SeqIO.parse(handle, "fasta")]
 
 
@@ -34,15 +34,17 @@ class ConcatProteomesTests(unittest.TestCase):
         a = self.tmp / "a.faa"
         b = self.tmp / "b.faa"
         out = self.tmp / "combined.faa"
-        _write(a, ">g1|p1\nMKT\n>g1|p2\nAAA")         # no trailing newline
-        _write(b, ">g1|p1\nMKT\n>g2|p1\nCCC\n\n")     # dup header + extra blank
+        _write(a, ">g1|p1\nMKT\n>g1|p2\nAAA")  # no trailing newline
+        _write(b, ">g1|p1\nMKT\n>g2|p1\nCCC\n\n")  # dup header + extra blank
 
         _concat_proteomes([str(a), str(b)], str(out))
 
         expected = Counter(_records(a)) + Counter(_records(b))
         self.assertEqual(Counter(_records(out)), expected)
 
-    def test_concat_inserts_separator_when_first_file_lacks_trailing_newline(self) -> None:
+    def test_concat_inserts_separator_when_first_file_lacks_trailing_newline(
+        self,
+    ) -> None:
         # This is the protective behavior the legacy implementation relied on:
         # if file A has no trailing newline, file B's first header must not
         # be glued to file A's last sequence.

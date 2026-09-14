@@ -13,9 +13,7 @@ class EliminateDuplicatesTests(unittest.TestCase):
             out_dir = tmp / "out"
             out_dir.mkdir()
 
-            fasta.write_text(
-                ">g1|p1\nAAAA\n>g1|p2\nCCCC\n>g2|p3\nGGGG\n>g1|p4\nTTTT\n"
-            )
+            fasta.write_text(">g1|p1\nAAAA\n>g1|p2\nCCCC\n>g2|p3\nGGGG\n>g1|p4\nTTTT\n")
 
             # score_lookup key uses "|" form; g1|p1 has best score
             score_lookup = {
@@ -62,6 +60,24 @@ class EliminateDuplicatesTests(unittest.TestCase):
                 sorted(kept_ids),
                 sorted(f"g{g}|p29" for g in range(20)),
             )
+
+    def test_colons_in_identifiers_do_not_prevent_removing_lower_score(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            fasta = tmp / "M1.faa"
+            out_dir = tmp / "out"
+            out_dir.mkdir()
+            fasta.write_text(">g1|contig:a|p1\nAAAA\n>g1|contig:a|p2\nCCCC\n")
+            score_lookup = {
+                "g1|contig:a|p1": "g1/contig:a/p1:10.0",
+                "g1|contig:a|p2": "g1/contig:a/p2:8.0",
+            }
+
+            _process_file_worker((str(fasta), str(out_dir), score_lookup))
+
+            kept = (out_dir / "M1.faa").read_text()
+            self.assertIn(">g1|contig:a|p1", kept)
+            self.assertNotIn(">g1|contig:a|p2", kept)
 
 
 if __name__ == "__main__":

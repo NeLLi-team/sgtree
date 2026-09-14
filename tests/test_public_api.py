@@ -12,7 +12,6 @@ from __future__ import annotations
 import importlib
 import unittest
 
-
 _MARKER_SELECTION_PUBLIC = [
     # from the benchmarks layer and tests
     "_load_score_table",

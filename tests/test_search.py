@@ -1,8 +1,6 @@
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import pandas as pd
 
@@ -16,37 +14,37 @@ from sgtree.search import (
 
 
 def _make_cfg(tmp: Path, **overrides) -> Config:
-    kwargs = dict(
-        genomedir=str(tmp / "input"),
-        modeldir=str(tmp / "models.hmm"),
-        outdir=str(tmp / "run"),
-        num_cpus=1,
-        percent_models=0,
-        input_format="faa",
-        lflt_fraction=0.0,
-        aln_method="hmmalign",
-        tree_method="fasttree",
-        iqtree_fast=True,
-        iqtree_model="LG+F+I+G4",
-        hmmsearch_cutoff="cut_ga",
-        hmmsearch_evalue=1e-5,
-        selection_mode="coordinate",
-        selection_max_rounds=5,
-        selection_global_rounds=1,
-        lock_references=False,
-        max_sdup=-1,
-        max_dupl=-1.0,
-        ref=None,
-        ref_concat=str(tmp / "ref_cache"),
-        marker_selection=False,
-        singles=False,
-        singles_mode="delta_rf",
-        num_nei=0,
-        singles_min_rfdist=0.25,
-        keep_intermediates=True,
-        is_ref=False,
-        start_time="now",
-    )
+    kwargs = {
+        "genomedir": str(tmp / "input"),
+        "modeldir": str(tmp / "models.hmm"),
+        "outdir": str(tmp / "run"),
+        "num_cpus": 1,
+        "percent_models": 0,
+        "input_format": "faa",
+        "lflt_fraction": 0.0,
+        "aln_method": "hmmalign",
+        "tree_method": "fasttree",
+        "iqtree_fast": True,
+        "iqtree_model": "LG+F+I+G4",
+        "hmmsearch_cutoff": "cut_ga",
+        "hmmsearch_evalue": 1e-5,
+        "selection_mode": "coordinate",
+        "selection_max_rounds": 5,
+        "selection_global_rounds": 1,
+        "lock_references": False,
+        "max_sdup": -1,
+        "max_dupl": -1.0,
+        "ref": None,
+        "ref_concat": str(tmp / "ref_cache"),
+        "marker_selection": False,
+        "singles": False,
+        "singles_mode": "delta_rf",
+        "num_nei": 0,
+        "singles_min_rfdist": 0.25,
+        "keep_intermediates": True,
+        "is_ref": False,
+        "start_time": "now",
+    }
     kwargs.update(overrides)
     cfg = Config(**kwargs)
     Path(cfg.tables_dir).mkdir(parents=True, exist_ok=True)
@@ -82,6 +80,18 @@ class CountProteinsPerMarkerTests(unittest.TestCase):
     def test_model_with_only_one_genome(self):
         df = pd.DataFrame({0: ["A|p1"], 3: ["M1"]})
         self.assertEqual(_count_proteins_per_marker(df), {"A": {"M1": 1}})
+
+    def test_underscores_do_not_merge_distinct_protein_model_pairs(self):
+        df = pd.DataFrame(
+            {
+                0: ["GenomeA|c1|a_b", "GenomeA|c1|a"],
+                3: ["C", "b_C"],
+            }
+        )
+
+        result = _count_proteins_per_marker(df)
+
+        self.assertEqual(result, {"GenomeA": {"C": 1, "b_C": 1}})
 
     def test_hit_on_ten_complete_plus_one_incomplete_genome(self):
         # 10 complete genomes (2 models each) + 1 incomplete (1 model only).
@@ -188,14 +198,14 @@ HITS_TABLE = (
 
 
 class LengthFilterTests(unittest.TestCase):
-    """The optional length filter must never destroy the hit table."""
+    """The optional length filter removes exact target IDs."""
 
     def _cfg_with_hits(self, tmpdir: str):
         cfg = _make_cfg(Path(tmpdir), lflt_fraction=0.5)
         Path(cfg.hitsoutdir).write_text(HITS_TABLE)
         return cfg
 
-    def test_filters_short_hits_when_grep_succeeds(self):
+    def test_filters_short_hits(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = self._cfg_with_hits(tmpdir)
 
@@ -205,37 +215,49 @@ class LengthFilterTests(unittest.TestCase):
             self.assertEqual(list(finaldf[0]), ["GenomeA|c1|g2", "GenomeA|c1|g3"])
             self.assertEqual(len(Path(cfg.hitsoutdir).read_text().splitlines()), 2)
 
-    def test_grep_error_leaves_the_hit_table_intact(self):
-        # 2 is a grep error; -9 is grep killed by a signal, possibly after
-        # writing a partial file. Neither may replace the hit table.
-        for returncode in (2, -9):
-            with self.subTest(returncode=returncode):
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    cfg = self._cfg_with_hits(tmpdir)
-                    failure = subprocess.CompletedProcess(
-                        args=["grep"], returncode=returncode
-                    )
-
-                    with patch("sgtree.search.subprocess.run", return_value=failure):
-                        with self.assertRaises(RuntimeError) as ctx:
-                            parse_hmmsearch(cfg)
-
-                    self.assertIn(f"grep exited {returncode}", str(ctx.exception))
-                    self.assertEqual(Path(cfg.hitsoutdir).read_text(), HITS_TABLE)
-
-    def test_grep_exit_1_is_treated_as_an_empty_result(self):
-        # grep exits 1 when it selects no lines. That is a legitimate empty
-        # filter result, so the filtered file still replaces the original; the
-        # empty hit table then fails later in pandas, not in the return check.
+    def test_keeps_id_with_removed_id_as_hyphenated_prefix(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = self._cfg_with_hits(tmpdir)
-            empty = subprocess.CompletedProcess(args=["grep"], returncode=1)
+            Path(cfg.hitsoutdir).write_text(
+                HITS_TABLE + "GenomeA|c1|g1-extra - 300 M1 - 300 1e-50 290.0\n"
+            )
 
-            with patch("sgtree.search.subprocess.run", return_value=empty):
-                with self.assertRaises(pd.errors.EmptyDataError):
-                    parse_hmmsearch(cfg)
+            finaldf, _ = parse_hmmsearch(cfg)
 
-            self.assertEqual(Path(cfg.hitsoutdir).read_text(), "")
+            self.assertEqual(
+                list(finaldf[0]),
+                ["GenomeA|c1|g2", "GenomeA|c1|g3", "GenomeA|c1|g1-extra"],
+            )
+
+
+class ParseHmmsearchAssignmentTests(unittest.TestCase):
+    def test_multimarker_protein_does_not_make_incomplete_genome_pass(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = _make_cfg(Path(tmpdir), percent_models=100, model_count=2)
+            Path(cfg.hitsoutdir).write_text(
+                "GenomeSpurious|c1|p1 - 100 M1 - 100 1e-10 50.0\n"
+                "GenomeSpurious|c1|p1 - 100 M2 - 100 1e-20 100.0\n"
+                "GenomeComplete|c1|p1 - 100 M1 - 100 1e-20 100.0\n"
+                "GenomeComplete|c1|p2 - 100 M2 - 100 1e-20 100.0\n"
+            )
+
+            finaldf, counts = parse_hmmsearch(cfg)
+
+            self.assertEqual(
+                set(finaldf[0]), {"GenomeComplete|c1|p1", "GenomeComplete|c1|p2"}
+            )
+            self.assertEqual(counts["GenomeSpurious"], {"M2": 1})
+            count_matrix = pd.read_csv(
+                Path(cfg.outdir) / "marker_count_matrix.csv", index_col=0
+            )
+            self.assertEqual(list(count_matrix.columns), ["GenomeComplete"])
+            self.assertEqual(
+                count_matrix["GenomeComplete"].to_dict(), {"M1": 1, "M2": 1}
+            )
+            self.assertEqual(
+                (Path(cfg.outdir) / "log_genomes_removed.txt").read_text(),
+                "GenomeSpurious\tminmarker:0.5000\n",
+            )
 
 
 if __name__ == "__main__":

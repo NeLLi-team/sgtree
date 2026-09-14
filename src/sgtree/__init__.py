@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 
+from sgtree._version import __version__
 
 # ETE3 still emits import-time SyntaxWarning noise on Python 3.12 from old
 # string literals. Suppress those warnings so normal SGTree startup stays clean.
@@ -17,6 +18,3 @@ warnings.filterwarnings(
     message=r"invalid escape sequence .*",
     category=SyntaxWarning,
 )
-
-
-from sgtree._version import __version__
