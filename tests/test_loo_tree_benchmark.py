@@ -1,7 +1,4 @@
 import unittest
-import warnings
-
-warnings.simplefilter("ignore", SyntaxWarning)
 
 from sgtree.benchmarks import loo_tree_fixtures as benchmark
 
@@ -30,10 +27,7 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
                     tuple(
                         (
                             record_id,
-                            tuple(
-                                tuple(sorted(vote.items()))
-                                for vote in votes
-                            ),
+                            tuple(tuple(sorted(vote.items())) for vote in votes),
                         )
                         for record_id, votes in sorted(
                             fixture["votes_by_record"].items()
@@ -57,7 +51,9 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
             },
         )
         self.assertEqual(signatures(first), signatures(second))
-        self.assertTrue(all(fixture["fixture_tier"] == "mechanism" for fixture in first))
+        self.assertTrue(
+            all(fixture["fixture_tier"] == "mechanism" for fixture in first)
+        )
         self.assertEqual({len(fixture["genomes"]) for fixture in first}, {10, 12})
         self.assertTrue(all(len(fixture["trees"]) == 8 for fixture in first))
         for shape in benchmark.SHAPES:
@@ -70,9 +66,7 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
                 self.assertEqual(len({fixture["genomes"] for fixture in paired}), 1)
                 self.assertEqual(len({fixture["markers"] for fixture in paired}), 1)
         event_ids = [
-            event["event_id"]
-            for fixture in first
-            for event in fixture["events"]
+            event["event_id"] for fixture in first for event in fixture["events"]
         ]
         event_keys = [
             (event["marker_name"], event["observed_record_id"])
@@ -167,9 +161,7 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
                 self.assertEqual(len({fixture["markers"] for fixture in paired}), 1)
 
         truth_events = [
-            (fixture, event)
-            for fixture in first
-            for event in fixture["events"]
+            (fixture, event) for fixture in first for event in fixture["events"]
         ]
         self.assertEqual(len(truth_events), 4)
         self.assertEqual(
@@ -197,9 +189,7 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
             )
             self.assertEqual(event["marker_name"], fixture["markers"][0])
             self.assertTrue(
-                event["observed_record_id"].startswith(
-                    f"{fixture['genomes'][2]}|"
-                )
+                event["observed_record_id"].startswith(f"{fixture['genomes'][2]}|")
             )
             self.assertEqual(event["donor_genome"], donor)
             self.assertTrue(event["is_contaminant"])
@@ -208,9 +198,7 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
             self.assertEqual(
                 [
                     vote["assigned_clade"]
-                    for vote in fixture["votes_by_record"][
-                        event["observed_record_id"]
-                    ]
+                    for vote in fixture["votes_by_record"][event["observed_record_id"]]
                 ],
                 [donor] * 3,
             )
@@ -282,9 +270,7 @@ class LeaveOneOutTreeBenchmarkTests(unittest.TestCase):
                 for limitation in report["scale"]["limitations"]
             )
         )
-        self.assertTrue(
-            all("cmtv_call_count" in case for case in report["cases"])
-        )
+        self.assertTrue(all("cmtv_call_count" in case for case in report["cases"]))
         self.assertGreater(
             report["metrics"]["loo_gene_rich_detection"]["successes"],
             report["metrics"]["cmtv_gene_rich_detection"]["successes"],

@@ -6,5 +6,4 @@ import sys
 
 from . import benchmarks as _benchmarks
 
-
 sys.modules[__name__] = _benchmarks

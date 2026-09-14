@@ -11,6 +11,7 @@ import argparse
 import csv
 import functools
 import hashlib
+import importlib
 import json
 import math
 import random
@@ -18,12 +19,10 @@ import shutil
 import time
 import warnings
 from collections import defaultdict
+from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
-
-warnings.simplefilter("ignore", SyntaxWarning)
-
-from ete3 import Tree
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from sgtree.benchmarks.loo_tree_fixtures import (
     _balanced,
@@ -45,6 +44,39 @@ from sgtree.marker_selection import (
 from sgtree.marker_selection.contig_evidence import contig_gene_vote_gate
 from sgtree.marker_selection.loo_profile import REVIEW_ROBUST_Z, score_loo_profiles
 from sgtree.phylogeny import run_fasttree
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+warnings.simplefilter("ignore", SyntaxWarning)
+Tree = importlib.import_module("ete3").Tree
+NewickError = importlib.import_module("ete3.parser.newick").NewickError
+
+
+class _Pipeline(TypedDict):
+    """One scorer's proposals and guarded removals for a benchmark case."""
+
+    raw: list[dict]
+    budgeted: list[dict]
+    removals: set[tuple[str, str]]
+    guards: list[dict]
+
+
+@dataclass(frozen=True)
+class _CaseContext:
+    """Inputs shared by all calculations for one benchmark case."""
+
+    panel: dict
+    event_class: str
+    marker_cache: dict[tuple[str, str], Path]
+    outdir: Path
+    threads: int
+    clean_species_path: Path
+
+    @property
+    def case_id(self) -> str:
+        """Return the deterministic opaque identifier for this case."""
+        return _case_opaque(self.panel, self.event_class)
 
 
 REGIMES = {
@@ -114,7 +146,7 @@ def _leaf_path(
     if isinstance(topology, str):
         return path if topology == target else None
     for index, child in enumerate(topology):
-        result = _leaf_path(child, target, path + (index,))
+        result = _leaf_path(child, target, (*path, index))
         if result is not None:
             return result
     return None
@@ -126,7 +158,7 @@ def _topology_edge_distance(topology: str | tuple, left: str, right: str) -> int
     if left_path is None or right_path is None:
         raise ValueError("source-distance taxon is absent from the fixed topology")
     shared = 0
-    for left_step, right_step in zip(left_path, right_path):
+    for left_step, right_step in zip(left_path, right_path, strict=False):
         if left_step != right_step:
             break
         shared += 1
@@ -148,14 +180,10 @@ def _source_anchor(
         if genome != recipient
     }
     target_distance = (
-        min(distances.values())
-        if stratum == "near"
-        else max(distances.values())
+        min(distances.values()) if stratum == "near" else max(distances.values())
     )
     choices = sorted(
-        genome
-        for genome, distance in distances.items()
-        if distance == target_distance
+        genome for genome, distance in distances.items() if distance == target_distance
     )
     choice = choices[_seed("source_anchor", regime, seed) % len(choices)]
     return choice, stratum, target_distance
@@ -194,9 +222,7 @@ def _simulate_family(
                 mutation_count = 10 if depth < 2 else 6
             else:
                 mutation_count = max(3, 8 - (depth // 3))
-            branch_rng = random.Random(
-                _seed(*family_key, "branch", path, child_index)
-            )
+            branch_rng = random.Random(_seed(*family_key, "branch", path, child_index))
             for position in branch_rng.sample(range(length), mutation_count):
                 child_sequence[position] = branch_rng.choice(
                     AMINO_ACIDS.replace(child_sequence[position], "")
@@ -236,9 +262,7 @@ def build_panel(
         raise ValueError("unknown fixed sequence-panel coordinate")
 
     panel_id = (
-        _opaque("p", regime, seed)
-        if tag is None
-        else _opaque("p", regime, seed, tag)
+        _opaque("p", regime, seed) if tag is None else _opaque("p", regime, seed, tag)
     )
     fixture_key = (regime, seed) if tag is None else (regime, seed, tag)
     genomes = tuple(_opaque("x", panel_id, index) for index in range(TAXA_COUNT))
@@ -271,8 +295,7 @@ def build_panel(
             length=MARKER_LENGTH,
         )
         marker_sequences[marker] = {
-            genome: family_sequences[genome]
-            for genome in genomes
+            genome: family_sequences[genome] for genome in genomes
         }
         if marker == main_marker:
             source_marker_sequence = family_sequences[source_id]
@@ -329,9 +352,7 @@ def build_panel(
                 record_id = build_sequence_id(
                     genome,
                     contig,
-                    _opaque(
-                        "q", panel_id, "native_contig", marker_index, slot, genome
-                    ),
+                    _opaque("q", panel_id, "native_contig", marker_index, slot, genome),
                 )
                 native_contig_genes[genome].setdefault(contig, {})[record_id] = (
                     family_sequences[genome]
@@ -363,7 +384,9 @@ def build_panel(
         for family in sorted(source_non_marker_sequences)
     ]
 
-    sentinel_recipient_index, sentinel_anchor_index = REGIMES[regime]["sentinel"]
+    sentinel_recipient_index, sentinel_anchor_index = cast(
+        tuple[int, int], REGIMES[regime]["sentinel"]
+    )
     sentinel_recipient = genomes[sentinel_recipient_index]
     sentinel_anchor = genomes[sentinel_anchor_index]
     sentinel_marker = markers[1]
@@ -445,6 +468,7 @@ def build_panel(
 
 
 def build_panels() -> list[dict]:
+    """Build every held-out regime and seed panel in fixed order."""
     return [build_panel(regime, seed) for regime in REGIMES for seed in SEEDS]
 
 
@@ -523,23 +547,24 @@ def build_manifest(panels: list[dict] | None = None) -> dict:
                 "genomes": list(panel["genomes"]),
                 "markers": list(panel["markers"]),
                 "source_id": panel["source_id"],
-                "source_excluded_from_panel": panel["source_id"] not in panel["genomes"],
+                "source_excluded_from_panel": panel["source_id"]
+                not in panel["genomes"],
                 "distance_stratum": panel["main_event"]["distance_stratum"],
                 "sequence_design_sha256": _panel_sequence_hash(panel),
                 "events": events,
             }
         )
-        for event_class in EVENT_CLASSES:
-            case_rows.append(
-                {
-                    "case_id": _case_opaque(panel, event_class),
-                    "panel_id": panel["panel_id"],
-                    "regime": panel["regime"],
-                    "seed": panel["seed"],
-                    "event_class": event_class,
-                    "distance_stratum": panel["main_event"]["distance_stratum"],
-                }
-            )
+        case_rows.extend(
+            {
+                "case_id": _case_opaque(panel, event_class),
+                "panel_id": panel["panel_id"],
+                "regime": panel["regime"],
+                "seed": panel["seed"],
+                "event_class": event_class,
+                "distance_stratum": panel["main_event"]["distance_stratum"],
+            }
+            for event_class in EVENT_CLASSES
+        )
     marker_counts = sorted({len(panel["markers"]) for panel in panels})
     return {
         "benchmark_kind": "synthetic_aligned_protein_inference",
@@ -585,12 +610,8 @@ def _case_state(panel: dict, event_class: str) -> dict:
             records[sentinel["marker"]][sentinel["recipient"]] = sentinel[
                 "observed_record_id"
             ]
-            sequences[sentinel["marker"]][sentinel["recipient"]] = sentinel[
-                "sequence"
-            ]
-            contig_genes[sentinel["contig_id"]] = dict(
-                sentinel["candidate_genes"]
-            )
+            sequences[sentinel["marker"]][sentinel["recipient"]] = sentinel["sequence"]
+            contig_genes[sentinel["contig_id"]] = dict(sentinel["candidate_genes"])
             events.append(sentinel)
     return {
         "records": records,
@@ -620,7 +641,9 @@ def _reference_proteomes(panel: dict) -> dict[str, dict[str, str]]:
 
 def _write_fasta(path: Path, records: list[tuple[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f">{record_id}\n{sequence}\n" for record_id, sequence in records))
+    path.write_text(
+        "".join(f">{record_id}\n{sequence}\n" for record_id, sequence in records)
+    )
 
 
 @functools.cache
@@ -655,8 +678,10 @@ def _tree_cache_digest(records: list[tuple[str, str]], threads: int) -> str:
 
 def _tree_has_expected_leaves(tree_path: Path, expected: list[str]) -> bool:
     try:
-        observed = [str(leaf.name) for leaf in Tree(str(tree_path), format=1).iter_leaves()]
-    except Exception:
+        observed = [
+            str(leaf.name) for leaf in Tree(str(tree_path), format=1).iter_leaves()
+        ]
+    except (NewickError, OSError):
         return False
     return len(observed) == len(expected) and set(observed) == set(expected)
 
@@ -676,9 +701,8 @@ def _ensure_tree(
             cached = json.loads(cache_path.read_text())
         except (OSError, json.JSONDecodeError):
             cached = {}
-        if (
-            cached.get("input_sha256") == input_digest
-            and _tree_has_expected_leaves(tree_path, expected_leaves)
+        if cached.get("input_sha256") == input_digest and _tree_has_expected_leaves(
+            tree_path, expected_leaves
         ):
             return False
     _write_fasta(alignment_path, records)
@@ -777,9 +801,7 @@ def _species_alignment(
             record_id = state["records"][marker][genome]
             sequence = state["sequences"][marker][genome]
             blocks.append(
-                "-" * len(sequence)
-                if (marker, record_id) in removals
-                else sequence
+                "-" * len(sequence) if (marker, record_id) in removals else sequence
             )
         records.append((genome, "".join(blocks)))
     return records
@@ -789,8 +811,7 @@ def _species_tree(
     panel: dict,
     state: dict,
     *,
-    case_id: str,
-    arm: str,
+    tree_label: str,
     removals: set[tuple[str, str]],
     outdir: Path,
     threads: int,
@@ -799,7 +820,7 @@ def _species_tree(
         json.dumps(sorted(removals), separators=(",", ":")).encode(),
         digest_size=6,
     ).hexdigest()
-    stem = f"{case_id}_{arm}_{digest}"
+    stem = f"{tree_label}_{digest}"
     alignment_path = outdir / "species" / "alignments" / f"{stem}.faa"
     tree_path = outdir / "species" / "trees" / f"{stem}.nwk"
     built = _ensure_tree(
@@ -832,14 +853,8 @@ def _rf_norm(reference_path: Path, observed_path: Path) -> float:
 def _patristic_nrmse(reference_path: Path, observed_path: Path) -> float:
     reference = Tree(str(reference_path))
     observed = Tree(str(observed_path))
-    reference_leaves = {
-        str(leaf.name): leaf
-        for leaf in reference.iter_leaves()
-    }
-    observed_leaves = {
-        str(leaf.name): leaf
-        for leaf in observed.iter_leaves()
-    }
+    reference_leaves = {str(leaf.name): leaf for leaf in reference.iter_leaves()}
+    observed_leaves = {str(leaf.name): leaf for leaf in observed.iter_leaves()}
     shared = sorted(reference_leaves.keys() & observed_leaves.keys())
     pairs = list(combinations(shared, 2))
     if not pairs:
@@ -870,10 +885,7 @@ def _patristic_nrmse(reference_path: Path, observed_path: Path) -> float:
 
 
 def _marker_trees(paths: dict[str, Path]) -> dict[str, Tree]:
-    return {
-        marker: Tree(str(path), format=1)
-        for marker, path in sorted(paths.items())
-    }
+    return {marker: Tree(str(path), format=1) for marker, path in sorted(paths.items())}
 
 
 def _all_marker_record_ids(panel: dict) -> set[str]:
@@ -948,10 +960,14 @@ def _common_attachment_audits(
         genome, contig_id, _gene_id = parse_sequence_id(str(row["leaf_name"]))
         candidate_genes = state["contig_genes"].get(contig_id, {})
         attachment = set(row["loo_attachment_taxa"])
-        background = {
-            str(leaf.name).split("|", 1)[0]
-            for leaf in trees[str(row["marker_name"])].iter_leaves()
-        } - {genome} - attachment
+        background = (
+            {
+                str(leaf.name).split("|", 1)[0]
+                for leaf in trees[str(row["marker_name"])].iter_leaves()
+            }
+            - {genome}
+            - attachment
+        )
         evidence = assign_contig_gene_split_votes(
             candidate_genes,
             reference_proteomes,
@@ -985,8 +1001,7 @@ def _guard_proposals(
         marker_path = marker_paths[marker]
         original = Tree(str(marker_path), format=1)
         accepted_leaf_names = sorted(
-            str(proposal["leaf_name"])
-            for proposal in marker_proposals
+            str(proposal["leaf_name"]) for proposal in marker_proposals
         )
         accepted_leaf_set = set(accepted_leaf_names)
         remaining = [
@@ -1026,19 +1041,26 @@ def _guard_proposals(
     return removals, decisions
 
 
-def _cmtv_proposals(cmtv_rows) -> list[dict]:
-    return [
-        {
-            "marker_name": str(row.marker_name),
-            "leaf_name": str(row.leaf_name),
-            "genome": str(row.genome),
-            "score": float(row.cmtv_combined),
-            "delta_rf": 0.0,
-            "topoknn_score": 0.0,
-        }
-        for row in cmtv_rows.itertuples(index=False)
-        if row.cmtv_class == "contamination_candidate"
+def _cmtv_proposals(cmtv_rows: pd.DataFrame) -> list[dict]:
+    columns = cmtv_rows[
+        ["marker_name", "leaf_name", "genome", "cmtv_combined", "cmtv_class"]
     ]
+    proposals = []
+    for row in columns.itertuples(index=False, name=None):
+        marker_name, leaf_name, genome, cmtv_combined, cmtv_class = row
+        if cmtv_class != "contamination_candidate":
+            continue
+        proposals.append(
+            {
+                "marker_name": str(marker_name),
+                "leaf_name": str(leaf_name),
+                "genome": str(genome),
+                "score": float(cmtv_combined),
+                "delta_rf": 0.0,
+                "topoknn_score": 0.0,
+            }
+        )
+    return proposals
 
 
 def _recipient_consensus_proposals(
@@ -1067,17 +1089,16 @@ def _recipient_consensus_proposals(
 
 def _comparison_rows(
     *,
-    case_id: str,
     panel: dict,
     event_class: str,
     events: list[dict],
     rows_by_key: dict[tuple[str, str], dict],
     audits: dict[tuple[str, str], dict],
-    pipelines: dict[str, dict],
+    pipelines: dict[str, _Pipeline],
 ) -> list[dict]:
+    case_id = _case_opaque(panel, event_class)
     events_by_key = {
-        (event["marker"], event["observed_record_id"]): event
-        for event in events
+        (event["marker"], event["observed_record_id"]): event for event in events
     }
     raw_keys = {
         scorer: {
@@ -1126,11 +1147,7 @@ def _comparison_rows(
         evidence = audit.get("evidence", {})
         for scorer in pipelines:
             raw_call = key in raw_keys[scorer]
-            contig_gate_pass = (
-                bool(gate.get("contig_gate_pass"))
-                if raw_call
-                else None
-            )
+            contig_gate_pass = bool(gate.get("contig_gate_pass")) if raw_call else None
             budget_pass = key in budgeted_keys[scorer]
             final_removed = key in pipelines[scorer]["removals"]
             rf_decision = guard_decisions[scorer].get(key)
@@ -1169,25 +1186,19 @@ def _comparison_rows(
                     "marker_name": marker,
                     "record_id": record_id,
                     "recipient": (
-                        event["recipient"]
-                        if event
-                        else parse_sequence_id(record_id)[0]
+                        event["recipient"] if event else parse_sequence_id(record_id)[0]
                     ),
                     "scorer": scorer,
                     "raw_call": raw_call,
                     "raw_score": raw_scores[scorer].get(key),
                     "attachment_clade": row["loo_attachment_clade"],
                     "evidence_status": (
-                        evidence.get("input_status")
-                        if raw_call
-                        else None
+                        evidence.get("input_status") if raw_call else None
                     ),
                     "contig_gate_pass": contig_gate_pass,
                     "gate_result": gate_result,
                     "gate_reason": (
-                        gate.get("contig_abstention_reason")
-                        if raw_call
-                        else None
+                        gate.get("contig_abstention_reason") if raw_call else None
                     ),
                     "budget_pass": budget_pass,
                     "rf_guard_decision": rf_decision,
@@ -1198,16 +1209,269 @@ def _comparison_rows(
     return result
 
 
+def _reference_species_trees(
+    context: _CaseContext,
+    state: dict,
+    truth_removals: set[tuple[str, str]],
+) -> tuple[Path, bool, Path, bool]:
+    if truth_removals:
+        truth_path, truth_built = _species_tree(
+            context.panel,
+            state,
+            tree_label=f"{context.case_id}_truth_reference",
+            removals=truth_removals,
+            outdir=context.outdir,
+            threads=context.threads,
+        )
+    else:
+        truth_path = context.clean_species_path
+        truth_built = False
+    initial_path, initial_built = _species_tree(
+        context.panel,
+        state,
+        tree_label=f"{context.case_id}_initial",
+        removals=set(),
+        outdir=context.outdir,
+        threads=context.threads,
+    )
+    return truth_path, truth_built, initial_path, initial_built
+
+
+def _build_scorer_pipelines(
+    panel: dict,
+    raw_proposals: dict[str, list[dict]],
+    audits: dict[tuple[str, str], dict],
+    marker_paths: dict[str, Path],
+    initial_species_path: Path,
+) -> dict[str, _Pipeline]:
+    pipelines: dict[str, _Pipeline] = {}
+    for scorer, proposals in raw_proposals.items():
+        evidence_passed = [
+            proposal
+            for proposal in proposals
+            if audits[
+                (
+                    str(proposal["marker_name"]),
+                    str(proposal["leaf_name"]),
+                )
+            ]["gate"]["contig_gate_pass"]
+        ]
+        budgeted = _select_with_budget(evidence_passed, panel)
+        removals, guards = _guard_proposals(
+            budgeted,
+            marker_paths=marker_paths,
+            species_tree_path=initial_species_path,
+            mode="loo_profile",
+        )
+        pipelines[scorer] = {
+            "raw": proposals,
+            "budgeted": budgeted,
+            "removals": removals,
+            "guards": guards,
+        }
+    return pipelines
+
+
+def _final_species_trees(
+    context: _CaseContext,
+    state: dict,
+    pipelines: dict[str, _Pipeline],
+    truth_removals: set[tuple[str, str]],
+    truth_path: Path,
+    initial_path: Path,
+) -> tuple[dict[str, Path], int]:
+    paths: dict[str, Path] = {}
+    builds = 0
+    for arm, pipeline in pipelines.items():
+        removals = pipeline["removals"]
+        if removals and removals == truth_removals:
+            paths[arm] = truth_path
+        elif removals:
+            path, built = _species_tree(
+                context.panel,
+                state,
+                tree_label=f"{context.case_id}_{arm}",
+                removals=removals,
+                outdir=context.outdir,
+                threads=context.threads,
+            )
+            builds += int(built)
+            paths[arm] = path
+        else:
+            paths[arm] = initial_path
+    return paths, builds
+
+
+def _review_tier_rows(
+    context: _CaseContext,
+    review_keys: set[tuple[str, str]],
+    rows_by_key: dict[tuple[str, str], dict],
+    audits: dict[tuple[str, str], dict],
+    truth_keys: set[tuple[str, str]],
+    gene_rich_truth: set[tuple[str, str]],
+) -> tuple[set[tuple[str, str]], list[dict]]:
+    margin_stats = {
+        key: _informative_margin_stats(audits[key]["evidence"]["votes"])
+        for key in review_keys
+    }
+    warned_keys: set[tuple[str, str]] = set()
+    for key in review_keys:
+        margin_mean = margin_stats[key][0]
+        if (
+            audits[key]["gate"]["contig_gate_pass"]
+            and margin_mean is not None
+            and margin_mean >= REVIEW_MIN_VOTE_MARGIN
+        ):
+            warned_keys.add(key)
+
+    rows = []
+    for key in sorted(review_keys):
+        loo_row = rows_by_key[key]
+        gate = audits[key]["gate"]
+        evidence = audits[key]["evidence"]
+        margin_mean, margin_min = margin_stats[key]
+        rows.append(
+            {
+                "case_id": context.case_id,
+                "panel_id": context.panel["panel_id"],
+                "regime": context.panel["regime"],
+                "seed": context.panel["seed"],
+                "event_class": context.event_class,
+                "distance_stratum": context.panel["main_event"]["distance_stratum"],
+                "marker_name": key[0],
+                "record_id": key[1],
+                "genome": str(loo_row["genome"]),
+                "loo_robust_z": loo_row["loo_robust_z"],
+                "loo_target_discordance": loo_row["loo_target_discordance"],
+                "loo_voter_upper": loo_row["loo_voter_upper"],
+                "loo_target_support": loo_row["loo_target_support"],
+                "loo_voter_search_mode": loo_row["loo_voter_search_mode"],
+                "evidence_status": evidence.get("input_status"),
+                "informative_gene_count": gate.get("informative_gene_count", 0),
+                "contig_gate_pass": gate.get("contig_gate_pass", False),
+                "contig_abstention_reason": gate.get("contig_abstention_reason"),
+                "vote_margin_mean": margin_mean,
+                "vote_margin_min": margin_min,
+                "margin_pass": (
+                    margin_mean is not None and margin_mean >= REVIEW_MIN_VOTE_MARGIN
+                ),
+                "review_warning": key in warned_keys,
+                "is_truth_event": key in truth_keys,
+                "is_gene_rich_truth": key in gene_rich_truth,
+            }
+        )
+    return warned_keys, rows
+
+
+def _method_counts(
+    pipelines: dict[str, _Pipeline],
+    truth_keys: set[tuple[str, str]],
+    gene_rich_truth: set[tuple[str, str]],
+    event_class: str,
+    sentinel_key: tuple[str, str],
+) -> dict[str, int | bool]:
+    counts: dict[str, int | bool] = {}
+    for method, pipeline in pipelines.items():
+        removals = pipeline["removals"]
+        counts.update(
+            {
+                f"{method}_truth_positive_count": len(removals & truth_keys),
+                f"{method}_truth_false_positive_count": len(removals - truth_keys),
+                f"{method}_gene_rich_true_positive_count": len(
+                    removals & gene_rich_truth
+                ),
+                f"{method}_gene_rich_false_positive_count": (
+                    len(removals - gene_rich_truth)
+                    if event_class == "gene_rich_contaminant"
+                    else 0
+                ),
+                f"{method}_unsupported_action_count": (
+                    len(removals - gene_rich_truth)
+                    if event_class == "gene_rich_contaminant"
+                    else len(removals)
+                ),
+                f"{method}_sentinel_removed": sentinel_key in removals,
+            }
+        )
+    return counts
+
+
+def _event_results(
+    state: dict,
+    rows_by_key: dict[tuple[str, str], dict],
+    audits: dict[tuple[str, str], dict],
+    warned_keys: set[tuple[str, str]],
+    pipelines: dict[str, _Pipeline],
+    comparison_rows: list[dict],
+) -> list[dict]:
+    comparison_by_event = {
+        (row["marker_name"], row["record_id"], row["scorer"]): row
+        for row in comparison_rows
+        if row["is_declared_event"]
+    }
+    results = []
+    for event in state["events"]:
+        key = (event["marker"], event["observed_record_id"])
+        loo_row = rows_by_key[key]
+        audit = audits.get(key, {})
+        event_result = {
+            "event_id": event["event_id"],
+            "event_kind": event["event_kind"],
+            "is_contaminant": event["is_contaminant"],
+            "marker_name": event["marker"],
+            "record_id": event["observed_record_id"],
+            "recipient": event["recipient"],
+            "anchor": event["anchor"],
+            "loo_class": loo_row["loo_class"],
+            "loo_abstention_reason": loo_row["loo_abstention_reason"],
+            "loo_score": loo_row["loo_score"],
+            "loo_target_support": loo_row["loo_target_support"],
+            "loo_attachment_clade": loo_row["loo_attachment_clade"],
+            "sequence_evidence_status": audit.get("evidence", {}).get("input_status"),
+            "sequence_informative_vote_count": audit.get("evidence", {}).get(
+                "informative_vote_count", 0
+            ),
+            "contig_gate_pass": audit.get("gate", {}).get("contig_gate_pass", False),
+            "contig_abstention_reason": audit.get("gate", {}).get(
+                "contig_abstention_reason"
+            ),
+            "loo_robust_z": loo_row["loo_robust_z"],
+            "loo_review_candidate": loo_row["loo_review_candidate"],
+            "loo_review_warning": key in warned_keys,
+            "loo_voter_search_mode": loo_row["loo_voter_search_mode"],
+        }
+        for scorer in pipelines:
+            comparison = comparison_by_event[(*key, scorer)]
+            event_result.update(
+                {
+                    f"{scorer}_raw_call": comparison["raw_call"],
+                    f"{scorer}_budget_pass": comparison["budget_pass"],
+                    f"{scorer}_removed": comparison["final_action"] == "removed",
+                    f"{scorer}_reason": comparison["reason"],
+                }
+            )
+        results.append(event_result)
+    return results
+
+
 def _score_case(
     panel: dict,
     event_class: str,
     *,
-    marker_cache: dict,
+    marker_cache: dict[tuple[str, str], Path],
     outdir: Path,
     threads: int,
     clean_species_path: Path,
 ) -> tuple[dict, int]:
-    case_id = _case_opaque(panel, event_class)
+    context = _CaseContext(
+        panel=panel,
+        event_class=event_class,
+        marker_cache=marker_cache,
+        outdir=outdir,
+        threads=threads,
+        clean_species_path=clean_species_path,
+    )
+    case_id = context.case_id
     state = _case_state(panel, event_class)
     marker_paths = _case_tree_paths(panel, event_class, marker_cache)
     trees = _marker_trees(marker_paths)
@@ -1220,42 +1484,27 @@ def _score_case(
         if event_class in {"gene_rich_contaminant", "solo_marker_contaminant"}
         else set()
     )
-    if truth_reference_removals:
-        truth_reference_path, truth_reference_built = _species_tree(
-            panel,
-            state,
-            case_id=case_id,
-            arm="truth_reference",
-            removals=truth_reference_removals,
-            outdir=outdir,
-            threads=threads,
-        )
-    else:
-        truth_reference_path = clean_species_path
-        truth_reference_built = False
-    initial_species_path, initial_built = _species_tree(
-        panel,
+    (
+        truth_reference_path,
+        truth_reference_built,
+        initial_species_path,
+        initial_built,
+    ) = _reference_species_trees(
+        context,
         state,
-        case_id=case_id,
-        arm="initial",
-        removals=set(),
-        outdir=outdir,
-        threads=threads,
+        truth_reference_removals,
     )
 
     loo_rows = score_loo_profiles(trees)
     rows_by_key = {
-        (str(row["marker_name"]), str(row["leaf_name"])): row
-        for row in loo_rows
+        (str(row["marker_name"]), str(row["leaf_name"])): row for row in loo_rows
     }
     initial_species_tree = Tree(str(initial_species_path))
     cmtv_marker_rf_distances = {
         marker: _rf_distance_between(initial_species_tree, tree)
         for marker, tree in trees.items()
     }
-    cmtv_marker_rf_weights = cmtv_rf_quality_weights(
-        cmtv_marker_rf_distances
-    )
+    cmtv_marker_rf_weights = cmtv_rf_quality_weights(cmtv_marker_rf_distances)
     cmtv_rows = _score_cmtv_current(
         trees,
         loo_rows,
@@ -1287,134 +1536,46 @@ def _score_case(
         rows_by_key,
         raw_candidate_keys | review_keys,
     )
-    pipelines = {}
-    for scorer, proposals in raw_proposals.items():
-        evidence_passed = [
-            proposal
-            for proposal in proposals
-            if common_audits[
-                (
-                    str(proposal["marker_name"]),
-                    str(proposal["leaf_name"]),
-                )
-            ]["gate"]["contig_gate_pass"]
-        ]
-        budgeted = _select_with_budget(evidence_passed, panel)
-        removals, guards = _guard_proposals(
-            budgeted,
-            marker_paths=marker_paths,
-            species_tree_path=initial_species_path,
-            mode="loo_profile",
-        )
-        pipelines[scorer] = {
-            "raw": proposals,
-            "budgeted": budgeted,
-            "removals": removals,
-            "guards": guards,
-        }
+    pipelines = _build_scorer_pipelines(
+        panel,
+        raw_proposals,
+        common_audits,
+        marker_paths,
+        initial_species_path,
+    )
 
     species_builds = int(initial_built) + int(truth_reference_built)
-    final_paths = {}
-    for arm, pipeline in pipelines.items():
-        removals = pipeline["removals"]
-        if removals and removals == truth_reference_removals:
-            final_paths[arm] = truth_reference_path
-        elif removals:
-            path, built = _species_tree(
-                panel,
-                state,
-                case_id=case_id,
-                arm=arm,
-                removals=removals,
-                outdir=outdir,
-                threads=threads,
-            )
-            species_builds += int(built)
-            final_paths[arm] = path
-        else:
-            final_paths[arm] = initial_species_path
+    final_paths, final_builds = _final_species_trees(
+        context,
+        state,
+        pipelines,
+        truth_reference_removals,
+        truth_reference_path,
+        initial_species_path,
+    )
+    species_builds += final_builds
 
     truth_keys = (
         {main_key}
         if event_class in {"gene_rich_contaminant", "solo_marker_contaminant"}
         else set()
     )
-    gene_rich_truth = (
-        {main_key}
-        if event_class == "gene_rich_contaminant"
-        else set()
+    gene_rich_truth = {main_key} if event_class == "gene_rich_contaminant" else set()
+    review_warned_keys, review_rows = _review_tier_rows(
+        context,
+        review_keys,
+        rows_by_key,
+        common_audits,
+        truth_keys,
+        gene_rich_truth,
     )
-    review_margin_stats = {
-        key: _informative_margin_stats(common_audits[key]["evidence"]["votes"])
-        for key in review_keys
-    }
-    review_warned_keys = {
-        key
-        for key in review_keys
-        if common_audits[key]["gate"]["contig_gate_pass"]
-        and review_margin_stats[key][0] is not None
-        and review_margin_stats[key][0] >= REVIEW_MIN_VOTE_MARGIN
-    }
-    review_rows = []
-    for key in sorted(review_keys):
-        row = rows_by_key[key]
-        gate = common_audits[key]["gate"]
-        evidence = common_audits[key]["evidence"]
-        margin_mean, margin_min = review_margin_stats[key]
-        review_rows.append(
-            {
-                "case_id": case_id,
-                "panel_id": panel["panel_id"],
-                "regime": panel["regime"],
-                "seed": panel["seed"],
-                "event_class": event_class,
-                "distance_stratum": main["distance_stratum"],
-                "marker_name": key[0],
-                "record_id": key[1],
-                "genome": str(row["genome"]),
-                "loo_robust_z": row["loo_robust_z"],
-                "loo_target_discordance": row["loo_target_discordance"],
-                "loo_voter_upper": row["loo_voter_upper"],
-                "loo_target_support": row["loo_target_support"],
-                "loo_voter_search_mode": row["loo_voter_search_mode"],
-                "evidence_status": evidence.get("input_status"),
-                "informative_gene_count": gate.get("informative_gene_count", 0),
-                "contig_gate_pass": gate.get("contig_gate_pass", False),
-                "contig_abstention_reason": gate.get("contig_abstention_reason"),
-                "vote_margin_mean": margin_mean,
-                "vote_margin_min": margin_min,
-                "margin_pass": (
-                    margin_mean is not None
-                    and margin_mean >= REVIEW_MIN_VOTE_MARGIN
-                ),
-                "review_warning": key in review_warned_keys,
-                "is_truth_event": key in truth_keys,
-                "is_gene_rich_truth": key in gene_rich_truth,
-            }
-        )
-    method_counts = {}
-    for method, pipeline in pipelines.items():
-        removals = pipeline["removals"]
-        method_counts.update(
-            {
-                f"{method}_truth_positive_count": len(removals & truth_keys),
-                f"{method}_truth_false_positive_count": len(removals - truth_keys),
-                f"{method}_gene_rich_true_positive_count": len(
-                    removals & gene_rich_truth
-                ),
-                f"{method}_gene_rich_false_positive_count": (
-                    len(removals - gene_rich_truth)
-                    if event_class == "gene_rich_contaminant"
-                    else 0
-                ),
-                f"{method}_unsupported_action_count": (
-                    len(removals - gene_rich_truth)
-                    if event_class == "gene_rich_contaminant"
-                    else len(removals)
-                ),
-                f"{method}_sentinel_removed": sentinel_key in removals,
-            }
-        )
+    method_counts = _method_counts(
+        pipelines,
+        truth_keys,
+        gene_rich_truth,
+        event_class,
+        sentinel_key,
+    )
     observed_record_keys = {
         (marker, record_id)
         for marker, per_genome in state["records"].items()
@@ -1423,9 +1584,7 @@ def _score_case(
     loo_removals = pipelines["loo"]["removals"]
     unaffected_record_keys = observed_record_keys - truth_keys
     loo_retained_record_keys = observed_record_keys - loo_removals
-    loo_unaffected_losses = sorted(
-        unaffected_record_keys - loo_retained_record_keys
-    )
+    loo_unaffected_losses = sorted(unaffected_record_keys - loo_retained_record_keys)
     loo_remaining_markers_by_genome = {
         genome: sum(
             (marker, state["records"][marker][genome]) not in loo_removals
@@ -1450,7 +1609,6 @@ def _score_case(
     )
 
     comparison_rows = _comparison_rows(
-        case_id=case_id,
         panel=panel,
         event_class=event_class,
         events=state["events"],
@@ -1458,57 +1616,14 @@ def _score_case(
         audits=common_audits,
         pipelines=pipelines,
     )
-    comparison_by_event = {
-        (row["marker_name"], row["record_id"], row["scorer"]): row
-        for row in comparison_rows
-        if row["is_declared_event"]
-    }
-    events = []
-    for event in state["events"]:
-        key = (event["marker"], event["observed_record_id"])
-        row = rows_by_key[key]
-        audit = common_audits.get(key, {})
-        event_result = {
-            "event_id": event["event_id"],
-            "event_kind": event["event_kind"],
-            "is_contaminant": event["is_contaminant"],
-            "marker_name": event["marker"],
-            "record_id": event["observed_record_id"],
-            "recipient": event["recipient"],
-            "anchor": event["anchor"],
-            "loo_class": row["loo_class"],
-            "loo_abstention_reason": row["loo_abstention_reason"],
-            "loo_score": row["loo_score"],
-            "loo_target_support": row["loo_target_support"],
-            "loo_attachment_clade": row["loo_attachment_clade"],
-            "sequence_evidence_status": audit.get("evidence", {}).get(
-                "input_status"
-            ),
-            "sequence_informative_vote_count": audit.get("evidence", {}).get(
-                "informative_vote_count", 0
-            ),
-            "contig_gate_pass": audit.get("gate", {}).get(
-                "contig_gate_pass", False
-            ),
-            "contig_abstention_reason": audit.get("gate", {}).get(
-                "contig_abstention_reason"
-            ),
-            "loo_robust_z": row["loo_robust_z"],
-            "loo_review_candidate": row["loo_review_candidate"],
-            "loo_review_warning": key in review_warned_keys,
-            "loo_voter_search_mode": row["loo_voter_search_mode"],
-        }
-        for scorer in pipelines:
-            comparison = comparison_by_event[(*key, scorer)]
-            event_result.update(
-                {
-                    f"{scorer}_raw_call": comparison["raw_call"],
-                    f"{scorer}_budget_pass": comparison["budget_pass"],
-                    f"{scorer}_removed": comparison["final_action"] == "removed",
-                    f"{scorer}_reason": comparison["reason"],
-                }
-            )
-        events.append(event_result)
+    events = _event_results(
+        state,
+        rows_by_key,
+        common_audits,
+        review_warned_keys,
+        pipelines,
+        comparison_rows,
+    )
     if event_class == "gene_rich_contaminant":
         evaluation_role = (
             "primary_far_source_positive"
@@ -1534,7 +1649,8 @@ def _score_case(
         "taxa_count": TAXA_COUNT,
         "marker_count": len(panel["markers"]),
         "truth_reference_removed_count": len(truth_reference_removals),
-        "truth_reference_preserves_sentinel": sentinel_key not in truth_reference_removals,
+        "truth_reference_preserves_sentinel": sentinel_key
+        not in truth_reference_removals,
         "cmtv_k5_neighbors_preserved_posthoc": cmtv_k5_preserved,
         "cmtv_marker_rf_distances": cmtv_marker_rf_distances,
         "cmtv_marker_rf_weights": cmtv_marker_rf_weights,
@@ -1558,17 +1674,13 @@ def _score_case(
             for marker, record_id in loo_unaffected_losses
         ],
         "loo_unknown_removal_count": len(loo_removals - observed_record_keys),
-        "loo_min_remaining_marker_count": min(
-            loo_remaining_markers_by_genome.values()
-        ),
+        "loo_min_remaining_marker_count": min(loo_remaining_markers_by_genome.values()),
         "loo_final_taxa": final_taxa["loo"],
         "loo_final_taxa_match": final_taxa["loo"] == sorted(panel["genomes"]),
-        "cmtv_weighted_final_taxa_match": final_taxa["cmtv_weighted"] == sorted(
-            panel["genomes"]
-        ),
-        "recipient_consensus_final_taxa_match": final_taxa[
-            "recipient_consensus"
-        ] == sorted(panel["genomes"]),
+        "cmtv_weighted_final_taxa_match": final_taxa["cmtv_weighted"]
+        == sorted(panel["genomes"]),
+        "recipient_consensus_final_taxa_match": final_taxa["recipient_consensus"]
+        == sorted(panel["genomes"]),
         "initial_rf_norm": _rf_norm(truth_reference_path, initial_species_path),
         "loo_rf_norm": _rf_norm(truth_reference_path, final_paths["loo"]),
         "cmtv_weighted_rf_norm": _rf_norm(
@@ -1636,9 +1748,7 @@ def _aggregate_method_metrics(
     gene_cases = [
         case for case in cases if case["event_class"] == "gene_rich_contaminant"
     ]
-    far_gene_cases = [
-        case for case in gene_cases if case["distance_stratum"] == "far"
-    ]
+    far_gene_cases = [case for case in gene_cases if case["distance_stratum"] == "far"]
     near_gene_cases = [
         case for case in gene_cases if case["distance_stratum"] == "near"
     ]
@@ -1649,25 +1759,16 @@ def _aggregate_method_metrics(
     contaminated_cases = gene_cases + solo_cases
     removed_key = f"{field_prefix}_removed_count"
     gene_tp = sum(
-        case[f"{field_prefix}_gene_rich_true_positive_count"]
-        for case in gene_cases
+        case[f"{field_prefix}_gene_rich_true_positive_count"] for case in gene_cases
     )
     gene_fp = sum(
-        case[f"{field_prefix}_gene_rich_false_positive_count"]
-        for case in gene_cases
+        case[f"{field_prefix}_gene_rich_false_positive_count"] for case in gene_cases
     )
-    truth_tp = sum(
-        case[f"{field_prefix}_truth_positive_count"]
-        for case in cases
-    )
-    truth_fp = sum(
-        case[f"{field_prefix}_truth_false_positive_count"]
-        for case in cases
-    )
+    truth_tp = sum(case[f"{field_prefix}_truth_positive_count"] for case in cases)
+    truth_fp = sum(case[f"{field_prefix}_truth_false_positive_count"] for case in cases)
     removals = sum(case[removed_key] for case in cases)
     unsupported = sum(
-        case[f"{field_prefix}_unsupported_action_count"]
-        for case in cases
+        case[f"{field_prefix}_unsupported_action_count"] for case in cases
     )
     return {
         f"{label}_gene_rich_recall": _interval(
@@ -1717,10 +1818,7 @@ def _aggregate_method_metrics(
             "held_out_solo_panel",
         ),
         f"{label}_sentinel_safety": _interval(
-            sum(
-                not case[f"{field_prefix}_sentinel_removed"]
-                for case in gene_cases
-            ),
+            sum(not case[f"{field_prefix}_sentinel_removed"] for case in gene_cases),
             len(gene_cases),
             "held_out_native_contig_sentinel",
         ),
@@ -1744,12 +1842,10 @@ def _raw_discrimination_metrics(comparison_rows: list[dict]) -> dict:
         rows = [
             row
             for row in comparison_rows
-            if row["scorer"] == scorer
-            and row["event_class"] == "gene_rich_contaminant"
+            if row["scorer"] == scorer and row["event_class"] == "gene_rich_contaminant"
         ]
         positives = sum(
-            row["event_kind"] == "source_replacement"
-            and row["is_contaminant"]
+            row["event_kind"] == "source_replacement" and row["is_contaminant"]
             for row in rows
         )
         true_positives = sum(
@@ -1761,8 +1857,7 @@ def _raw_discrimination_metrics(comparison_rows: list[dict]) -> dict:
         false_positives = sum(
             row["raw_call"]
             and not (
-                row["event_kind"] == "source_replacement"
-                and row["is_contaminant"]
+                row["event_kind"] == "source_replacement" and row["is_contaminant"]
             )
             for row in rows
         )
@@ -1776,26 +1871,17 @@ def _raw_discrimination_metrics(comparison_rows: list[dict]) -> dict:
                 if true_positives + false_positives
                 else 0.0
             ),
-            "recall": (
-                true_positives / positives
-                if positives
-                else 0.0
-            ),
+            "recall": (true_positives / positives if positives else 0.0),
             "f1": _f1(true_positives, false_positives, false_negatives),
         }
     return metrics
 
 
 def _wp1_decision(raw_metrics: dict) -> dict:
-    scores = {
-        scorer: float(values["f1"])
-        for scorer, values in raw_metrics.items()
-    }
+    scores = {scorer: float(values["f1"]) for scorer, values in raw_metrics.items()}
     best_score = max(scores.values())
     tied = sorted(
-        scorer
-        for scorer, score in scores.items()
-        if abs(score - best_score) <= 1e-12
+        scorer for scorer, score in scores.items() if abs(score - best_score) <= 1e-12
     )
     if scores["loo"] < best_score - 1e-12:
         return {
@@ -1806,7 +1892,9 @@ def _wp1_decision(raw_metrics: dict) -> dict:
             "tie_break_order": list(SCORER_SIMPLICITY_ORDER),
             "scores": scores,
             "tied_scorers": tied,
-            "rationale": "LOO has worse raw candidate discrimination than another scorer.",
+            "rationale": (
+                "LOO has worse raw candidate discrimination than another scorer."
+            ),
         }
     if tied == ["loo"]:
         return {
@@ -1819,9 +1907,7 @@ def _wp1_decision(raw_metrics: dict) -> dict:
             "tied_scorers": tied,
             "rationale": "LOO has the best raw candidate discrimination.",
         }
-    selected = next(
-        scorer for scorer in SCORER_SIMPLICITY_ORDER if scorer in tied
-    )
+    selected = next(scorer for scorer in SCORER_SIMPLICITY_ORDER if scorer in tied)
     return {
         "status": "select_simpler_tied_scorer",
         "selected_scorer": selected,
@@ -1938,10 +2024,14 @@ def run_donor_gene_sweep(
         reference_proteomes = _reference_proteomes(panel)
         marker_record_ids = _all_marker_record_ids(panel)
         attachment = set(row["loo_attachment_taxa"])
-        background = {
-            str(leaf.name).split("|", 1)[0]
-            for leaf in trees[str(row["marker_name"])].iter_leaves()
-        } - {main["recipient"]} - attachment
+        background = (
+            {
+                str(leaf.name).split("|", 1)[0]
+                for leaf in trees[str(row["marker_name"])].iter_leaves()
+            }
+            - {main["recipient"]}
+            - attachment
+        )
         donor_genes = panel["sweep_donor_gene_sequences"]
         stratum = SOURCE_DISTANCE_STRATA[coordinate]
         for count in SWEEP_DONOR_GENE_COUNTS:
@@ -1972,9 +2062,7 @@ def run_donor_gene_sweep(
                     "evidence_status": evidence.get("input_status"),
                     "informative_gene_count": gate.get("informative_gene_count", 0),
                     "agreement_count": gate.get("agreement_count", 0),
-                    "strongest_conflict_count": gate.get(
-                        "strongest_conflict_count", 0
-                    ),
+                    "strongest_conflict_count": gate.get("strongest_conflict_count", 0),
                     "contig_gate_pass": gate.get("contig_gate_pass", False),
                     "contig_abstention_reason": gate.get("contig_abstention_reason"),
                 }
@@ -1988,6 +2076,7 @@ def run_donor_gene_sweep(
 
 
 def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
+    """Run the fixed held-out benchmark and return its complete report."""
     if threads < 1 or threads > MAX_THREADS:
         raise ValueError(f"threads must be between 1 and {MAX_THREADS}")
     started = time.monotonic()
@@ -2011,8 +2100,7 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
         clean_path, built = _species_tree(
             panel,
             _case_state(panel, "clean"),
-            case_id=clean_case_id,
-            arm="initial",
+            tree_label=f"{clean_case_id}_initial",
             removals=set(),
             outdir=outdir,
             threads=threads,
@@ -2034,11 +2122,7 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
             species_tree_builds_this_run += builds
             cases.append(case)
 
-    comparison_rows = [
-        row
-        for case in cases
-        for row in case["comparison_rows"]
-    ]
+    comparison_rows = [row for case in cases for row in case["comparison_rows"]]
     comparison_path = _write_comparison_table(outdir, comparison_rows)
     # Greedy voter-selection tier: one far-source 16-marker panel exercising
     # the production greedy path. Scored outside the frozen 12-case matrix
@@ -2056,8 +2140,7 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
     greedy_clean_path, greedy_clean_built = _species_tree(
         greedy_panel,
         _case_state(greedy_panel, "clean"),
-        case_id=_case_opaque(greedy_panel, "clean"),
-        arm="initial",
+        tree_label=f"{_case_opaque(greedy_panel, 'clean')}_initial",
         removals=set(),
         outdir=greedy_outdir,
         threads=threads,
@@ -2094,20 +2177,16 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
         "review_robust_z": REVIEW_ROBUST_Z,
         "review_min_vote_margin": REVIEW_MIN_VOTE_MARGIN,
         "candidate_count": len(review_rows),
-        "gate_only_warning_count": sum(
-            row["contig_gate_pass"] for row in review_rows
-        ),
+        "gate_only_warning_count": sum(row["contig_gate_pass"] for row in review_rows),
         "gate_only_false_count": sum(
-            row["contig_gate_pass"] and not row["is_truth_event"]
-            for row in review_rows
+            row["contig_gate_pass"] and not row["is_truth_event"] for row in review_rows
         ),
         "warning_count": sum(row["review_warning"] for row in review_rows),
         "warning_truth_count": sum(
             row["review_warning"] and row["is_truth_event"] for row in review_rows
         ),
         "warning_false_count": sum(
-            row["review_warning"] and not row["is_truth_event"]
-            for row in review_rows
+            row["review_warning"] and not row["is_truth_event"] for row in review_rows
         ),
         "near_source_gene_rich_warned": sum(
             row["review_warning"]
@@ -2139,9 +2218,7 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
     gene_cases = [
         case for case in cases if case["event_class"] == "gene_rich_contaminant"
     ]
-    far_gene_cases = [
-        case for case in gene_cases if case["distance_stratum"] == "far"
-    ]
+    far_gene_cases = [case for case in gene_cases if case["distance_stratum"] == "far"]
     guarded_loo_removals = [
         decision
         for case in cases
@@ -2163,8 +2240,7 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
                 for case in cases
             ),
             "gene_rich_initial_patristic_nonzero_count": sum(
-                case["initial_patristic_nrmse"] > 0.0
-                for case in gene_cases
+                case["initial_patristic_nrmse"] > 0.0 for case in gene_cases
             ),
             "loo_gene_rich_patristic_nonworsening": _interval(
                 sum(
@@ -2239,21 +2315,40 @@ def run_benchmark(outdir: Path, *, threads: int = 1) -> dict:
         "runtime_seconds": time.monotonic() - started,
         "metrics": metrics,
         "limitations": [
-            "simulated aligned proteins do not test gene calling, HMM search, or alignment",
+            (
+                "simulated aligned proteins do not test gene calling, HMM search, "
+                "or alignment"
+            ),
             "four held-out positives form an engineering gate, not a significance test",
             "phmmer split votes are benchmark-only; production LOO remains report-only",
-            "CMTV voter weights are positive one-minus-normalized-RF values from each case's initial species tree",
-            "source-distance strata and anchors use only the truth topology; CMTV k=5 behavior is analyzed post hoc",
-            "near-source contamination that stays within clean-marker dispersion is an identifiability control and remains unpruned",
-            "gene-rich and solo contexts reuse four source events and are not independent biological samples",
-            "species-tree topology RF may be insensitive at this scale; normalized patristic RMSE supplies a branch-length-sensitive secondary check",
+            (
+                "CMTV voter weights are positive one-minus-normalized-RF values "
+                "from each case's initial species tree"
+            ),
+            (
+                "source-distance strata and anchors use only the truth topology; "
+                "CMTV k=5 behavior is analyzed post hoc"
+            ),
+            (
+                "near-source contamination that stays within clean-marker dispersion "
+                "is an identifiability control and remains unpruned"
+            ),
+            (
+                "gene-rich and solo contexts reuse four source events and are not "
+                "independent biological samples"
+            ),
+            (
+                "species-tree topology RF may be insensitive at this scale; "
+                "normalized patristic RMSE supplies a branch-length-sensitive "
+                "secondary check"
+            ),
         ],
         "cases": cases,
     }
 
 
-def check_benchmark(report: dict) -> list[str]:
-    errors = []
+def _check_design(report: dict) -> list[str]:
+    errors: list[str] = []
     expected_coordinates = {
         (regime, seed, event_class)
         for regime in REGIMES
@@ -2261,14 +2356,16 @@ def check_benchmark(report: dict) -> list[str]:
         for event_class in EVENT_CLASSES
     }
     coordinates = {
-        (case["regime"], case["seed"], case["event_class"])
-        for case in report["cases"]
+        (case["regime"], case["seed"], case["event_class"]) for case in report["cases"]
     }
     if coordinates != expected_coordinates or report["case_count"] != 12:
         errors.append("case matrix is not exactly 2 regimes x 2 seeds x 3 classes")
     if report["marker_tree_instance_count"] != EXPECTED_MARKER_TREE_INSTANCES:
         errors.append("case matrix does not contain exactly 96 marker-tree instances")
-    if report["distinct_marker_tree_build_count"] != EXPECTED_DISTINCT_MARKER_TREE_BUILDS:
+    if (
+        report["distinct_marker_tree_build_count"]
+        != EXPECTED_DISTINCT_MARKER_TREE_BUILDS
+    ):
         errors.append("shared cache does not contain exactly 40 distinct marker trees")
     if report["distinct_marker_tree_build_count"] > MAX_MARKER_TREE_BUILDS:
         errors.append("marker-tree build ceiling exceeded")
@@ -2289,9 +2386,14 @@ def check_benchmark(report: dict) -> list[str]:
         "rf_guard",
     ]:
         errors.append("fair pipeline stages are not recorded in the required order")
+    return errors
 
+
+def _check_cases(report: dict) -> tuple[list[str], list[dict]]:
+    errors: list[str] = []
     gene_cases = [
-        case for case in report["cases"]
+        case
+        for case in report["cases"]
         if case["event_class"] == "gene_rich_contaminant"
     ]
     for case in gene_cases:
@@ -2303,21 +2405,34 @@ def check_benchmark(report: dict) -> list[str]:
             or main.get("sequence_informative_vote_count", 0) < 3
             or not main.get("contig_gate_pass")
         ):
-            errors.append(f"source removal bypassed a required gate in {case['case_id']}")
+            errors.append(
+                f"source removal bypassed a required gate in {case['case_id']}"
+            )
         if sentinel.get("loo_class") != "discordant_marker":
-            errors.append(f"LOO missed native-contig sentinel topology in {case['case_id']}")
+            errors.append(
+                f"LOO missed native-contig sentinel topology in {case['case_id']}"
+            )
         if sentinel.get("contig_gate_pass"):
-            errors.append(f"native-contig sentinel passed evidence gate in {case['case_id']}")
+            errors.append(
+                f"native-contig sentinel passed evidence gate in {case['case_id']}"
+            )
     for case in report["cases"]:
         if len(case["cmtv_marker_rf_weights"]) != MARKER_COUNT or any(
-            weight <= 0.0
-            for weight in case["cmtv_marker_rf_weights"].values()
+            weight <= 0.0 for weight in case["cmtv_marker_rf_weights"].values()
         ):
-            errors.append(f"CMTV weights are missing or nonpositive in {case['case_id']}")
-        for scorer in report["compared_scorers"]:
-            if not case[f"{scorer}_final_taxa_match"]:
-                errors.append(f"{scorer} lost a final taxon in {case['case_id']}")
+            errors.append(
+                f"CMTV weights are missing or nonpositive in {case['case_id']}"
+            )
+        errors.extend(
+            f"{scorer} lost a final taxon in {case['case_id']}"
+            for scorer in report["compared_scorers"]
+            if not case[f"{scorer}_final_taxa_match"]
+        )
+    return errors, gene_cases
 
+
+def _check_comparison_rows(report: dict) -> list[str]:
+    errors: list[str] = []
     allowed_reasons = {
         "no_raw_call",
         "attachment_abstention",
@@ -2326,31 +2441,28 @@ def check_benchmark(report: dict) -> list[str]:
         "rf_guard_rejected",
         "removed",
     }
-    comparison_rows = report.get("per_event_comparison_rows", [])
+    rows = report.get("per_event_comparison_rows", [])
     comparison_keys = {
-        (
-            row["case_id"],
-            row["marker_name"],
-            row["record_id"],
-            row["scorer"],
-        )
-        for row in comparison_rows
+        (row["case_id"], row["marker_name"], row["record_id"], row["scorer"])
+        for row in rows
     }
-    if len(comparison_keys) != len(comparison_rows):
+    if len(comparison_keys) != len(rows):
         errors.append("per-event comparison table contains duplicate scorer rows")
-    if {row["scorer"] for row in comparison_rows} != set(report["compared_scorers"]):
+    if {row["scorer"] for row in rows} != set(report["compared_scorers"]):
         errors.append("per-event comparison table omits a scorer")
-    for row in comparison_rows:
+    for row in rows:
         if row["reason"] not in allowed_reasons:
             errors.append(f"unknown terminal reason in {row['case_id']}")
         if row["reason"] == "no_raw_call" and row["raw_call"]:
             errors.append(f"raw call has no-call reason in {row['case_id']}")
-        if row["budget_pass"] and (
-            not row["raw_call"] or not row["contig_gate_pass"]
-        ):
-            errors.append(f"candidate bypassed evidence before budget in {row['case_id']}")
+        if row["budget_pass"] and (not row["raw_call"] or not row["contig_gate_pass"]):
+            errors.append(
+                f"candidate bypassed evidence before budget in {row['case_id']}"
+            )
         if row["rf_guard_decision"] is not None and not row["budget_pass"]:
-            errors.append(f"candidate bypassed budget before RF guard in {row['case_id']}")
+            errors.append(
+                f"candidate bypassed budget before RF guard in {row['case_id']}"
+            )
         if row["final_action"] == "removed" and (
             row["reason"] != "removed"
             or not row["raw_call"]
@@ -2359,31 +2471,58 @@ def check_benchmark(report: dict) -> list[str]:
             or row["rf_guard_decision"] != "pruned"
         ):
             errors.append(f"removal bypassed the fair gate chain in {row['case_id']}")
+    return errors
 
-    if report["metrics"]["loo_truth_marker_precision"]["rate"] is None or report["metrics"]["loo_truth_marker_precision"]["rate"] < 0.90:
+
+def _check_primary_metrics(report: dict) -> list[str]:
+    errors: list[str] = []
+    metrics = report["metrics"]
+    if (
+        metrics["loo_truth_marker_precision"]["rate"] is None
+        or metrics["loo_truth_marker_precision"]["rate"] < 0.90
+    ):
         errors.append("LOO guarded marker precision is below 0.90")
-    if report["metrics"]["loo_far_source_recall"]["rate"] < 0.75:
+    if metrics["loo_far_source_recall"]["rate"] < 0.75:
         errors.append("LOO far-source recall is below 0.75")
-    if report["metrics"]["loo_near_source_abstention"]["rate"] != 1.0:
+    if metrics["loo_near_source_abstention"]["rate"] != 1.0:
         errors.append("LOO did not abstain on a near-source identifiability control")
-    for metric in ("loo_clean_safety", "loo_solo_abstention", "loo_sentinel_safety"):
-        if report["metrics"][metric]["rate"] != 1.0:
-            errors.append(f"safety gate failed: {metric}")
-    if report["metrics"]["loo_marker_rf_guard_improvement"]["rate"] != 1.0:
+    errors.extend(
+        f"safety gate failed: {metric}"
+        for metric in (
+            "loo_clean_safety",
+            "loo_solo_abstention",
+            "loo_sentinel_safety",
+        )
+        if metrics[metric]["rate"] != 1.0
+    )
+    if metrics["loo_marker_rf_guard_improvement"]["rate"] != 1.0:
         errors.append("LOO marker RF guard did not improve every accepted marker tree")
-    if report["metrics"]["gene_rich_initial_patristic_nonzero_count"] != len(gene_cases):
+    return errors
+
+
+def _check_patristic_metrics(report: dict, gene_cases: list[dict]) -> list[str]:
+    errors: list[str] = []
+    metrics = report["metrics"]
+    if metrics["gene_rich_initial_patristic_nonzero_count"] != len(gene_cases):
         errors.append("a gene-rich case lacks a branch-length-sensitive perturbation")
-    if report["metrics"]["loo_gene_rich_patristic_nonworsening"]["rate"] != 1.0:
+    if metrics["loo_gene_rich_patristic_nonworsening"]["rate"] != 1.0:
         errors.append("LOO worsened species-tree patristic error in a gene-rich case")
-    if report["metrics"]["loo_far_source_patristic_improvement"]["rate"] != 1.0:
+    if metrics["loo_far_source_patristic_improvement"]["rate"] != 1.0:
         errors.append("LOO did not improve patristic error for every far-source case")
     expected_decision = _wp1_decision(report["raw_candidate_discrimination"])
     if report.get("wp1_decision") != expected_decision:
         errors.append("WP1 scorer decision does not match the raw comparison rows")
-    for scorer in report["compared_scorers"]:
-        for metric in ("clean_safety", "solo_abstention", "sentinel_safety"):
-            if report["metrics"][f"{scorer}_{metric}"]["rate"] != 1.0:
-                errors.append(f"safety gate failed: {scorer}_{metric}")
+    return errors
+
+
+def _check_final_integrity(report: dict) -> list[str]:
+    errors: list[str] = []
+    errors.extend(
+        f"safety gate failed: {scorer}_{metric}"
+        for scorer in report["compared_scorers"]
+        for metric in ("clean_safety", "solo_abstention", "sentinel_safety")
+        if report["metrics"][f"{scorer}_{metric}"]["rate"] != 1.0
+    )
     if any(
         not case["loo_final_taxa_match"]
         or case["loo_unaffected_record_loss_count"]
@@ -2394,12 +2533,26 @@ def check_benchmark(report: dict) -> list[str]:
         errors.append("LOO lost a taxon or unaffected marker record")
     if report["runtime_seconds"] > MAX_RUNTIME_SECONDS:
         errors.append(
-            f"runtime {report['runtime_seconds']:.3f}s exceeds {MAX_RUNTIME_SECONDS:.0f}s"
+            f"runtime {report['runtime_seconds']:.3f}s exceeds "
+            f"{MAX_RUNTIME_SECONDS:.0f}s"
         )
     return errors
 
 
+def check_benchmark(report: dict) -> list[str]:
+    """Return all failures of the fixed benchmark acceptance criteria."""
+    errors = _check_design(report)
+    case_errors, gene_cases = _check_cases(report)
+    errors.extend(case_errors)
+    errors.extend(_check_comparison_rows(report))
+    errors.extend(_check_primary_metrics(report))
+    errors.extend(_check_patristic_metrics(report, gene_cases))
+    errors.extend(_check_final_integrity(report))
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Run the sequence benchmark command-line interface."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--outdir", default="runs/us009_sequence")
     parser.add_argument("--threads", type=int, default=1)

@@ -5,20 +5,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pathlib
 import re
 import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Sized
 from copy import deepcopy
+from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 from random import Random
+from typing import TypedDict, cast
 
 import pandas as pd
-from Bio.Seq import Seq
 from Bio import SeqIO
+from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from ete3 import Tree
 from pyhmmer import plan7
@@ -27,7 +29,23 @@ from sgtree.benchmark_dataset import prepare_burkholderiaceae_benchmark_dataset
 from sgtree.id_schema import build_sequence_id, parse_sequence_id, sanitize_token
 
 
-DEFAULT_SCENARIOS = {
+class _ScenarioSpec(TypedDict):
+    pair_blocks: int
+    markers_per_block: int
+    replacement_events: int
+    native_degrade_fraction: float
+
+
+class _CleanupProfile(TypedDict):
+    name: str
+    selection_mode: str
+    selection_global_rounds: int
+    marker_selection: bool
+    singles: bool
+    singles_mode: str
+
+
+DEFAULT_SCENARIOS: dict[str, _ScenarioSpec] = {
     "duplicate_only": {
         "pair_blocks": 2,
         "markers_per_block": 2,
@@ -48,7 +66,7 @@ DEFAULT_SCENARIOS = {
     },
 }
 
-DEFAULT_CLEANUP_PROFILES = {
+DEFAULT_CLEANUP_PROFILES: dict[str, _CleanupProfile] = {
     "duplicate_only": {
         "name": "duplicate_cleanup",
         "selection_mode": "coordinate",
@@ -133,6 +151,19 @@ TAXONOMY_DISTANCE_LABELS = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _RunOptions:
+    num_cpus: int
+    percent_models: int
+    marker_selection: bool
+    singles: bool
+    singles_mode: str
+    selection_mode: str
+    selection_max_rounds: int
+    selection_global_rounds: int
+    keep_intermediates: bool
+
+
 def make_contaminant_record(
     recipient_genome: str,
     donor_record: SeqRecord,
@@ -140,6 +171,7 @@ def make_contaminant_record(
     donor_genome: str,
     event_index: int,
 ) -> SeqRecord:
+    """Copy a donor marker and assign it to an artificial recipient contig."""
     record = deepcopy(donor_record)
     contaminant_gene = f"contam__{marker}__{donor_genome}__e{event_index:03d}"
     contaminant_contig = f"contig__contam__{marker}__{donor_genome}__e{event_index:03d}"
@@ -158,11 +190,12 @@ def apply_replacement_event(
     native_record_id: str,
     contaminant_record: SeqRecord,
 ) -> dict[str, SeqRecord]:
+    """Replace one native marker with a contaminant in a copied record map."""
     updated = dict(recipient_records)
     if native_record_id not in updated:
         raise KeyError(f"Native marker record not found: {native_record_id}")
     del updated[native_record_id]
-    updated[contaminant_record.id] = contaminant_record
+    updated[_record_id(contaminant_record)] = contaminant_record
     return updated
 
 
@@ -170,6 +203,7 @@ def drop_native_marker(
     recipient_records: dict[str, SeqRecord],
     native_record_id: str,
 ) -> dict[str, SeqRecord]:
+    """Remove one native marker from a copied record map."""
     updated = dict(recipient_records)
     if native_record_id not in updated:
         raise KeyError(f"Native marker record not found: {native_record_id}")
@@ -195,20 +229,15 @@ def _degrade_record_in_place(
     recipient_records[native_record_id] = record
 
 
+def _record_id(record: SeqRecord) -> str:
+    return cast(str, record.id)
+
+
 def _run_sgtree_python(
     genomedir: Path,
     modeldir: Path,
     outdir: Path,
-    *,
-    num_cpus: int,
-    percent_models: int,
-    marker_selection: bool,
-    singles: bool,
-    singles_mode: str,
-    selection_mode: str,
-    selection_max_rounds: int,
-    selection_global_rounds: int,
-    keep_intermediates: bool,
+    options: _RunOptions,
 ) -> None:
     cmd = [
         sys.executable,
@@ -217,26 +246,40 @@ def _run_sgtree_python(
         str(genomedir),
         str(modeldir),
         "--num_cpus",
-        str(num_cpus),
+        str(options.num_cpus),
         "--percent_models",
-        str(percent_models),
+        str(options.percent_models),
         "--save_dir",
         str(outdir),
         "--selection_mode",
-        selection_mode,
+        options.selection_mode,
         "--selection_max_rounds",
-        str(selection_max_rounds),
+        str(options.selection_max_rounds),
         "--selection_global_rounds",
-        str(selection_global_rounds),
+        str(options.selection_global_rounds),
         "--keep_intermediates",
-        "yes" if keep_intermediates else "no",
+        "yes" if options.keep_intermediates else "no",
     ]
-    if marker_selection:
+    if options.marker_selection:
         cmd.extend(["--marker_selection", "yes"])
-    if singles:
+    if options.singles:
         cmd.extend(["--singles", "yes"])
-    cmd.extend(["--singles-mode", singles_mode])
+    cmd.extend(["--singles-mode", options.singles_mode])
     subprocess.run(cmd, check=True, env=_child_env())
+
+
+def _reference_run_options(num_cpus: int) -> _RunOptions:
+    return _RunOptions(
+        num_cpus=num_cpus,
+        percent_models=0,
+        marker_selection=False,
+        singles=False,
+        singles_mode="delta_rf",
+        selection_mode="coordinate",
+        selection_max_rounds=5,
+        selection_global_rounds=1,
+        keep_intermediates=True,
+    )
 
 
 def _child_env() -> dict[str, str]:
@@ -247,7 +290,7 @@ def _child_env() -> dict[str, str]:
     with "No module named sgtree" whenever the parent was started by a task
     that does not already export it.
     """
-    src_root = str(pathlib.Path(__file__).resolve().parents[2])
+    src_root = str(Path(__file__).resolve().parents[2])
     env = dict(os.environ)
     existing = env.get("PYTHONPATH", "")
     if src_root not in existing.split(os.pathsep):
@@ -257,20 +300,27 @@ def _child_env() -> dict[str, str]:
 
 def _read_normalized_proteomes(path: Path) -> dict[str, dict[str, SeqRecord]]:
     by_genome: dict[str, dict[str, SeqRecord]] = {}
-    inputs = sorted(entry for entry in path.iterdir() if entry.is_file()) if path.is_dir() else [path]
+    inputs = (
+        sorted(entry for entry in path.iterdir() if entry.is_file())
+        if path.is_dir()
+        else [path]
+    )
     for input_path in inputs:
-        with open(input_path) as handle:
+        with input_path.open(encoding="utf-8") as handle:
             for record in SeqIO.parse(handle, "fasta"):
-                genome = record.id.split("|")[0]
-                by_genome.setdefault(genome, {})[record.id] = deepcopy(record)
+                record_id = _record_id(record)
+                genome = record_id.split("|")[0]
+                by_genome.setdefault(genome, {})[record_id] = deepcopy(record)
     return by_genome
 
 
-def _write_proteome_dir(records_by_genome: dict[str, dict[str, SeqRecord]], outdir: Path) -> None:
+def _write_proteome_dir(
+    records_by_genome: dict[str, dict[str, SeqRecord]], outdir: Path
+) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     for genome, records in sorted(records_by_genome.items()):
         out_path = outdir / f"{genome}.faa"
-        with open(out_path, "w") as handle:
+        with out_path.open("w", encoding="utf-8") as handle:
             for record_id in sorted(records):
                 SeqIO.write(records[record_id], handle, "fasta")
 
@@ -294,9 +344,9 @@ def _load_table(table_path: Path) -> pd.DataFrame:
 
 def _count_single_copy_markers(df: pd.DataFrame, genomes: list[str]) -> pd.DataFrame:
     subset = df[df["genome"].isin(genomes)]
-    counts = subset.groupby(["marker", "genome"]).size().unstack(fill_value=0)
-    counts = counts.reindex(columns=genomes, fill_value=0)
-    return counts
+    marker_counts = subset.groupby(["marker", "genome"]).size()
+    counts = marker_counts.unstack(fill_value=0)  # noqa: PD010  # Grouping guarantees one value per marker-genome cell.
+    return counts.reindex(columns=genomes, fill_value=0)
 
 
 def _choose_genome_subset(
@@ -320,19 +370,25 @@ def _choose_genome_subset(
             for excluded in combinations(all_genomes, n_to_exclude)
         )
     else:
-        ranked = sorted(all_genomes, key=lambda genome: (genome_sizes.get(genome, 0), genome))
+        ranked = sorted(
+            all_genomes, key=lambda genome: (genome_sizes.get(genome, 0), genome)
+        )
         candidates = [ranked[:n_genomes]]
 
     for genomes in candidates:
         counts = _count_single_copy_markers(df, genomes)
         universal = counts[(counts == 1).all(axis=1)]
-        score = (len(universal), -sum(genome_sizes.get(genome, 0) for genome in genomes))
+        score = (
+            len(universal),
+            -sum(genome_sizes.get(genome, 0) for genome in genomes),
+        )
         if best_score is None or score > best_score:
             best_score = score
             best_genomes = list(genomes)
             best_counts = counts
 
-    assert best_genomes is not None and best_counts is not None
+    assert best_genomes is not None
+    assert best_counts is not None
     return sorted(best_genomes), best_counts
 
 
@@ -357,7 +413,8 @@ def _rank_markers(
     ]
     if len(eligible) < n_markers:
         raise ValueError(
-            f"Only found {len(eligible)} single-copy markers with presence >= {min_presence}/{len(genomes)}"
+            f"Only found {len(eligible)} single-copy markers with presence "
+            f">= {min_presence}/{len(genomes)}"
         )
 
     rows = []
@@ -367,14 +424,17 @@ def _rank_markers(
         lengths = []
         for row in marker_rows.itertuples(index=False):
             record_id = row.savedname.replace("/", "|")
-            lengths.append(len(normalized_records[row.genome][record_id].seq))
+            sequence = normalized_records[row.genome][record_id].seq
+            lengths.append(len(cast(Sized, sequence)))
         rows.append(
             {
                 "marker": marker,
                 "present_genomes": int(eligible.loc[marker, "present_genomes"]),
                 "median_bitscore": float(marker_rows["bitscore"].median()),
                 "min_bitscore": float(marker_rows["bitscore"].min()),
-                "length_cv": float(pd.Series(lengths).std(ddof=0) / max(1.0, pd.Series(lengths).mean())),
+                "length_cv": float(
+                    pd.Series(lengths).std(ddof=0) / max(1.0, pd.Series(lengths).mean())
+                ),
             }
         )
 
@@ -388,7 +448,7 @@ def _rank_markers(
 def _extract_hmm_subset(models_path: Path, markers: list[str], out_path: Path) -> None:
     requested = set(markers)
     found = set()
-    with plan7.HMMFile(models_path) as hmm_file, open(out_path, "wb") as handle:
+    with plan7.HMMFile(models_path) as hmm_file, out_path.open("wb") as handle:
         for hmm_profile in hmm_file:
             name = hmm_profile.name
             if isinstance(name, bytes):
@@ -402,7 +462,9 @@ def _extract_hmm_subset(models_path: Path, markers: list[str], out_path: Path) -
         raise ValueError(f"Missing markers in HMM set: {', '.join(missing)}")
 
 
-def _native_marker_map(df: pd.DataFrame, genomes: list[str], markers: list[str]) -> dict[str, dict[str, str]]:
+def _native_marker_map(
+    df: pd.DataFrame, genomes: list[str], markers: list[str]
+) -> dict[str, dict[str, str]]:
     subset = df[df["genome"].isin(genomes) & df["marker"].isin(markers)]
     mapping: dict[str, dict[str, str]] = {}
     for row in subset.itertuples(index=False):
@@ -430,16 +492,15 @@ def _discover_input_files(source_dir: Path) -> list[Path]:
 
 
 def _source_genome_index(source_dir: Path) -> pd.DataFrame:
-    rows = []
-    for path in _discover_input_files(source_dir):
-        rows.append(
-            {
-                "file_path": str(path.resolve()),
-                "source_file": path.name,
-                "genome_id": sanitize_token(path.stem, path.stem),
-                "assembly_accession": _normalize_assembly_accession(path.stem),
-            }
-        )
+    rows = [
+        {
+            "file_path": str(path.resolve()),
+            "source_file": path.name,
+            "genome_id": sanitize_token(path.stem, path.stem),
+            "assembly_accession": _normalize_assembly_accession(path.stem),
+        }
+        for path in _discover_input_files(source_dir)
+    ]
     if not rows:
         raise FileNotFoundError(f"No input genome files found under {source_dir}")
     return pd.DataFrame(rows).sort_values(["genome_id"]).reset_index(drop=True)
@@ -452,7 +513,7 @@ def _load_taxonomy_rows(
     if not taxonomy_db_path.exists():
         raise FileNotFoundError(taxonomy_db_path)
     try:
-        import duckdb
+        import duckdb  # noqa: PLC0415  # Keep taxonomy support optional for other benchmark commands.
     except ImportError as exc:
         raise RuntimeError(
             "Taxonomic benchmark generation requires duckdb in the SGTree environment"
@@ -461,11 +522,15 @@ def _load_taxonomy_rows(
     # Avoid pandas' nullable/string extension dtype here; DuckDB register()
     # expects a plain object-backed string column.
     request_df = pd.DataFrame(
-        {"assembly_accession": pd.Series(sorted(set(assembly_accessions)), dtype="object")}
+        {
+            "assembly_accession": pd.Series(
+                sorted(set(assembly_accessions)), dtype="object"
+            )
+        }
     )
     with duckdb.connect(str(taxonomy_db_path), read_only=True) as con:
         con.register("requested_accessions", request_df)
-        rows = con.execute(
+        return con.execute(
             """
             with combined as (
                 select
@@ -516,7 +581,6 @@ def _load_taxonomy_rows(
             where rn = 1
             """
         ).fetchdf()
-    return rows
 
 
 def _taxonomy_string(meta: dict[str, str]) -> str:
@@ -537,8 +601,12 @@ def _load_source_taxonomy(
     taxonomy_db_path: Path,
 ) -> pd.DataFrame:
     index_df = _source_genome_index(source_dir)
-    taxonomy_df = _load_taxonomy_rows(index_df["assembly_accession"].tolist(), taxonomy_db_path)
-    merged = index_df.merge(taxonomy_df, on="assembly_accession", how="left", validate="one_to_one")
+    taxonomy_df = _load_taxonomy_rows(
+        index_df["assembly_accession"].tolist(), taxonomy_db_path
+    )
+    merged = index_df.merge(
+        taxonomy_df, on="assembly_accession", how="left", validate="one_to_one"
+    )
     missing = merged[merged["family"].isna() | merged["genus"].isna()]
     if not missing.empty:
         raise ValueError(
@@ -592,7 +660,12 @@ def _taxonomy_scope_matches(
     donor_same_value = _taxonomy_field(donor_meta, rule["same_rank"])
     different_value = _taxonomy_field(recipient_meta, rule["different_rank"])
     donor_different_value = _taxonomy_field(donor_meta, rule["different_rank"])
-    if not same_value or not donor_same_value or not different_value or not donor_different_value:
+    if (
+        not same_value
+        or not donor_same_value
+        or not different_value
+        or not donor_different_value
+    ):
         return False
     return same_value == donor_same_value and different_value != donor_different_value
 
@@ -646,7 +719,7 @@ def _event_taxonomic_distance_fields(
     return classify_taxonomic_distance(recipient_meta, donor_meta)
 
 
-def _taxonomic_donor_candidates(
+def _taxonomic_donor_candidates(  # noqa: PLR0913, PLR0917  # Preserve the tested benchmark helper contract.
     recipient_genome: str,
     marker: str,
     scope: str,
@@ -670,7 +743,11 @@ def _taxonomic_donor_candidates(
         return sorted(candidates)
     in_tree = [genome for genome in candidates if genome in truth_leaves]
     out_of_tree = sorted(genome for genome in candidates if genome not in set(in_tree))
-    ranked_in_tree = _distance_ranked_donors(truth_tree, recipient_genome, in_tree) if in_tree else []
+    ranked_in_tree = (
+        _distance_ranked_donors(truth_tree, recipient_genome, in_tree)
+        if in_tree
+        else []
+    )
     return ranked_in_tree + out_of_tree
 
 
@@ -686,17 +763,11 @@ def _stage_source_dir(
             genomedir=source_dir,
             modeldir=models_path,
             outdir=stage_dir,
-            num_cpus=num_cpus,
-            percent_models=0,
-            marker_selection=False,
-            singles=False,
-            singles_mode="delta_rf",
-            selection_mode="coordinate",
-            selection_max_rounds=5,
-            selection_global_rounds=1,
-            keep_intermediates=True,
+            options=_reference_run_options(num_cpus),
         )
-    return _read_normalized_proteomes(stage_dir / "proteomes"), _load_table(stage_dir / "table_elim_dups")
+    return _read_normalized_proteomes(stage_dir / "proteomes"), _load_table(
+        stage_dir / "table_elim_dups"
+    )
 
 
 def _event_taxonomy_fields(prefix: str, meta: dict[str, str]) -> dict[str, str]:
@@ -713,12 +784,13 @@ def _event_taxonomy_fields(prefix: str, meta: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _distance_ranked_donors(truth_tree: Tree, recipient: str, candidates: list[str]) -> list[str]:
-    ranked = sorted(
+def _distance_ranked_donors(
+    truth_tree: Tree, recipient: str, candidates: list[str]
+) -> list[str]:
+    return sorted(
         candidates,
         key=lambda genome: (-truth_tree.get_distance(recipient, genome), genome),
     )
-    return ranked
 
 
 def _choose_markers_for_pair(
@@ -761,7 +833,7 @@ def _pair_distant_genomes(
 
 
 def _write_manifest_json(path: Path, payload: dict) -> None:
-    with open(path, "w") as handle:
+    with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
@@ -786,12 +858,14 @@ def _write_genome_summary_tsv(path: Path, rows: list[dict]) -> pd.DataFrame:
         "cross_group_events",
     ]
     if not rows:
-        summary = pd.DataFrame(columns=columns)
+        summary = pd.DataFrame(columns=columns)  # ty: ignore[invalid-argument-type]  # pandas accepts a list of column labels without row data.
     else:
         df = pd.DataFrame(rows).copy()
         df["duplicate_events"] = (df["event_type"] == "duplicate").astype(int)
         df["replacement_events"] = (df["event_type"] == "replacement").astype(int)
-        df["within_group_events"] = (df["source_relation"] == "within_group").astype(int)
+        df["within_group_events"] = (df["source_relation"] == "within_group").astype(
+            int
+        )
         df["cross_group_events"] = (df["source_relation"] == "cross_group").astype(int)
         summary = (
             df.groupby(["recipient_genome", "recipient_group"], as_index=False)
@@ -835,13 +909,21 @@ def _scenario_summary(events: list[dict], genome_summary: pd.DataFrame) -> dict:
         within_group_events = int((event_df["source_relation"] == "within_group").sum())
         cross_group_events = int((event_df["source_relation"] == "cross_group").sum())
     return {
-        "event_count": int(len(events)),
-        "contaminant_markers_added": int(len(events)),
+        "event_count": len(events),
+        "contaminant_markers_added": len(events),
         "duplicate_events": duplicate_events,
         "replacement_events": replacement_events,
-        "affected_genomes": int(len(genome_summary)),
-        "mean_contaminants_per_affected_genome": float(genome_summary["contaminant_markers_added"].mean()) if not genome_summary.empty else 0.0,
-        "max_contaminants_per_genome": int(genome_summary["contaminant_markers_added"].max()) if not genome_summary.empty else 0,
+        "affected_genomes": len(genome_summary),
+        "mean_contaminants_per_affected_genome": float(
+            genome_summary["contaminant_markers_added"].mean()
+        )
+        if not genome_summary.empty
+        else 0.0,
+        "max_contaminants_per_genome": int(
+            genome_summary["contaminant_markers_added"].max()
+        )
+        if not genome_summary.empty
+        else 0,
         "within_group_events": within_group_events,
         "cross_group_events": cross_group_events,
     }
@@ -876,7 +958,7 @@ def _donor_candidates_with_marker(
     return [genome for genome in candidates if marker in native_map.get(genome, {})]
 
 
-def _materialize_benchmark_from_truth(
+def _materialize_benchmark_from_truth(  # noqa: C901, PLR0912, PLR0913, PLR0915  # Keep the frozen event-scheduling sequence auditable and unchanged.
     *,
     truth_records: dict[str, dict[str, SeqRecord]],
     truth_markers: list[str],
@@ -908,18 +990,10 @@ def _materialize_benchmark_from_truth(
         genomedir=truth_inputs,
         modeldir=truth_models,
         outdir=truth_run,
-        num_cpus=num_cpus,
         # Keep the intended truth panel taxa even when a few chosen markers are
         # missing in some genomes; contamination events are filtered to loci that
         # exist for each recipient/donor pair.
-        percent_models=0,
-        marker_selection=False,
-        singles=False,
-        singles_mode="delta_rf",
-        selection_mode="coordinate",
-        selection_max_rounds=5,
-        selection_global_rounds=1,
-        keep_intermediates=True,
+        options=_reference_run_options(num_cpus),
     )
 
     table = _load_table(truth_run / "table_elim_dups")
@@ -931,9 +1005,11 @@ def _materialize_benchmark_from_truth(
 
     scenarios_dir.mkdir(exist_ok=True)
     if group_labels is None:
-        selected_group_labels = {genome: "all" for genome in selected_genomes}
+        selected_group_labels = dict.fromkeys(selected_genomes, "all")
     else:
-        selected_group_labels = {genome: group_labels.get(genome, "all") for genome in selected_genomes}
+        selected_group_labels = {
+            genome: group_labels.get(genome, "all") for genome in selected_genomes
+        }
 
     manifest = {
         "seed": seed,
@@ -960,11 +1036,17 @@ def _materialize_benchmark_from_truth(
         pairs = []
         used_left = set()
         used_right = set()
-        while len(pairs) < n_pairs and len(used_left) < len(left) and len(used_right) < len(right):
+        while (
+            len(pairs) < n_pairs
+            and len(used_left) < len(left)
+            and len(used_right) < len(right)
+        ):
             candidates = [
                 (truth_tree.get_distance(a, b), a, b)
-                for a in left if a not in used_left
-                for b in right if b not in used_right
+                for a in left
+                if a not in used_left
+                for b in right
+                if b not in used_right
             ]
             if not candidates:
                 break
@@ -975,14 +1057,24 @@ def _materialize_benchmark_from_truth(
         return pairs
 
     for scenario_name, spec in DEFAULT_SCENARIOS.items():
-        scenario_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
-        reference_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+        scenario_records = {
+            genome: deepcopy(records) for genome, records in truth_records.items()
+        }
+        reference_records = {
+            genome: deepcopy(records) for genome, records in truth_records.items()
+        }
         used_pairs: set[tuple[str, str]] = set()
         events: list[dict] = []
         event_index = 1
 
         if spec["pair_blocks"] > 0:
-            reciprocal_pairs = _cross_pairs(spec["pair_blocks"]) if cross_group_only else _pair_distant_genomes(truth_tree, selected_genomes, spec["pair_blocks"], rng)
+            reciprocal_pairs = (
+                _cross_pairs(spec["pair_blocks"])
+                if cross_group_only
+                else _pair_distant_genomes(
+                    truth_tree, selected_genomes, spec["pair_blocks"], rng
+                )
+            )
             for recipient_a, recipient_b in reciprocal_pairs:
                 available_markers = _choose_markers_for_pair(
                     used_pairs,
@@ -995,7 +1087,10 @@ def _materialize_benchmark_from_truth(
                 if not available_markers:
                     continue
                 for marker in available_markers:
-                    for recipient, donor in ((recipient_a, recipient_b), (recipient_b, recipient_a)):
+                    for recipient, donor in (
+                        (recipient_a, recipient_b),
+                        (recipient_b, recipient_a),
+                    ):
                         donor_record = truth_records[donor][native_map[donor][marker]]
                         _degrade_record_in_place(
                             scenario_records[recipient],
@@ -1010,7 +1105,9 @@ def _materialize_benchmark_from_truth(
                             donor_genome=donor,
                             event_index=event_index,
                         )
-                        scenario_records[recipient][contaminant.id] = contaminant
+                        scenario_records[recipient][_record_id(contaminant)] = (
+                            contaminant
+                        )
                         used_pairs.add((recipient, marker))
                         events.append(
                             {
@@ -1021,17 +1118,28 @@ def _materialize_benchmark_from_truth(
                                 "recipient_group": selected_group_labels[recipient],
                                 "marker": marker,
                                 "native_record_id": native_map[recipient][marker],
-                                "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                                "native_contig_id": parse_sequence_id(
+                                    native_map[recipient][marker]
+                                )[1],
                                 "donor_genome": donor,
                                 "donor_group": selected_group_labels[donor],
-                                "source_relation": _source_relation(selected_group_labels[recipient], selected_group_labels[donor]),
+                                "source_relation": _source_relation(
+                                    selected_group_labels[recipient],
+                                    selected_group_labels[donor],
+                                ),
                                 "donor_record_id": native_map[donor][marker],
-                                "donor_contig_id": parse_sequence_id(native_map[donor][marker])[1],
-                                "contaminant_record_id": contaminant.id,
-                                "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                                "donor_contig_id": parse_sequence_id(
+                                    native_map[donor][marker]
+                                )[1],
+                                "contaminant_record_id": _record_id(contaminant),
+                                "contaminant_contig_id": parse_sequence_id(
+                                    _record_id(contaminant)
+                                )[1],
                                 "expected_duplicate_status": "Removed",
                                 "expected_native_status": "Kept",
-                                "native_degrade_fraction": spec["native_degrade_fraction"],
+                                "native_degrade_fraction": spec[
+                                    "native_degrade_fraction"
+                                ],
                             }
                         )
                         event_index += 1
@@ -1046,7 +1154,9 @@ def _materialize_benchmark_from_truth(
         rng.shuffle(replacement_pairs)
         for recipient, marker in replacement_pairs[: spec["replacement_events"]]:
             if cross_group_only:
-                donor_group = "gamma" if selected_group_labels[recipient] == "flavo" else "flavo"
+                donor_group = (
+                    "gamma" if selected_group_labels[recipient] == "flavo" else "flavo"
+                )
                 donor_candidates = _donor_candidates_with_marker(
                     [
                         genome
@@ -1095,14 +1205,20 @@ def _materialize_benchmark_from_truth(
                     "recipient_group": selected_group_labels[recipient],
                     "marker": marker,
                     "native_record_id": native_map[recipient][marker],
-                    "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                    "native_contig_id": parse_sequence_id(
+                        native_map[recipient][marker]
+                    )[1],
                     "donor_genome": donor,
                     "donor_group": selected_group_labels[donor],
-                    "source_relation": _source_relation(selected_group_labels[recipient], selected_group_labels[donor]),
+                    "source_relation": _source_relation(
+                        selected_group_labels[recipient], selected_group_labels[donor]
+                    ),
                     "donor_record_id": native_map[donor][marker],
                     "donor_contig_id": parse_sequence_id(native_map[donor][marker])[1],
-                    "contaminant_record_id": contaminant.id,
-                    "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                    "contaminant_record_id": _record_id(contaminant),
+                    "contaminant_contig_id": parse_sequence_id(_record_id(contaminant))[
+                        1
+                    ],
                     "expected_replacement_outcome": "DropMarkerOrRemoveContaminant",
                     "native_degrade_fraction": spec["native_degrade_fraction"],
                 }
@@ -1119,20 +1235,14 @@ def _materialize_benchmark_from_truth(
             genomedir=reference_inputs_dir,
             modeldir=truth_models,
             outdir=reference_run_dir,
-            num_cpus=num_cpus,
             # The benchmark reference should preserve the original selected
             # taxa even when replacement events remove a few native markers.
-            percent_models=0,
-            marker_selection=False,
-            singles=False,
-            singles_mode="delta_rf",
-            selection_mode="coordinate",
-            selection_max_rounds=5,
-            selection_global_rounds=1,
-            keep_intermediates=True,
+            options=_reference_run_options(num_cpus),
         )
         _write_events_tsv(scenario_dir / "events.tsv", events)
-        genome_summary = _write_genome_summary_tsv(scenario_dir / "genome_summary.tsv", events)
+        genome_summary = _write_genome_summary_tsv(
+            scenario_dir / "genome_summary.tsv", events
+        )
         summary = _scenario_summary(events, genome_summary)
         manifest["scenarios"].append(
             {
@@ -1150,7 +1260,7 @@ def _materialize_benchmark_from_truth(
     _write_manifest_json(outdir / "benchmark_manifest.json", manifest)
 
 
-def _materialize_taxonomic_benchmark_from_truth(
+def _materialize_taxonomic_benchmark_from_truth(  # noqa: C901, PLR0912, PLR0913, PLR0915  # Keep the frozen taxonomic event schedule auditable and unchanged.
     *,
     truth_records: dict[str, dict[str, SeqRecord]],
     truth_markers: list[str],
@@ -1189,15 +1299,7 @@ def _materialize_taxonomic_benchmark_from_truth(
         genomedir=truth_inputs,
         modeldir=truth_models,
         outdir=truth_run,
-        num_cpus=num_cpus,
-        percent_models=0,
-        marker_selection=False,
-        singles=False,
-        singles_mode="delta_rf",
-        selection_mode="coordinate",
-        selection_max_rounds=5,
-        selection_global_rounds=1,
-        keep_intermediates=True,
+        options=_reference_run_options(num_cpus),
     )
 
     truth_table = _load_table(truth_run / "table_elim_dups")
@@ -1232,8 +1334,12 @@ def _materialize_taxonomic_benchmark_from_truth(
 
     scenarios_dir.mkdir(exist_ok=True)
     for scenario_name, spec in DEFAULT_SCENARIOS.items():
-        scenario_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
-        reference_records = {genome: deepcopy(records) for genome, records in truth_records.items()}
+        scenario_records = {
+            genome: deepcopy(records) for genome, records in truth_records.items()
+        }
+        reference_records = {
+            genome: deepcopy(records) for genome, records in truth_records.items()
+        }
         used_pairs: set[tuple[str, str]] = set()
         events: list[dict] = []
         event_index = 1
@@ -1286,7 +1392,7 @@ def _materialize_taxonomic_benchmark_from_truth(
                 donor_genome=donor,
                 event_index=event_index,
             )
-            scenario_records[recipient][contaminant.id] = contaminant
+            scenario_records[recipient][_record_id(contaminant)] = contaminant
             used_pairs.add((recipient, marker))
             events.append(
                 {
@@ -1294,31 +1400,49 @@ def _materialize_taxonomic_benchmark_from_truth(
                     "scenario": scenario_name,
                     "event_type": "duplicate",
                     "taxonomic_scope": taxonomic_scope,
-                    "taxonomic_scope_label": TAXONOMY_SCOPE_RULES[taxonomic_scope]["scope_label"],
+                    "taxonomic_scope_label": TAXONOMY_SCOPE_RULES[taxonomic_scope][
+                        "scope_label"
+                    ],
                     "recipient_genome": recipient,
                     "recipient_group": lineage_label,
                     "marker": marker,
                     "native_record_id": native_map[recipient][marker],
-                    "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                    "native_contig_id": parse_sequence_id(
+                        native_map[recipient][marker]
+                    )[1],
                     "donor_genome": donor,
                     "donor_group": donor_lineage_label,
-                    "source_relation": _source_relation(lineage_label, donor_lineage_label),
+                    "source_relation": _source_relation(
+                        lineage_label, donor_lineage_label
+                    ),
                     "donor_record_id": donor_native_map[donor][marker],
-                    "donor_contig_id": parse_sequence_id(donor_native_map[donor][marker])[1],
-                    "contaminant_record_id": contaminant.id,
-                    "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                    "donor_contig_id": parse_sequence_id(
+                        donor_native_map[donor][marker]
+                    )[1],
+                    "contaminant_record_id": _record_id(contaminant),
+                    "contaminant_contig_id": parse_sequence_id(_record_id(contaminant))[
+                        1
+                    ],
                     "expected_duplicate_status": "Removed",
                     "expected_native_status": "Kept",
                     "native_degrade_fraction": spec["native_degrade_fraction"],
-                    **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
+                    **_event_taxonomy_fields(
+                        "recipient", recipient_taxonomy[recipient]
+                    ),
                     **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
-                    **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
+                    **_event_taxonomic_distance_fields(
+                        recipient_taxonomy[recipient], donor_taxonomy[donor]
+                    ),
                 }
             )
             event_index += 1
-        if len([row for row in events if row["event_type"] == "duplicate"]) != duplicate_target:
+        if (
+            len([row for row in events if row["event_type"] == "duplicate"])
+            != duplicate_target
+        ):
             raise ValueError(
-                f"Could not schedule {duplicate_target} duplicate events for scope '{taxonomic_scope}'"
+                f"Could not schedule {duplicate_target} duplicate events for scope "
+                f"'{taxonomic_scope}'"
             )
 
         replacement_pairs = [
@@ -1378,31 +1502,46 @@ def _materialize_taxonomic_benchmark_from_truth(
                     "scenario": scenario_name,
                     "event_type": "replacement",
                     "taxonomic_scope": taxonomic_scope,
-                    "taxonomic_scope_label": TAXONOMY_SCOPE_RULES[taxonomic_scope]["scope_label"],
+                    "taxonomic_scope_label": TAXONOMY_SCOPE_RULES[taxonomic_scope][
+                        "scope_label"
+                    ],
                     "recipient_genome": recipient,
                     "recipient_group": lineage_label,
                     "marker": marker,
                     "native_record_id": native_map[recipient][marker],
-                    "native_contig_id": parse_sequence_id(native_map[recipient][marker])[1],
+                    "native_contig_id": parse_sequence_id(
+                        native_map[recipient][marker]
+                    )[1],
                     "donor_genome": donor,
                     "donor_group": donor_lineage_label,
-                    "source_relation": _source_relation(lineage_label, donor_lineage_label),
+                    "source_relation": _source_relation(
+                        lineage_label, donor_lineage_label
+                    ),
                     "donor_record_id": donor_native_map[donor][marker],
-                    "donor_contig_id": parse_sequence_id(donor_native_map[donor][marker])[1],
-                    "contaminant_record_id": contaminant.id,
-                    "contaminant_contig_id": parse_sequence_id(contaminant.id)[1],
+                    "donor_contig_id": parse_sequence_id(
+                        donor_native_map[donor][marker]
+                    )[1],
+                    "contaminant_record_id": _record_id(contaminant),
+                    "contaminant_contig_id": parse_sequence_id(_record_id(contaminant))[
+                        1
+                    ],
                     "expected_replacement_outcome": "DropMarkerOrRemoveContaminant",
                     "native_degrade_fraction": spec["native_degrade_fraction"],
-                    **_event_taxonomy_fields("recipient", recipient_taxonomy[recipient]),
+                    **_event_taxonomy_fields(
+                        "recipient", recipient_taxonomy[recipient]
+                    ),
                     **_event_taxonomy_fields("donor", donor_taxonomy[donor]),
-                    **_event_taxonomic_distance_fields(recipient_taxonomy[recipient], donor_taxonomy[donor]),
+                    **_event_taxonomic_distance_fields(
+                        recipient_taxonomy[recipient], donor_taxonomy[donor]
+                    ),
                 }
             )
             replacement_events_written += 1
             event_index += 1
         if replacement_events_written != spec["replacement_events"]:
             raise ValueError(
-                f"Could not schedule {spec['replacement_events']} replacement events for scope '{taxonomic_scope}'"
+                f"Could not schedule {spec['replacement_events']} replacement events "
+                f"for scope '{taxonomic_scope}'"
             )
 
         scenario_dir = scenarios_dir / scenario_name
@@ -1415,18 +1554,12 @@ def _materialize_taxonomic_benchmark_from_truth(
             genomedir=reference_inputs_dir,
             modeldir=truth_models,
             outdir=reference_run_dir,
-            num_cpus=num_cpus,
-            percent_models=0,
-            marker_selection=False,
-            singles=False,
-            singles_mode="delta_rf",
-            selection_mode="coordinate",
-            selection_max_rounds=5,
-            selection_global_rounds=1,
-            keep_intermediates=True,
+            options=_reference_run_options(num_cpus),
         )
         _write_events_tsv(scenario_dir / "events.tsv", events)
-        genome_summary = _write_genome_summary_tsv(scenario_dir / "genome_summary.tsv", events)
+        genome_summary = _write_genome_summary_tsv(
+            scenario_dir / "genome_summary.tsv", events
+        )
         summary = _scenario_summary(events, genome_summary)
         manifest["scenarios"].append(
             {
@@ -1445,7 +1578,7 @@ def _materialize_taxonomic_benchmark_from_truth(
     _write_manifest_json(outdir / "benchmark_manifest.json", manifest)
 
 
-def generate_benchmark_dataset(
+def generate_benchmark_dataset(  # noqa: PLR0913  # Preserve the public generator API.
     source_dir: Path,
     models_path: Path,
     outdir: Path,
@@ -1456,6 +1589,7 @@ def generate_benchmark_dataset(
     seed: int,
     num_cpus: int,
 ) -> None:
+    """Generate contamination scenarios from one staged source panel."""
     outdir.mkdir(parents=True, exist_ok=True)
 
     stage_dir = outdir / "stage_full_model_clean"
@@ -1464,19 +1598,13 @@ def generate_benchmark_dataset(
             genomedir=source_dir,
             modeldir=models_path,
             outdir=stage_dir,
-            num_cpus=num_cpus,
-            percent_models=0,
-            marker_selection=False,
-            singles=False,
-            singles_mode="delta_rf",
-            selection_mode="coordinate",
-            selection_max_rounds=5,
-            selection_global_rounds=1,
-            keep_intermediates=True,
+            options=_reference_run_options(num_cpus),
         )
 
     normalized_records = _read_normalized_proteomes(stage_dir / "proteomes")
-    genome_sizes = {genome: len(records) for genome, records in normalized_records.items()}
+    genome_sizes = {
+        genome: len(records) for genome, records in normalized_records.items()
+    }
     table = _load_table(stage_dir / "table_elim_dups")
     selected_genomes, counts = _choose_genome_subset(table, genome_sizes, n_genomes)
     truth_markers, ranking = _rank_markers(
@@ -1487,9 +1615,11 @@ def generate_benchmark_dataset(
         n_markers,
         min_marker_presence_fraction,
     )
-    truth_records = {genome: deepcopy(normalized_records[genome]) for genome in selected_genomes}
+    truth_records = {
+        genome: deepcopy(normalized_records[genome]) for genome in selected_genomes
+    }
     group_label = _infer_group_label(source_dir)
-    group_labels = {genome: group_label for genome in selected_genomes}
+    group_labels = dict.fromkeys(selected_genomes, group_label)
     _materialize_benchmark_from_truth(
         truth_records=truth_records,
         truth_markers=truth_markers,
@@ -1508,7 +1638,7 @@ def generate_benchmark_dataset(
     )
 
 
-def generate_taxonomic_benchmark_dataset(
+def generate_taxonomic_benchmark_dataset(  # noqa: PLR0913  # Preserve the public generator API.
     truth_source_dir: Path,
     donor_source_dir: Path | None,
     models_path: Path,
@@ -1524,6 +1654,7 @@ def generate_taxonomic_benchmark_dataset(
     seed: int,
     num_cpus: int,
 ) -> None:
+    """Generate scenarios whose donors meet a fixed taxonomic-distance rule."""
     outdir.mkdir(parents=True, exist_ok=True)
 
     truth_stage_dir = outdir / "stage_truth_full_model_clean"
@@ -1536,8 +1667,12 @@ def generate_taxonomic_benchmark_dataset(
     truth_taxonomy_df = _load_source_taxonomy(truth_source_dir, taxonomy_db_path)
     truth_taxonomy_map = _taxonomy_lookup(truth_taxonomy_df)
 
-    genome_sizes = {genome: len(records) for genome, records in truth_normalized_records.items()}
-    selected_genomes, counts = _choose_genome_subset(truth_table, genome_sizes, n_genomes)
+    genome_sizes = {
+        genome: len(records) for genome, records in truth_normalized_records.items()
+    }
+    selected_genomes, counts = _choose_genome_subset(
+        truth_table, genome_sizes, n_genomes
+    )
     truth_markers, ranking = _rank_markers(
         truth_table,
         truth_normalized_records,
@@ -1551,7 +1686,9 @@ def generate_taxonomic_benchmark_dataset(
         for genome in selected_genomes
     }
 
-    actual_donor_source_dir = donor_source_dir if donor_source_dir is not None else truth_source_dir
+    actual_donor_source_dir = (
+        donor_source_dir if donor_source_dir is not None else truth_source_dir
+    )
     if actual_donor_source_dir.resolve() == truth_source_dir.resolve():
         donor_normalized_records = truth_normalized_records
         donor_table = truth_table
@@ -1564,7 +1701,9 @@ def generate_taxonomic_benchmark_dataset(
             donor_stage_dir,
             num_cpus=num_cpus,
         )
-        donor_taxonomy_df = _load_source_taxonomy(actual_donor_source_dir, taxonomy_db_path)
+        donor_taxonomy_df = _load_source_taxonomy(
+            actual_donor_source_dir, taxonomy_db_path
+        )
         donor_taxonomy_map = _taxonomy_lookup(donor_taxonomy_df)
 
     donor_native_map = _native_marker_map(
@@ -1577,7 +1716,9 @@ def generate_taxonomic_benchmark_dataset(
     _materialize_taxonomic_benchmark_from_truth(
         truth_records=truth_records,
         truth_markers=truth_markers,
-        truth_taxonomy={genome: truth_taxonomy_map[genome] for genome in selected_genomes},
+        truth_taxonomy={
+            genome: truth_taxonomy_map[genome] for genome in selected_genomes
+        },
         donor_records=donor_normalized_records,
         donor_native_map=donor_native_map,
         donor_taxonomy=donor_taxonomy_map,
@@ -1606,7 +1747,12 @@ def _load_events(path: Path) -> pd.DataFrame:
 
 def _load_rf_status(path: Path) -> dict[tuple[str, str], str]:
     df = pd.read_csv(path, sep=r"\s+", engine="python")
-    return {(row.ProteinID, row.MarkerGene): row.Status for row in df.itertuples(index=False)}
+    return {
+        (str(protein_id), str(marker_gene)): str(status)
+        for protein_id, marker_gene, status in df[
+            ["ProteinID", "MarkerGene", "Status"]
+        ].itertuples(index=False, name=None)
+    }
 
 
 def _normalized_status_id(record_id: str) -> str:
@@ -1616,7 +1762,7 @@ def _normalized_status_id(record_id: str) -> str:
 def _rf_norm(truth_tree_path: Path, observed_tree_path: Path) -> float:
     truth = Tree(str(truth_tree_path))
     observed = Tree(str(observed_tree_path))
-    shared = sorted(set(leaf.name for leaf in truth) & set(leaf.name for leaf in observed))
+    shared = sorted({leaf.name for leaf in truth} & {leaf.name for leaf in observed})
     truth.prune(shared)
     observed.prune(shared)
     rf, maxrf, *_ = truth.robinson_foulds(observed, unrooted_trees=True)
@@ -1655,8 +1801,8 @@ def _replacement_outcome(
     aligned_path = run_dir / "aligned_final" / f"{marker}.faa"
     if not aligned_path.exists():
         return "unknown"
-    with open(aligned_path) as handle:
-        ids = [record.id for record in SeqIO.parse(handle, "fasta")]
+    with aligned_path.open(encoding="utf-8") as handle:
+        ids = [_record_id(record) for record in SeqIO.parse(handle, "fasta")]
     if not ids:
         return "unknown"
     if contaminant_record_id in ids:
@@ -1688,24 +1834,21 @@ def _singleton_pruning_pairs(run_dir: Path) -> list[tuple[str, str]]:
         candidate_path = no_singles_dir / path.name
         if not candidate_path.exists():
             continue
-        before = {
-            leaf.name.split("|")[0]
-            for leaf in Tree(str(path)).iter_leaves()
-        }
+        before = {leaf.name.split("|")[0] for leaf in Tree(str(path)).iter_leaves()}
         after = {
-            leaf.name.split("|")[0]
-            for leaf in Tree(str(candidate_path)).iter_leaves()
+            leaf.name.split("|")[0] for leaf in Tree(str(candidate_path)).iter_leaves()
         }
         marker = path.stem.split("_")[-2]
-        for genome in sorted(before - after):
-            removed_pairs.append((genome, marker))
+        removed_pairs.extend((genome, marker) for genome in sorted(before - after))
     return removed_pairs
 
 
 def _singleton_pruning_summary(run_dir: Path, replacement_events: pd.DataFrame) -> dict:
     replacement_pairs = {
-        (str(row.recipient_genome), str(row.marker))
-        for row in replacement_events.itertuples(index=False)
+        (str(recipient), str(marker))
+        for recipient, marker in replacement_events[
+            ["recipient_genome", "marker"]
+        ].itertuples(index=False, name=None)
     }
     intended_removed: list[str] = []
     collateral_removed: list[str] = []
@@ -1736,6 +1879,7 @@ def evaluate_benchmark_run(
     run_dir: Path,
     runtime_seconds: float,
 ) -> dict:
+    """Measure one benchmark run against its manifest and reference tree."""
     manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
     scenario_meta = next(
         (item for item in manifest["scenarios"] if item["name"] == scenario_name),
@@ -1744,7 +1888,9 @@ def evaluate_benchmark_run(
     if scenario_meta is None:
         raise KeyError(f"Scenario not found in manifest: {scenario_name}")
     truth_tree = _resolve_manifest_path(
-        scenario_meta.get("reference_tree_path", benchmark_dir / "truth_run" / "tree.nwk"),
+        scenario_meta.get(
+            "reference_tree_path", benchmark_dir / "truth_run" / "tree.nwk"
+        ),
         benchmark_dir=benchmark_dir,
     )
     events = _load_events(benchmark_dir / "scenarios" / scenario_name / "events.tsv")
@@ -1761,10 +1907,19 @@ def evaluate_benchmark_run(
     native_correct = 0
     for row in duplicate_events.itertuples(index=False):
         contaminant_correct += int(
-            rf_status.get((_normalized_status_id(row.contaminant_record_id), row.marker)) == "Removed"
+            rf_status.get(
+                (
+                    _normalized_status_id(str(row.contaminant_record_id)),
+                    str(row.marker),
+                )
+            )
+            == "Removed"
         )
         native_correct += int(
-            rf_status.get((_normalized_status_id(row.native_record_id), row.marker)) == "Kept"
+            rf_status.get(
+                (_normalized_status_id(str(row.native_record_id)), str(row.marker))
+            )
+            == "Kept"
         )
 
     reference_taxa = _expected_reference_taxa(manifest, scenario_meta, truth_tree)
@@ -1779,19 +1934,33 @@ def evaluate_benchmark_run(
             str(row.contaminant_record_id),
             str(row.native_record_id),
         )
-        if outcome in {"marker_dropped", "native_retained"} and str(row.recipient_genome) not in final_taxa_set:
+        if (
+            outcome in {"marker_dropped", "native_retained"}
+            and str(row.recipient_genome) not in final_taxa_set
+        ):
             outcome = "recipient_lost"
         replacement_outcomes.append(outcome)
-    replacement_contaminant_retained = int(sum(outcome == "contaminant_retained" for outcome in replacement_outcomes))
+    replacement_contaminant_retained = int(
+        sum(outcome == "contaminant_retained" for outcome in replacement_outcomes)
+    )
     replacement_contaminant_removed = int(
-        sum(outcome in {"marker_dropped", "native_retained"} for outcome in replacement_outcomes)
+        sum(
+            outcome in {"marker_dropped", "native_retained"}
+            for outcome in replacement_outcomes
+        )
     )
     total_contaminants = int(len(duplicate_events) + len(replacement_events))
     total_removed = int(contaminant_correct + replacement_contaminant_removed)
     missing_taxa = sorted(set(reference_taxa) - set(final_taxa))
     extra_taxa = sorted(set(final_taxa) - set(reference_taxa))
-    replacement_recipients = sorted(set(replacement_events["recipient_genome"])) if not replacement_events.empty else []
-    replacement_recipient_losses = sorted(set(missing_taxa) & set(replacement_recipients))
+    replacement_recipients = (
+        sorted(set(replacement_events["recipient_genome"]))
+        if not replacement_events.empty
+        else []
+    )
+    replacement_recipient_losses = sorted(
+        set(missing_taxa) & set(replacement_recipients)
+    )
     collateral_losses = sorted(set(missing_taxa) - set(replacement_recipients))
     singleton_summary = _singleton_pruning_summary(run_dir, replacement_events)
 
@@ -1803,20 +1972,31 @@ def evaluate_benchmark_run(
         "final_tree_path": str(result_tree),
         "initial_tree_rf_norm": _rf_norm(truth_tree, initial_tree),
         "tree_rf_norm": _rf_norm(truth_tree, result_tree),
-        "tree_rf_delta": _rf_norm(truth_tree, initial_tree) - _rf_norm(truth_tree, result_tree),
-        "duplicate_events": int(len(duplicate_events)),
+        "tree_rf_delta": _rf_norm(truth_tree, initial_tree)
+        - _rf_norm(truth_tree, result_tree),
+        "duplicate_events": len(duplicate_events),
         "duplicate_contaminant_removed": int(contaminant_correct),
         "duplicate_native_retained": int(native_correct),
-        "replacement_events": int(len(replacement_events)),
-        "replacement_marker_dropped": int(sum(outcome == "marker_dropped" for outcome in replacement_outcomes)),
+        "replacement_events": len(replacement_events),
+        "replacement_marker_dropped": int(
+            sum(outcome == "marker_dropped" for outcome in replacement_outcomes)
+        ),
         "replacement_contaminant_retained": replacement_contaminant_retained,
         "replacement_contaminant_removed": replacement_contaminant_removed,
-        "replacement_native_retained": int(sum(outcome == "native_retained" for outcome in replacement_outcomes)),
-        "replacement_unknown": int(sum(outcome == "unknown" for outcome in replacement_outcomes)),
-        "replacement_recipient_lost": int(sum(outcome == "recipient_lost" for outcome in replacement_outcomes)),
+        "replacement_native_retained": int(
+            sum(outcome == "native_retained" for outcome in replacement_outcomes)
+        ),
+        "replacement_unknown": int(
+            sum(outcome == "unknown" for outcome in replacement_outcomes)
+        ),
+        "replacement_recipient_lost": int(
+            sum(outcome == "recipient_lost" for outcome in replacement_outcomes)
+        ),
         "contaminant_markers_added": total_contaminants,
         "contaminant_markers_removed": total_removed,
-        "contaminant_markers_removed_fraction": total_removed / total_contaminants if total_contaminants else 0.0,
+        "contaminant_markers_removed_fraction": total_removed / total_contaminants
+        if total_contaminants
+        else 0.0,
         "final_reference_taxa_count": len(reference_taxa),
         "final_observed_taxa_count": len(final_taxa),
         "final_taxa_match_reference": not missing_taxa and not extra_taxa,
@@ -1825,7 +2005,9 @@ def evaluate_benchmark_run(
         "final_extra_taxa_count": len(extra_taxa),
         "final_extra_taxa": _format_taxa_list(extra_taxa),
         "replacement_recipient_genome_loss_count": len(replacement_recipient_losses),
-        "replacement_recipient_genomes_lost": _format_taxa_list(replacement_recipient_losses),
+        "replacement_recipient_genomes_lost": _format_taxa_list(
+            replacement_recipient_losses
+        ),
         "collateral_genome_loss_count": len(collateral_losses),
         "collateral_genomes_lost": _format_taxa_list(collateral_losses),
         **singleton_summary,
@@ -1835,21 +2017,29 @@ def evaluate_benchmark_run(
 
 
 def _write_report(results: pd.DataFrame, out_path: Path) -> None:
+    header = (
+        "| Scenario | Cleanup Profile | Initial RF | Final RF | RF Delta | "
+        "Contaminants Removed | Duplicate Removed | "
+        "Replacement Removed | Runtime (s) |"
+    )
     lines = [
         "# SGTree Systematic Benchmark Report",
         "",
-        "| Scenario | Cleanup Profile | Initial RF | Final RF | RF Delta | Contaminants Removed | Duplicate Removed | Replacement Removed | Runtime (s) |",
+        header,
         "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
-    for row in results.sort_values(["scenario"]).itertuples(index=False):
-        lines.append(
-            f"| {row.scenario} | {row.cleanup_profile} | {row.initial_tree_rf_norm:.3f} | {row.tree_rf_norm:.3f} | {row.tree_rf_delta:.3f} | "
-            f"{row.contaminant_markers_removed}/{row.contaminant_markers_added} | "
-            f"{row.duplicate_contaminant_removed}/{row.duplicate_events} | "
-            f"{row.replacement_contaminant_removed}/{row.replacement_events} | "
-            f"{row.runtime_seconds:.1f} |"
-        )
-    out_path.write_text("\n".join(lines) + "\n")
+    lines.extend(
+        f"| {row['scenario']} | {row['cleanup_profile']} | "
+        f"{float(row['initial_tree_rf_norm']):.3f} | "
+        f"{float(row['tree_rf_norm']):.3f} | "
+        f"{float(row['tree_rf_delta']):.3f} | "
+        f"{row['contaminant_markers_removed']}/{row['contaminant_markers_added']} | "
+        f"{row['duplicate_contaminant_removed']}/{row['duplicate_events']} | "
+        f"{row['replacement_contaminant_removed']}/{row['replacement_events']} | "
+        f"{float(row['runtime_seconds']):.1f} |"
+        for row in results.sort_values(["scenario"]).to_dict("records")
+    )
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_benchmark_suite(
@@ -1858,6 +2048,7 @@ def run_benchmark_suite(
     num_cpus: int,
     selection_max_rounds: int,
 ) -> None:
+    """Run the configured cleanup profile for each manifest scenario."""
     manifest = json.loads((benchmark_dir / "benchmark_manifest.json").read_text())
     benchmark_models = benchmark_dir / "truth_markers.hmm"
     results_dir = benchmark_dir / "results"
@@ -1869,7 +2060,9 @@ def run_benchmark_suite(
     for scenario in manifest["scenarios"]:
         scenario_name = scenario["name"]
         if scenario_name not in DEFAULT_CLEANUP_PROFILES:
-            raise ValueError(f"No cleanup profile defined for scenario: {scenario_name}")
+            raise ValueError(
+                f"No cleanup profile defined for scenario: {scenario_name}"
+            )
         profile = DEFAULT_CLEANUP_PROFILES[scenario_name]
         proteomes_dir = Path(scenario["proteomes_dir"])
         run_dir = results_dir / f"{scenario_name}__{profile['name']}"
@@ -1879,15 +2072,17 @@ def run_benchmark_suite(
                 genomedir=proteomes_dir,
                 modeldir=benchmark_models,
                 outdir=run_dir,
-                num_cpus=num_cpus,
-                percent_models=70,
-                marker_selection=profile["marker_selection"],
-                singles=profile["singles"],
-                singles_mode=profile["singles_mode"],
-                selection_mode=profile["selection_mode"],
-                selection_max_rounds=selection_max_rounds,
-                selection_global_rounds=profile["selection_global_rounds"],
-                keep_intermediates=True,
+                options=_RunOptions(
+                    num_cpus=num_cpus,
+                    percent_models=70,
+                    marker_selection=profile["marker_selection"],
+                    singles=profile["singles"],
+                    singles_mode=profile["singles_mode"],
+                    selection_mode=profile["selection_mode"],
+                    selection_max_rounds=selection_max_rounds,
+                    selection_global_rounds=profile["selection_global_rounds"],
+                    keep_intermediates=True,
+                ),
             )
             runtime_seconds = time.time() - start
             row = evaluate_benchmark_run(
@@ -1944,7 +2139,9 @@ def _parse_singleton_result_file(path: Path) -> list[dict]:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate and run SGTree contamination benchmarks")
+    parser = argparse.ArgumentParser(
+        description="Generate and run SGTree contamination benchmarks"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     gen = subparsers.add_parser("generate", help="Generate a benchmark dataset")
@@ -1957,14 +2154,21 @@ def _parse_args() -> argparse.Namespace:
     gen.add_argument("--seed", type=int, default=42)
     gen.add_argument("--num-cpus", type=int, default=8)
 
-    gentax = subparsers.add_parser("generate-taxonomic", help="Generate a taxonomy-aware benchmark dataset")
+    gentax = subparsers.add_parser(
+        "generate-taxonomic", help="Generate a taxonomy-aware benchmark dataset"
+    )
     gentax.add_argument("--truth-source-dir", required=True)
     gentax.add_argument("--donor-source-dir", default=None)
     gentax.add_argument("--models", default="resources/models/UNI56.hmm")
     gentax.add_argument("--outdir", required=True)
-    gentax.add_argument("--taxonomy-scope", required=True, choices=sorted(TAXONOMY_SCOPE_RULES))
-    gentax.add_argument("--taxonomy-db", default=DEFAULT_TAXONOMY_DB,
-                        required=DEFAULT_TAXONOMY_DB is None)
+    gentax.add_argument(
+        "--taxonomy-scope", required=True, choices=sorted(TAXONOMY_SCOPE_RULES)
+    )
+    gentax.add_argument(
+        "--taxonomy-db",
+        default=DEFAULT_TAXONOMY_DB,
+        required=DEFAULT_TAXONOMY_DB is None,
+    )
     gentax.add_argument("--lineage-label", default=None)
     gentax.add_argument("--donor-lineage-label", default=None)
     gentax.add_argument("--n-genomes", type=int, default=50)
@@ -1973,17 +2177,35 @@ def _parse_args() -> argparse.Namespace:
     gentax.add_argument("--seed", type=int, default=42)
     gentax.add_argument("--num-cpus", type=int, default=8)
 
-    prepburk = subparsers.add_parser("prepare-burkholderiaceae", help="Materialize the 50-genome Burkholderiaceae ANI benchmark panel")
-    prepburk.add_argument("--outdir", default="benchmarking/testgenomes/Burkholderiaceae50")
-    prepburk.add_argument("--lookup", default="benchmarking/testgenomes/burkholderiaceae50.lookup")
-    prepburk.add_argument("--taxonomy-tsv", default="benchmarking/testgenomes/burkholderiaceae50_taxonomy.tsv")
-    prepburk.add_argument("--selection-tsv", default="benchmarking/testgenomes/burkholderiaceae50_selection.tsv")
-    prepburk.add_argument("--taxonomy-db", default=DEFAULT_TAXONOMY_DB,
-                          required=DEFAULT_TAXONOMY_DB is None)
+    prepburk = subparsers.add_parser(
+        "prepare-burkholderiaceae",
+        help="Materialize the 50-genome Burkholderiaceae ANI benchmark panel",
+    )
+    prepburk.add_argument(
+        "--outdir", default="benchmarking/testgenomes/Burkholderiaceae50"
+    )
+    prepburk.add_argument(
+        "--lookup", default="benchmarking/testgenomes/burkholderiaceae50.lookup"
+    )
+    prepburk.add_argument(
+        "--taxonomy-tsv",
+        default="benchmarking/testgenomes/burkholderiaceae50_taxonomy.tsv",
+    )
+    prepburk.add_argument(
+        "--selection-tsv",
+        default="benchmarking/testgenomes/burkholderiaceae50_selection.tsv",
+    )
+    prepburk.add_argument(
+        "--taxonomy-db",
+        default=DEFAULT_TAXONOMY_DB,
+        required=DEFAULT_TAXONOMY_DB is None,
+    )
     prepburk.add_argument("--prefix", default="BURK__")
     prepburk.add_argument("--overwrite", action="store_true")
 
-    run = subparsers.add_parser("run", help="Run legacy vs coordinate benchmark comparisons")
+    run = subparsers.add_parser(
+        "run", help="Run legacy vs coordinate benchmark comparisons"
+    )
     run.add_argument("--benchmark-dir", default="runs/benchmarks/dev_chloroflexi")
     run.add_argument("--num-cpus", type=int, default=8)
     run.add_argument("--selection-max-rounds", type=int, default=5)
@@ -1992,6 +2214,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Parse benchmark CLI arguments and run the selected command."""
     args = _parse_args()
     if args.command == "generate":
         generate_benchmark_dataset(
@@ -2007,7 +2230,9 @@ def main() -> None:
     elif args.command == "generate-taxonomic":
         generate_taxonomic_benchmark_dataset(
             truth_source_dir=Path(args.truth_source_dir),
-            donor_source_dir=Path(args.donor_source_dir) if args.donor_source_dir else None,
+            donor_source_dir=Path(args.donor_source_dir)
+            if args.donor_source_dir
+            else None,
             models_path=Path(args.models),
             outdir=Path(args.outdir),
             taxonomic_scope=args.taxonomy_scope,
@@ -2030,9 +2255,11 @@ def main() -> None:
             prefix=args.prefix,
             overwrite=args.overwrite,
         )
+        n_genera = selection["genus"].nunique()
+        n_species = selection["species"].nunique()
         print(
             f"Prepared Burkholderiaceae benchmark panel: {len(selection)} genomes, "
-            f"{selection['genus'].nunique()} genera, {selection['species'].nunique()} species"
+            f"{n_genera} genera, {n_species} species"
         )
     elif args.command == "run":
         run_benchmark_suite(

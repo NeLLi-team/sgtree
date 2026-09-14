@@ -12,17 +12,16 @@ from sgtree.benchmarks import fna_confirmation
 
 class FnaConfirmationTests(unittest.TestCase):
     def test_fragment_bounds_stays_inside_selected_marker_barriers(self):
-        rows = []
-        for index in range(10):
-            rows.append(
-                {
-                    "genome_id": "donor",
-                    "contig_id": "contig",
-                    "normalized_header": f"donor|contig|gene_{index}",
-                    "begin": index * 100 + 1,
-                    "end": index * 100 + 90,
-                }
-            )
+        rows = [
+            {
+                "genome_id": "donor",
+                "contig_id": "contig",
+                "normalized_header": f"donor|contig|gene_{index}",
+                "begin": index * 100 + 1,
+                "end": index * 100 + 90,
+            }
+            for index in range(10)
+        ]
         gene_calls = pd.DataFrame(rows)
         target = "donor|contig|gene_5"
         barriers = {
@@ -79,9 +78,7 @@ class FnaConfirmationTests(unittest.TestCase):
             ):
                 panel_id = f"{lineage}_p{panel_index}_seed{seed}"
                 events = []
-                for event_index, role in enumerate(
-                    fna_confirmation.EVENT_ORDER
-                ):
+                for event_index, role in enumerate(fna_confirmation.EVENT_ORDER):
                     event_class = (
                         "gene_rich_replacement"
                         if role in {"near", "intermediate", "far"}
@@ -110,16 +107,12 @@ class FnaConfirmationTests(unittest.TestCase):
                         "lineage": lineage,
                         "genomes": [
                             f"{panel_id}_g{index}"
-                            for index in range(
-                                fna_confirmation.PANEL_GENOME_COUNT
-                            )
+                            for index in range(fna_confirmation.PANEL_GENOME_COUNT)
                         ],
                         "gunc_clean_control_genome": f"{panel_id}_g0",
                         "markers": [
                             f"m{index}"
-                            for index in range(
-                                fna_confirmation.MARKER_COUNT
-                            )
+                            for index in range(fna_confirmation.MARKER_COUNT)
                         ],
                         "events": events,
                         "contexts": fna_confirmation._panel_contexts(
@@ -165,9 +158,7 @@ class FnaConfirmationTests(unittest.TestCase):
                 "end": 6,
                 "strand": 1,
             }
-            self.assertFalse(
-                fna_confirmation._donor_gene_has_terminal_stop(data, gene)
-            )
+            self.assertFalse(fna_confirmation._donor_gene_has_terminal_stop(data, gene))
 
     def test_solo_donor_requires_stop_valid_under_codes_4_and_11(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -185,9 +176,7 @@ class FnaConfirmationTests(unittest.TestCase):
                 "strand": 1,
             }
 
-            self.assertTrue(
-                fna_confirmation._donor_gene_has_terminal_stop(data, gene)
-            )
+            self.assertTrue(fna_confirmation._donor_gene_has_terminal_stop(data, gene))
             self.assertEqual(
                 fna_confirmation._donor_gene_terminal_stop_codon(data, gene),
                 "TGA",

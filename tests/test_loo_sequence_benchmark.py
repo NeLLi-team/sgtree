@@ -257,13 +257,9 @@ class LeaveOneOutSequenceBenchmarkTests(unittest.TestCase):
             # rejects all 40. Margin threshold is dev-calibrated on the two
             # truth events, so this pins measured state, not validation.
             self.assertEqual(report["review_tier"]["review_robust_z"], 3.0)
-            self.assertEqual(
-                report["review_tier"]["review_min_vote_margin"], 28.0
-            )
+            self.assertEqual(report["review_tier"]["review_min_vote_margin"], 28.0)
             self.assertEqual(report["review_tier"]["candidate_count"], 91)
-            self.assertEqual(
-                report["review_tier"]["gate_only_warning_count"], 42
-            )
+            self.assertEqual(report["review_tier"]["gate_only_warning_count"], 42)
             self.assertEqual(report["review_tier"]["gate_only_false_count"], 40)
             self.assertEqual(report["review_tier"]["warning_count"], 2)
             self.assertEqual(report["review_tier"]["warning_truth_count"], 2)
@@ -283,7 +279,9 @@ class LeaveOneOutSequenceBenchmarkTests(unittest.TestCase):
             self.assertEqual(greedy["case"]["loo_truth_positive_count"], 1)
             self.assertEqual(greedy["case"]["loo_truth_false_positive_count"], 0)
             self.assertFalse(greedy["case"]["loo_sentinel_removed"])
-            self.assertEqual(report["wp1_decision"]["status"], "select_simpler_tied_scorer")
+            self.assertEqual(
+                report["wp1_decision"]["status"], "select_simpler_tied_scorer"
+            )
             self.assertEqual(report["wp1_decision"]["selected_scorer"], "loo")
             self.assertTrue(report["wp1_decision"]["empirical_confirmation_ready"])
             self.assertEqual(

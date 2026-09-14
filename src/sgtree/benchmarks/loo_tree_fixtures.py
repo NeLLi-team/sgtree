@@ -14,6 +14,8 @@ import hashlib
 import json
 import time
 import warnings
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -21,13 +23,21 @@ import pandas as pd
 
 warnings.simplefilter("ignore", SyntaxWarning)
 
-from ete3 import Tree
+from ete3 import Tree  # noqa: E402  # Suppress third-party SyntaxWarnings first.
 
-from sgtree.id_schema import build_sequence_id
-from sgtree.marker_selection import _rf_distance_between, choose_tree_by_rf
-from sgtree.marker_selection.contig_evidence import contig_gene_vote_gate
-from sgtree.marker_selection.loo_profile import score_loo_profiles
-
+from sgtree.id_schema import (  # noqa: E402  # Keep warning filter before ETE users.
+    build_sequence_id,
+)
+from sgtree.marker_selection import (  # noqa: E402  # Keep warning filter before ETE users.
+    _rf_distance_between,
+    choose_tree_by_rf,
+)
+from sgtree.marker_selection.contig_evidence import (  # noqa: E402  # Keep warning filter before ETE users.
+    contig_gene_vote_gate,
+)
+from sgtree.marker_selection.loo_profile import (  # noqa: E402  # Keep warning filter before ETE users.
+    score_loo_profiles,
+)
 
 SHAPES = {"balanced": 10, "pectinate": 12}
 EVENT_CLASSES = (
@@ -43,6 +53,21 @@ SCALE_SEED = 101
 MARKER_COUNT = 8
 MAX_RUNTIME_SECONDS = 30.0
 MIN_CMTV_RF_WEIGHT = 1e-6
+
+
+@dataclass(frozen=True)
+class _RegraftSpec:
+    """Frozen inputs for one synthetic regraft event."""
+
+    marker_index: int
+    recipient_index: int
+    donor_index: int
+    kind: str
+    support: float
+    replacement: bool
+    expected_loo: bool
+    expected_screen_candidate: bool
+    vote_clades: list[str]
 
 
 def cmtv_rf_quality_weights(
@@ -79,9 +104,7 @@ def load_cmtv_rf_weights(path: str | Path) -> dict[str, float]:
                 continue
             parts = line.split()
             if len(parts) != len(expected):
-                raise ValueError(
-                    f"malformed CMTV RF row {line_number} in {rf_path}"
-                )
+                raise ValueError(f"malformed CMTV RF row {line_number} in {rf_path}")
             marker = parts[1]
             try:
                 rf_distance = float(parts[2])
@@ -190,28 +213,24 @@ def _regraft_target(
 
 def _event(
     fixture_key: tuple[object, ...],
-    kind: str,
     marker_name: str,
     native_record_id: str,
     observed_record_id: str,
     donor_genome: str,
-    *,
-    is_contaminant: bool,
-    expected_loo: bool,
-    expected_screen_candidate: bool,
+    spec: _RegraftSpec,
 ) -> dict:
-    contaminant_id = observed_record_id if is_contaminant else None
+    contaminant_id = observed_record_id if spec.replacement else None
     return {
-        "event_id": _opaque("e", *fixture_key, kind),
-        "event_kind": kind,
+        "event_id": _opaque("e", *fixture_key, spec.kind),
+        "event_kind": spec.kind,
         "marker_name": marker_name,
         "native_record_id": native_record_id,
         "contaminant_record_id": contaminant_id,
         "observed_record_id": observed_record_id,
         "donor_genome": donor_genome,
-        "is_contaminant": is_contaminant,
-        "expected_loo": expected_loo,
-        "expected_screen_candidate": expected_screen_candidate,
+        "is_contaminant": spec.replacement,
+        "expected_loo": spec.expected_loo,
+        "expected_screen_candidate": spec.expected_screen_candidate,
     }
 
 
@@ -243,51 +262,66 @@ def _nearest_genome_set(tree: Tree, record_id: str, k: int) -> set[str]:
     return {genome for _distance, genome in ranked[:k]}
 
 
-def build_fixture(
+def _fixture_coordinates(
     shape: str,
     event_class: str,
     seed: int,
-    *,
-    scale_taxa_count: int | None = None,
-) -> dict:
-    """Build one fixed tree panel; event choices never inspect model output."""
+    scale_taxa_count: int | None,
+) -> tuple[str, tuple[object, ...], str, int]:
+    """Validate a coordinate and derive its stable fixture identifiers."""
     if scale_taxa_count is None:
         if shape not in SHAPES or event_class not in EVENT_CLASSES or seed not in SEEDS:
             raise ValueError("unknown fixed fixture coordinate")
         fixture_tier = "mechanism"
         fixture_key = (shape, event_class, seed)
         panel_id = _opaque("p", shape, seed)
-        taxa_count = SHAPES[shape]
-    else:
-        if (
-            shape not in SHAPES
-            or event_class not in SCALE_EVENT_CLASSES
-            or seed != SCALE_SEED
-            or scale_taxa_count not in SCALE_TAXA_COUNTS
-        ):
-            raise ValueError("unknown fixed scale fixture coordinate")
-        fixture_tier = "scale"
-        fixture_key = (
-            fixture_tier,
-            scale_taxa_count,
-            shape,
-            event_class,
-            seed,
-        )
-        panel_id = _opaque("p", fixture_tier, scale_taxa_count, shape, seed)
-        taxa_count = scale_taxa_count
+        return fixture_tier, fixture_key, panel_id, SHAPES[shape]
 
-    fixture_id = _opaque("f", *fixture_key)
-    genomes = tuple(_opaque("x", panel_id, "genome", index) for index in range(taxa_count))
-    markers = tuple(_opaque("m", panel_id, "marker", index) for index in range(MARKER_COUNT))
-    seed_rank = SEEDS.index(seed)
-    recipient_indices = (2 + seed_rank, 3 + seed_rank, 4 + seed_rank)
-    donor_indices = (taxa_count - 1, taxa_count - 2, taxa_count - 3)
+    if (
+        shape not in SHAPES
+        or event_class not in SCALE_EVENT_CLASSES
+        or seed != SCALE_SEED
+        or scale_taxa_count not in SCALE_TAXA_COUNTS
+    ):
+        raise ValueError("unknown fixed scale fixture coordinate")
+    fixture_tier = "scale"
+    fixture_key = (
+        fixture_tier,
+        scale_taxa_count,
+        shape,
+        event_class,
+        seed,
+    )
+    panel_id = _opaque("p", fixture_tier, scale_taxa_count, shape, seed)
+    return fixture_tier, fixture_key, panel_id, scale_taxa_count
 
+
+def _build_tree_panel(
+    shape: str,
+    seed: int,
+    panel_id: str,
+    taxa_count: int,
+) -> tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    Tree,
+    dict[str, dict[str, str]],
+    dict[str, Tree],
+]:
+    """Build the unmodified reference and marker trees for one panel."""
+    genomes = tuple(
+        _opaque("x", panel_id, "genome", index) for index in range(taxa_count)
+    )
+    markers = tuple(
+        _opaque("m", panel_id, "marker", index) for index in range(MARKER_COUNT)
+    )
+    genome_topology = (
+        _balanced(list(genomes)) if shape == "balanced" else _pectinate(list(genomes))
+    )
+    reference_tree = Tree(_newick(genome_topology, 1.0) + ";", format=1)
     records: dict[str, dict[str, str]] = {}
     trees: dict[str, Tree] = {}
-    genome_topology = _balanced(list(genomes)) if shape == "balanced" else _pectinate(list(genomes))
-    reference_tree = Tree(_newick(genome_topology, 1.0) + ";", format=1)
+    seed_rank = SEEDS.index(seed)
     for marker_index, marker_name in enumerate(markers):
         marker_records = {
             genome: build_sequence_id(
@@ -299,50 +333,67 @@ def build_fixture(
         }
         records[marker_name] = marker_records
         ordered_records = [marker_records[genome] for genome in genomes]
-        topology = _balanced(ordered_records) if shape == "balanced" else _pectinate(ordered_records)
+        topology = (
+            _balanced(ordered_records)
+            if shape == "balanced"
+            else _pectinate(ordered_records)
+        )
         scale = 1.0 + (0.04 * marker_index) + (0.01 * seed_rank)
         trees[marker_name] = Tree(_newick(topology, scale) + ";", format=1)
         _perturb_branch_lengths(trees[marker_name], panel_id, marker_name)
+    return genomes, markers, reference_tree, records, trees
+
+
+def build_fixture(
+    shape: str,
+    event_class: str,
+    seed: int,
+    *,
+    scale_taxa_count: int | None = None,
+) -> dict:
+    """Build one fixed tree panel; event choices never inspect model output."""
+    fixture_tier, fixture_key, panel_id, taxa_count = _fixture_coordinates(
+        shape,
+        event_class,
+        seed,
+        scale_taxa_count,
+    )
+    fixture_id = _opaque("f", *fixture_key)
+    genomes, markers, reference_tree, records, trees = _build_tree_panel(
+        shape,
+        seed,
+        panel_id,
+        taxa_count,
+    )
+    seed_rank = SEEDS.index(seed)
+    recipient_indices = (2 + seed_rank, 3 + seed_rank, 4 + seed_rank)
+    donor_indices = (taxa_count - 1, taxa_count - 2, taxa_count - 3)
 
     events: list[dict] = []
     votes_by_record: dict[str, list[dict]] = {}
 
-    def add_regraft(
-        *,
-        marker_index: int,
-        recipient_index: int,
-        donor_index: int,
-        kind: str,
-        support: float,
-        replacement: bool,
-        expected_loo: bool,
-        expected_screen_candidate: bool,
-        vote_clades: list[str],
-    ) -> None:
-        marker_name = markers[marker_index]
-        recipient = genomes[recipient_index]
-        donor = genomes[donor_index]
+    def add_regraft(spec: _RegraftSpec) -> None:
+        marker_name = markers[spec.marker_index]
+        recipient = genomes[spec.recipient_index]
+        donor = genomes[spec.donor_index]
         native_record = records[marker_name][recipient]
         donor_record = records[marker_name][donor]
         observed_record = (
             build_sequence_id(
                 recipient,
-                _opaque("c", fixture_id, kind, "contig"),
-                _opaque("q", fixture_id, kind, "marker"),
+                _opaque("c", fixture_id, spec.kind, "contig"),
+                _opaque("q", fixture_id, spec.kind, "marker"),
             )
-            if replacement
+            if spec.replacement
             else native_record
         )
         event = _event(
             fixture_key,
-            kind,
             marker_name,
             native_record,
             observed_record,
             donor,
-            is_contaminant=replacement,
-            expected_loo=expected_loo,
-            expected_screen_candidate=expected_screen_candidate,
+            spec,
         )
         neighbors_before = _nearest_genome_set(
             trees[marker_name],
@@ -354,102 +405,112 @@ def build_fixture(
             native_record,
             donor_record,
             observed_record,
-            support=support,
+            support=spec.support,
         )
-        event["cmtv_k5_neighbors_preserved"] = (
-            neighbors_before
-            == _nearest_genome_set(trees[marker_name], observed_record, 5)
+        event["cmtv_k5_neighbors_preserved"] = neighbors_before == _nearest_genome_set(
+            trees[marker_name], observed_record, 5
         )
         events.append(event)
         votes_by_record[observed_record] = _gene_votes(
             fixture_key,
-            kind,
-            vote_clades,
+            spec.kind,
+            spec.vote_clades,
         )
 
     if event_class == "scale_far_source":
         donor = genomes[-1]
         add_regraft(
-            marker_index=0,
-            recipient_index=2,
-            donor_index=taxa_count - 1,
-            kind="scale_far_source",
-            support=0.95,
-            replacement=True,
-            expected_loo=True,
-            expected_screen_candidate=True,
-            vote_clades=[donor] * 3,
+            _RegraftSpec(
+                marker_index=0,
+                recipient_index=2,
+                donor_index=taxa_count - 1,
+                kind="scale_far_source",
+                support=0.95,
+                replacement=True,
+                expected_loo=True,
+                expected_screen_candidate=True,
+                vote_clades=[donor] * 3,
+            )
         )
     elif event_class == "gene_rich_contaminant":
         donor = genomes[0]
         add_regraft(
-            marker_index=0,
-            recipient_index=2,
-            donor_index=0,
-            kind="replacement",
-            support=0.95,
-            replacement=True,
-            expected_loo=True,
-            expected_screen_candidate=True,
-            vote_clades=[donor] * 3,
+            _RegraftSpec(
+                marker_index=0,
+                recipient_index=2,
+                donor_index=0,
+                kind="replacement",
+                support=0.95,
+                replacement=True,
+                expected_loo=True,
+                expected_screen_candidate=True,
+                vote_clades=[donor] * 3,
+            )
         )
     elif event_class == "solo_marker_contaminant":
         add_regraft(
-            marker_index=0,
-            recipient_index=2,
-            donor_index=0,
-            kind="solo",
-            support=0.95,
-            replacement=True,
-            expected_loo=True,
-            expected_screen_candidate=False,
-            vote_clades=[],
+            _RegraftSpec(
+                marker_index=0,
+                recipient_index=2,
+                donor_index=0,
+                kind="solo",
+                support=0.95,
+                replacement=True,
+                expected_loo=True,
+                expected_screen_candidate=False,
+                vote_clades=[],
+            )
         )
     elif event_class == "safety_controls":
         native_recipient = genomes[recipient_indices[0]]
         add_regraft(
-            marker_index=0,
-            recipient_index=recipient_indices[0],
-            donor_index=donor_indices[0],
-            kind="native",
-            support=0.95,
-            replacement=False,
-            expected_loo=True,
-            expected_screen_candidate=False,
-            vote_clades=[native_recipient] * 3,
+            _RegraftSpec(
+                marker_index=0,
+                recipient_index=recipient_indices[0],
+                donor_index=donor_indices[0],
+                kind="native",
+                support=0.95,
+                replacement=False,
+                expected_loo=True,
+                expected_screen_candidate=False,
+                vote_clades=[native_recipient] * 3,
+            )
         )
         weak_donor = genomes[donor_indices[1]]
         add_regraft(
-            marker_index=1,
-            recipient_index=recipient_indices[1],
-            donor_index=donor_indices[1],
-            kind="weak_support",
-            support=0.60,
-            replacement=True,
-            expected_loo=False,
-            expected_screen_candidate=False,
-            vote_clades=[weak_donor] * 3,
+            _RegraftSpec(
+                marker_index=1,
+                recipient_index=recipient_indices[1],
+                donor_index=donor_indices[1],
+                kind="weak_support",
+                support=0.60,
+                replacement=True,
+                expected_loo=False,
+                expected_screen_candidate=False,
+                vote_clades=[weak_donor] * 3,
+            )
         )
         conflict_donor = genomes[donor_indices[2]]
         conflict_recipient = genomes[recipient_indices[2]]
         add_regraft(
-            marker_index=2,
-            recipient_index=recipient_indices[2],
-            donor_index=donor_indices[2],
-            kind="conflicting_votes",
-            support=0.95,
-            replacement=True,
-            expected_loo=True,
-            expected_screen_candidate=False,
-            vote_clades=(
-                [conflict_donor] * 4
-                + [conflict_recipient] * 2
-            ),
+            _RegraftSpec(
+                marker_index=2,
+                recipient_index=recipient_indices[2],
+                donor_index=donor_indices[2],
+                kind="conflicting_votes",
+                support=0.95,
+                replacement=True,
+                expected_loo=True,
+                expected_screen_candidate=False,
+                vote_clades=([conflict_donor] * 4 + [conflict_recipient] * 2),
+            )
         )
 
-    if event_class in {"gene_rich_contaminant", "solo_marker_contaminant"}:
-        if not all(event["cmtv_k5_neighbors_preserved"] for event in events):
-            raise AssertionError("fixed 2-to-0 regraft changed the CMTV k=5 neighbor set")
+    if event_class in {
+        "gene_rich_contaminant",
+        "solo_marker_contaminant",
+    } and not all(event["cmtv_k5_neighbors_preserved"] for event in events):
+        raise AssertionError("fixed 2-to-0 regraft changed the CMTV k=5 neighbor set")
 
     return {
         "fixture_id": fixture_id,
@@ -467,6 +528,7 @@ def build_fixture(
 
 
 def build_fixtures() -> list[dict]:
+    """Build the complete fixed mechanism fixture matrix."""
     return [
         build_fixture(shape, event_class, seed)
         for shape in SHAPES
@@ -476,6 +538,7 @@ def build_fixtures() -> list[dict]:
 
 
 def build_scale_fixtures() -> list[dict]:
+    """Build the complete fixed 50/100-taxon fixture matrix."""
     return [
         build_fixture(
             shape,
@@ -489,19 +552,17 @@ def build_scale_fixtures() -> list[dict]:
     ]
 
 
-def _score_cmtv_current(
+def _validate_cmtv_weights(
     trees: dict[str, Tree],
-    rows: list[dict],
-    marker_rf_weights: dict[str, float] | None = None,
-) -> pd.DataFrame:
-    """Run the tracked in-memory equivalent of CMTV's scoring core."""
+    marker_rf_weights: dict[str, float] | None,
+) -> dict[str, float]:
+    """Return complete, positive CMTV voter weights for the marker set."""
     if marker_rf_weights is None:
-        marker_rf_weights = {marker: 1.0 for marker in trees}
+        marker_rf_weights = dict.fromkeys(trees, 1.0)
     missing_weights = sorted(set(trees) - set(marker_rf_weights))
     if missing_weights:
         raise ValueError(
-            "CMTV voter weights are missing markers: "
-            + ", ".join(missing_weights)
+            "CMTV voter weights are missing markers: " + ", ".join(missing_weights)
         )
     invalid_weights = sorted(
         marker
@@ -514,14 +575,13 @@ def _score_cmtv_current(
             "CMTV voter weights must be positive and finite: "
             + ", ".join(invalid_weights)
         )
-    features = pd.DataFrame(
-        {
-            "genome": row["genome"],
-            "marker_name": row["marker_name"],
-            "leaf_name": row["leaf_name"],
-        }
-        for row in rows
-    )
+    return marker_rf_weights
+
+
+def _cmtv_marker_neighbors(
+    trees: dict[str, Tree],
+) -> dict[str, dict[str, set[str]]]:
+    """Collect each genome's five nearest neighbors in every marker tree."""
     marker_neighbors: dict[str, dict[str, set[str]]] = {}
     for marker_name in sorted(trees):
         tree = trees[marker_name]
@@ -536,16 +596,21 @@ def _score_cmtv_current(
                 for other in tree.iter_leaves()
                 if str(other.name).split("|", 1)[0] != genome
             )
-            per_genome[genome] = {other_genome for _distance, other_genome in ranked[:5]}
+            per_genome[genome] = {
+                other_genome for _distance, other_genome in ranked[:5]
+            }
         marker_neighbors[marker_name] = per_genome
+    return marker_neighbors
 
+
+def _cmtv_agreement_rows(
+    marker_neighbors: dict[str, dict[str, set[str]]],
+    marker_rf_weights: dict[str, float],
+) -> list[dict]:
+    """Calculate weighted neighbor agreement for each genome and marker."""
     agreement_rows = []
     genomes = sorted(
-        {
-            genome
-            for per_genome in marker_neighbors.values()
-            for genome in per_genome
-        }
+        {genome for per_genome in marker_neighbors.values() for genome in per_genome}
     )
     for genome in genomes:
         genome_marker_sets = {
@@ -581,36 +646,11 @@ def _score_cmtv_current(
                     "cmtv_n_voters": voter_count,
                 }
             )
+    return agreement_rows
 
-    scored = features.merge(
-        pd.DataFrame(agreement_rows),
-        on=["genome", "marker_name"],
-        how="left",
-    )
-    scored["cmtv_agreement"] = scored["cmtv_agreement"].fillna(1.0)
-    scored["cmtv_disagreement_frac"] = scored["cmtv_disagreement_frac"].fillna(0.0)
-    scored["cmtv_raw_score"] = 1.0 - scored["cmtv_agreement"]
-    scored["cmtv_marker_z"] = scored.groupby("marker_name")["cmtv_raw_score"].transform(
-        lambda values: (
-            (values - values.mean()) / values.std()
-            if values.std() > 0
-            else 0.0
-        )
-    )
-    scored["cmtv_genome_z"] = scored.groupby("genome")["cmtv_raw_score"].transform(
-        lambda values: (
-            (values - values.mean()) / values.std()
-            if values.std() > 0
-            else 0.0
-        )
-    )
-    scored["cmtv_genome_pct"] = scored.groupby("genome")["cmtv_raw_score"].rank(
-        pct=True
-    )
-    scored["cmtv_marker_z_pct"] = scored["cmtv_marker_z"].rank(pct=True)
-    scored["cmtv_combined"] = np.sqrt(
-        scored["cmtv_genome_pct"] * scored["cmtv_marker_z_pct"]
-    )
+
+def _classify_cmtv_rows(scored: pd.DataFrame) -> None:
+    """Assign the fixed CMTV class thresholds in place."""
     scored["cmtv_class"] = "clean"
     for _genome, group in scored.groupby("genome"):
         if len(group) <= 2:
@@ -629,17 +669,65 @@ def _score_cmtv_current(
             scored.loc[top_index, "cmtv_class"] = "contamination_candidate"
         elif top_disagree >= 0.4 and top_combined >= 0.65 and top_genome_z >= 0.5:
             scored.loc[top_index, "cmtv_class"] = "ambiguous"
+
+
+def _score_cmtv_current(
+    trees: dict[str, Tree],
+    rows: list[dict],
+    marker_rf_weights: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    """Run the tracked in-memory equivalent of CMTV's scoring core."""
+    validated_weights = _validate_cmtv_weights(trees, marker_rf_weights)
+    features = pd.DataFrame(
+        {
+            "genome": row["genome"],
+            "marker_name": row["marker_name"],
+            "leaf_name": row["leaf_name"],
+        }
+        for row in rows
+    )
+    marker_neighbors = _cmtv_marker_neighbors(trees)
+    agreement_rows = _cmtv_agreement_rows(marker_neighbors, validated_weights)
+    scored = features.merge(
+        pd.DataFrame(agreement_rows),
+        on=["genome", "marker_name"],
+        how="left",
+    )
+    scored["cmtv_agreement"] = scored["cmtv_agreement"].fillna(1.0)
+    scored["cmtv_disagreement_frac"] = scored["cmtv_disagreement_frac"].fillna(0.0)
+    scored["cmtv_raw_score"] = 1.0 - scored["cmtv_agreement"]
+    scored["cmtv_marker_z"] = scored.groupby("marker_name")["cmtv_raw_score"].transform(
+        lambda values: (
+            (values - values.mean()) / values.std() if values.std() > 0 else 0.0
+        )
+    )
+    scored["cmtv_genome_z"] = scored.groupby("genome")["cmtv_raw_score"].transform(
+        lambda values: (
+            (values - values.mean()) / values.std() if values.std() > 0 else 0.0
+        )
+    )
+    scored["cmtv_genome_pct"] = scored.groupby("genome")["cmtv_raw_score"].rank(
+        pct=True
+    )
+    scored["cmtv_marker_z_pct"] = scored["cmtv_marker_z"].rank(pct=True)
+    scored["cmtv_combined"] = np.sqrt(
+        scored["cmtv_genome_pct"] * scored["cmtv_marker_z_pct"]
+    )
+    _classify_cmtv_rows(scored)
     return scored
 
 
 def score_fixture(fixture: dict) -> dict:
+    """Score one frozen fixture with LOO, CMTV, and safety gates."""
     loo_rows = score_loo_profiles(fixture["trees"])
     cmtv_rows = _score_cmtv_current(fixture["trees"], loo_rows)
-    cmtv_candidates = cmtv_rows[
-        cmtv_rows["cmtv_class"] == "contamination_candidate"
-    ]
+    cmtv_candidates = cmtv_rows[cmtv_rows["cmtv_class"] == "contamination_candidate"]
     cmtv_calls = set(
-        zip(cmtv_candidates["marker_name"], cmtv_candidates["leaf_name"])
+        zip(
+            cmtv_candidates["marker_name"],
+            cmtv_candidates["leaf_name"],
+            strict=True,
+        )
     )
     event_keys = [
         (event["marker_name"], event["observed_record_id"])
@@ -647,10 +735,7 @@ def score_fixture(fixture: dict) -> dict:
     ]
     if len(event_keys) != len(set(event_keys)):
         raise ValueError("duplicate marker and observed-record truth key")
-    events_by_key = {
-        key: event
-        for key, event in zip(event_keys, fixture["events"])
-    }
+    events_by_key = dict(zip(event_keys, fixture["events"], strict=True))
 
     loo_calls: set[tuple[str, str]] = set()
     screen_candidates: set[tuple[str, str]] = set()
@@ -715,9 +800,7 @@ def score_fixture(fixture: dict) -> dict:
                 "is_contaminant": event["is_contaminant"],
                 "expected_loo": event["expected_loo"],
                 "expected_screen_candidate": event["expected_screen_candidate"],
-                "cmtv_k5_neighbors_preserved": event[
-                    "cmtv_k5_neighbors_preserved"
-                ],
+                "cmtv_k5_neighbors_preserved": event["cmtv_k5_neighbors_preserved"],
                 "loo_class": scored["loo_class"],
                 "loo_abstention_reason": scored["loo_abstention_reason"],
                 "contig_gate_pass": scored["contig_gate_pass"],
@@ -787,6 +870,7 @@ def score_fixture(fixture: dict) -> dict:
 
 
 def wilson_interval(successes: int, total: int, z: float = 1.959963984540054) -> dict:
+    """Calculate a Wilson score interval for a binomial rate."""
     if total == 0:
         return {"successes": 0, "total": 0, "rate": None, "low": None, "high": None}
     rate = successes / total
@@ -809,7 +893,7 @@ def wilson_interval(successes: int, total: int, z: float = 1.959963984540054) ->
 def _case_rate(
     cases: list[dict],
     event_class: str,
-    predicate,
+    predicate: Callable[[dict], bool],
     *,
     include_interval: bool = True,
 ) -> dict:
@@ -828,6 +912,7 @@ def _case_rate(
 
 
 def run_benchmark() -> dict:
+    """Run the complete bounded mechanism and scale fixture screen."""
     started = time.monotonic()
     fixtures = build_fixtures()
     cases = [score_fixture(fixture) for fixture in fixtures]
@@ -871,8 +956,10 @@ def run_benchmark() -> dict:
         "gene_rich_screen_detection": _case_rate(
             cases,
             "gene_rich_contaminant",
-            lambda case: case["screen_true_positive_count"] == 1
-            and case["screen_false_positive_count"] == 0,
+            lambda case: (
+                case["screen_true_positive_count"] == 1
+                and case["screen_false_positive_count"] == 0
+            ),
         ),
         "solo_marker_screen_abstention": _case_rate(
             cases,
@@ -942,22 +1029,28 @@ def run_benchmark() -> dict:
         "far_source_loo_detection": _case_rate(
             scale_cases,
             "scale_far_source",
-            lambda case: case["loo_true_positive_count"] == 1
-            and case["loo_false_positive_count"] == 0,
+            lambda case: (
+                case["loo_true_positive_count"] == 1
+                and case["loo_false_positive_count"] == 0
+            ),
             include_interval=False,
         ),
         "far_source_screen_detection": _case_rate(
             scale_cases,
             "scale_far_source",
-            lambda case: case["screen_true_positive_count"] == 1
-            and case["screen_false_positive_count"] == 0,
+            lambda case: (
+                case["screen_true_positive_count"] == 1
+                and case["screen_false_positive_count"] == 0
+            ),
             include_interval=False,
         ),
         "far_source_rf_improvement": _case_rate(
             scale_cases,
             "scale_far_source",
-            lambda case: case["events"][0]["rf_guard_pass"]
-            and case["events"][0]["rf_after"] < case["events"][0]["rf_before"],
+            lambda case: (
+                case["events"][0]["rf_guard_pass"]
+                and case["events"][0]["rf_after"] < case["events"][0]["rf_before"]
+            ),
             include_interval=False,
         ),
         "cmtv_far_source_detection": _case_rate(
@@ -998,10 +1091,22 @@ def run_benchmark() -> dict:
                 "CMTV detection is descriptive, not comparative superiority"
             ),
             "limitations": [
-                "one fixed seed and idealized trees do not calibrate biological performance",
-                "the scale tier uses synthetic contig votes and fixed far-source events",
-                "near sources, missing taxa, low support, and inferred-tree error are not tested",
-                "scale rates are descriptive counts; no confidence intervals are reported",
+                (
+                    "one fixed seed and idealized trees do not calibrate biological "
+                    "performance"
+                ),
+                (
+                    "the scale tier uses synthetic contig votes and fixed far-source "
+                    "events"
+                ),
+                (
+                    "near sources, missing taxa, low support, and inferred-tree error "
+                    "are not tested"
+                ),
+                (
+                    "scale rates are descriptive counts; no confidence intervals are "
+                    "reported"
+                ),
             ],
             "fixture_count": len(scale_cases),
             "marker_tree_instance_count": len(scale_serialized_trees),
@@ -1014,21 +1119,19 @@ def run_benchmark() -> dict:
         "combined_marker_tree_instance_count": len(combined_serialized_trees),
         "combined_distinct_marker_tree_count": len(set(combined_serialized_trees)),
         "combined_panel_count": (
-            len(SHAPES) * len(SEEDS)
-            + len(SHAPES) * len(SCALE_TAXA_COUNTS)
+            len(SHAPES) * len(SEEDS) + len(SHAPES) * len(SCALE_TAXA_COUNTS)
         ),
         "combined_truth_event_count": sum(
-            len(fixture["events"])
-            for fixture in fixtures + scale_fixtures
+            len(fixture["events"]) for fixture in fixtures + scale_fixtures
         ),
     }
 
 
-def check_benchmark(report: dict) -> list[str]:
+def _check_mechanism_panel(report: dict) -> list[str]:
+    """Check the fixed mechanism fixture matrix and its score gates."""
     errors = []
     coordinates = {
-        (case["shape"], case["event_class"], case["seed"])
-        for case in report["cases"]
+        (case["shape"], case["event_class"], case["seed"]) for case in report["cases"]
     }
     expected_coordinates = {
         (shape, event_class, seed)
@@ -1044,19 +1147,24 @@ def check_benchmark(report: dict) -> list[str]:
         errors.append("fixture taxa counts are not the fixed 10/12 design")
     if report["metrics"]["base_panel_expectations"]["successes"] != 6:
         errors.append("one or more paired shape-seed panels failed")
-    for metric in (
+    mechanism_metrics = (
         "clean_screen_safety",
         "gene_rich_screen_detection",
         "solo_marker_screen_abstention",
         "safety_control_screen_safety",
-    ):
-        if report["metrics"][metric]["rate"] != 1.0:
-            errors.append(f"safety gate failed: {metric}")
+    )
+    errors.extend(
+        f"safety gate failed: {metric}"
+        for metric in mechanism_metrics
+        if report["metrics"][metric]["rate"] != 1.0
+    )
     if (
         report["metrics"]["loo_gene_rich_detection"]["successes"]
         <= report["metrics"]["cmtv_gene_rich_detection"]["successes"]
     ):
-        errors.append("LOO does not beat baseline CMTV in the fixed adversarial contrast")
+        errors.append(
+            "LOO does not beat baseline CMTV in the fixed adversarial contrast"
+        )
     if report["metrics"]["screen_marker_precision"]["rate"] < 0.90:
         errors.append("hypothetical marker-screen precision is below 0.90")
     if report["metrics"]["screen_gene_rich_recall"]["rate"] < 0.75:
@@ -1067,7 +1175,12 @@ def check_benchmark(report: dict) -> list[str]:
         if case["event_class"] == "clean"
     ):
         errors.append("a clean fixture has zero voter dispersion throughout")
-    scale = report["scale"]
+    return errors
+
+
+def _check_scale_panel(scale: dict) -> list[str]:
+    """Check the fixed scale fixture matrix and its score gates."""
+    errors = []
     scale_coordinates = {
         (case["taxa_count"], case["shape"], case["event_class"], case["seed"])
         for case in scale["cases"]
@@ -1091,7 +1204,7 @@ def check_benchmark(report: dict) -> list[str]:
         errors.append("scale fixture matrix does not contain exactly 64 marker trees")
     if scale["distinct_marker_tree_count"] != 36:
         errors.append("scale fixture matrix does not contain exactly 36 distinct trees")
-    for metric in (
+    scale_metrics = (
         "panel_expectations",
         "clean_loo_safety",
         "clean_screen_safety",
@@ -1099,11 +1212,22 @@ def check_benchmark(report: dict) -> list[str]:
         "far_source_loo_detection",
         "far_source_screen_detection",
         "far_source_rf_improvement",
-    ):
-        if scale["metrics"][metric]["rate"] != 1.0:
-            errors.append(f"scale gate failed: {metric}")
+    )
+    errors.extend(
+        f"scale gate failed: {metric}"
+        for metric in scale_metrics
+        if scale["metrics"][metric]["rate"] != 1.0
+    )
     if scale["metrics"]["cmtv_far_source_detection"]["total"] != 4:
-        errors.append("scale CMTV detection result does not cover four far-source cases")
+        errors.append(
+            "scale CMTV detection result does not cover four far-source cases"
+        )
+    return errors
+
+
+def _check_combined_counts(report: dict) -> list[str]:
+    """Check the frozen totals across the mechanism and scale panels."""
+    errors = []
     combined_counts = (
         report["combined_fixture_count"],
         report["combined_marker_tree_instance_count"],
@@ -1112,17 +1236,32 @@ def check_benchmark(report: dict) -> list[str]:
         report["combined_truth_event_count"],
     )
     if combined_counts != (32, 256, 114, 10, 34):
-        errors.append("combined scale and mechanism counts are not fixed at 32/256/114/10/34")
+        errors.append(
+            "combined scale and mechanism counts are not fixed at 32/256/114/10/34"
+        )
     if report["runtime_seconds"] > MAX_RUNTIME_SECONDS:
         errors.append(
-            f"runtime {report['runtime_seconds']:.3f}s exceeds {MAX_RUNTIME_SECONDS:.0f}s"
+            f"runtime {report['runtime_seconds']:.3f}s exceeds "
+            f"{MAX_RUNTIME_SECONDS:.0f}s"
         )
     return errors
 
 
+def check_benchmark(report: dict) -> list[str]:
+    """Return every failed fixed expectation for a benchmark report."""
+    return [
+        *_check_mechanism_panel(report),
+        *_check_scale_panel(report["scale"]),
+        *_check_combined_counts(report),
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Run the fixture screen and optionally enforce all fixed gates."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="fail when a fixed screen gate fails")
+    parser.add_argument(
+        "--check", action="store_true", help="fail when a fixed screen gate fails"
+    )
     args = parser.parse_args(argv)
     report = run_benchmark()
     print(json.dumps(report, indent=2, sort_keys=True))

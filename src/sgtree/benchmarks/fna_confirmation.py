@@ -20,10 +20,12 @@ import sys
 import tarfile
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -35,23 +37,22 @@ from sgtree.benchmarks import (
     _load_table,
     _read_normalized_proteomes,
 )
-from sgtree.id_schema import sanitize_token
-from sgtree.benchmarks.loo_sequence_benchmark import _patristic_nrmse
 from sgtree.benchmarks.gunc_low_memory import DIAMOND_BLOCK_SIZE
+from sgtree.benchmarks.loo_sequence_benchmark import _patristic_nrmse
 from sgtree.benchmarks.sequence_evidence import assign_contig_gene_split_votes
-from sgtree.id_schema import parse_sequence_id
+from sgtree.id_schema import parse_sequence_id, sanitize_token
 from sgtree.marker_selection import (
     _marker_name_from_tree_path,
     _rf_distance_between,
     build_singleton_output_tree,
     select_singleton_proposals,
 )
-from sgtree.marker_selection.contig_evidence import contig_gene_vote_gate
 from sgtree.marker_selection.contig_evidence import (
     MIN_AGREEMENT_DENOMINATOR,
     MIN_AGREEMENT_NUMERATOR,
     MIN_CONFLICTING_GENES,
     MIN_INFORMATIVE_GENES,
+    contig_gene_vote_gate,
 )
 from sgtree.marker_selection.loo_profile import (
     MIN_COORDINATES,
@@ -60,7 +61,6 @@ from sgtree.marker_selection.loo_profile import (
     MIN_TARGET_SUPPORT,
     MIN_VOTERS,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_OUTDIR = PROJECT_ROOT / "runs/ml_contam_detection/us010_fna_confirmation"
@@ -90,6 +90,28 @@ DISTANCE_TARGET = {
 }
 
 
+class _PanelSpec(NamedTuple):
+    index: int
+    seed: int
+    genomes: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _EventSearch:
+    data: dict
+    panel_id: str
+    panel_genomes: list[str]
+    donor_pool: list[str]
+    markers: list[str]
+    marker_rows: dict[tuple[str, str], dict]
+    gene_rows: dict[str, dict]
+    distance_ranks: dict[str, dict[str, tuple[float, int, float]]]
+    used_recipients: set[str]
+    used_donors: set[str]
+    used_markers: set[str]
+    fragment_cache: dict[tuple[str, str], dict | None]
+
+
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -116,25 +138,27 @@ def _write_deterministic_tar_gz(
         info.pax_headers = {}
         return info
 
-    with destination.open("wb") as raw_handle:
-        with gzip.GzipFile(
+    with (
+        destination.open("wb") as raw_handle,
+        gzip.GzipFile(
             filename="",
             mode="wb",
             fileobj=raw_handle,
             mtime=0,
-        ) as gzip_handle:
-            with tarfile.open(
-                fileobj=gzip_handle,
-                mode="w",
-                format=tarfile.PAX_FORMAT,
-            ) as archive:
-                for path, archive_name in members:
-                    archive.add(
-                        path,
-                        arcname=archive_name,
-                        recursive=False,
-                        filter=normalize,
-                    )
+        ) as gzip_handle,
+        tarfile.open(
+            fileobj=gzip_handle,
+            mode="w",
+            format=tarfile.PAX_FORMAT,
+        ) as archive,
+    ):
+        for path, archive_name in members:
+            archive.add(
+                path,
+                arcname=archive_name,
+                recursive=False,
+                filter=normalize,
+            )
 
 
 def _stable_key(*parts: object) -> str:
@@ -285,7 +309,8 @@ def _load_lineage(lineage: str) -> dict:
     shared = set(sources) & set(table["genome"].astype(str)) & tree_genomes
     if len(shared) < PANEL_GENOME_COUNT * len(PANEL_SEEDS):
         raise ValueError(
-            f"{lineage} has only {len(shared)} genomes shared by FNA, hits, and source tree"
+            f"{lineage} has only {len(shared)} genomes shared by FNA, hits, "
+            "and source tree"
         )
     return {
         "lineage": lineage,
@@ -301,12 +326,19 @@ def _load_lineage(lineage: str) -> dict:
 
 def _select_markers(data: dict, genomes: list[str]) -> list[str]:
     table = data["table"][data["table"]["genome"].isin(genomes)]
-    counts = table.groupby(["marker", "genome"]).size().unstack(fill_value=0)
+    counts = table.pivot_table(
+        index="marker",
+        columns="genome",
+        aggfunc="size",
+        fill_value=0,
+        observed=False,
+    )
     counts = counts.reindex(columns=genomes, fill_value=0)
     universal = counts.index[(counts == 1).all(axis=1)]
     if len(universal) < MARKER_COUNT:
         raise ValueError(
-            f"{data['lineage']} panel has only {len(universal)} shared single-copy markers"
+            f"{data['lineage']} panel has only {len(universal)} "
+            "shared single-copy markers"
         )
     stats = (
         table[table["marker"].isin(universal)]
@@ -323,11 +355,12 @@ def _select_markers(data: dict, genomes: list[str]) -> list[str]:
 
 def _select_panel_genomes(data: dict) -> list[tuple[int, list[str]]]:
     remaining = set(data["genomes"])
-    counts = (
-        data["table"]
-        .groupby(["genome", "marker"])
-        .size()
-        .unstack(fill_value=0)
+    counts = data["table"].pivot_table(
+        index="genome",
+        columns="marker",
+        aggfunc="size",
+        fill_value=0,
+        observed=False,
     )
     exact_single_copy = {
         genome: {
@@ -363,7 +396,9 @@ def _select_panel_genomes(data: dict) -> list[tuple[int, list[str]]]:
             selected.append(genome)
             shared_markers = candidate_shared
         if len(selected) != PANEL_GENOME_COUNT:
-            raise ValueError(f"Could not select 16 disjoint genomes for {data['lineage']}")
+            raise ValueError(
+                f"Could not select 16 disjoint genomes for {data['lineage']}"
+            )
         if shared_markers is None or len(shared_markers) < MARKER_COUNT:
             raise ValueError(
                 f"{data['lineage']} seed {seed} has only "
@@ -401,8 +436,7 @@ def _stage_marker_proteins(data: dict) -> dict[str, str]:
     if cached is not None:
         return cached
     marker_headers = {
-        str(savedname).replace("/", "|")
-        for savedname in data["table"]["savedname"]
+        str(savedname).replace("/", "|") for savedname in data["table"]["savedname"]
     }
     proteins = {}
     with (data["stage_dir"] / "proteomes").open() as handle:
@@ -435,7 +469,9 @@ def _fragment_bounds(
         .sort_values(["begin", "end", "normalized_header"])
         .reset_index(drop=True)
     )
-    target_positions = contig.index[contig["normalized_header"] == target_header].tolist()
+    target_positions = contig.index[
+        contig["normalized_header"] == target_header
+    ].tolist()
     if len(target_positions) != 1:
         return None
     target_index = target_positions[0]
@@ -485,8 +521,7 @@ def _fragment_bounds(
         "fragment_end0": end0,
         "planned_non_marker_gene_count": len(chosen_neighbors),
         "planned_gene_headers": [
-            str(contig.iloc[index]["normalized_header"])
-            for index in selected_indices
+            str(contig.iloc[index]["normalized_header"]) for index in selected_indices
         ],
     }
 
@@ -516,7 +551,7 @@ def _distance_ranks(
 
 def _read_assembly(path: Path) -> list[SeqRecord]:
     with path.open() as handle:
-        records = [record for record in SeqIO.parse(handle, "fasta")]
+        records = list(SeqIO.parse(handle, "fasta"))
     if not records:
         raise ValueError(f"Empty source assembly: {path}")
     return records
@@ -526,15 +561,18 @@ def _contig_by_normalized_id(records: list[SeqRecord], contig_id: str) -> SeqRec
     matches = [
         record
         for record in records
-        if sanitize_token(record.id, record.id) == contig_id
+        if sanitize_token(record.id or "", record.id or "") == contig_id
     ]
     if len(matches) != 1:
-        raise ValueError(f"Expected one source contig {contig_id}; found {len(matches)}")
+        raise ValueError(
+            f"Expected one source contig {contig_id}; found {len(matches)}"
+        )
     return matches[0]
 
 
 def _coding_sequence(records: list[SeqRecord], gene_row: dict) -> Seq:
     contig = _contig_by_normalized_id(records, str(gene_row["contig_id"]))
+    assert contig.seq is not None
     sequence = contig.seq[int(gene_row["begin"]) - 1 : int(gene_row["end"])]
     if int(gene_row["strand"]) < 0:
         sequence = sequence.reverse_complement()
@@ -597,103 +635,12 @@ def _translated_protein(cds: Seq, translation_table: int) -> str:
     return str(cds.translate(table=translation_table)).rstrip("*")
 
 
-def _event_candidate(
-    *,
-    data: dict,
-    panel_id: str,
-    role: str,
-    panel_genomes: list[str],
-    donor_pool: list[str],
-    markers: list[str],
-    marker_rows: dict[tuple[str, str], dict],
-    gene_rows: dict[str, dict],
-    distance_ranks: dict[str, dict[str, tuple[float, int, float]]],
-    used_recipients: set[str],
-    used_donors: set[str],
-    used_markers: set[str],
-    fragment_cache: dict[tuple[str, str], dict | None],
-) -> dict:
+def _event_candidate(search: _EventSearch, role: str) -> dict:
     target = DISTANCE_TARGET[role]
-    candidates = []
-    marker_proteins = _stage_marker_proteins(data)
-    for recipient in panel_genomes:
-        if recipient in used_recipients:
-            continue
-        for marker in markers:
-            if marker in used_markers:
-                continue
-            recipient_hit = marker_rows.get((recipient, marker))
-            if recipient_hit is None:
-                continue
-            for donor in donor_pool:
-                if donor in used_donors:
-                    continue
-                donor_hit = marker_rows.get((donor, marker))
-                if donor_hit is None:
-                    continue
-                native_protein = marker_proteins[
-                    str(recipient_hit["normalized_header"])
-                ]
-                donor_protein = marker_proteins[
-                    str(donor_hit["normalized_header"])
-                ]
-                if native_protein == donor_protein:
-                    continue
-                donor_gene = gene_rows[str(donor_hit["normalized_header"])]
-                if not _donor_gene_has_terminal_stop(data, donor_gene):
-                    continue
-                if (
-                    role == "solo"
-                    and _donor_gene_terminal_stop_codon(data, donor_gene)
-                    not in {"TAA", "TAG"}
-                ):
-                    continue
-                if role == "sentinel" and not _donor_cds_matches_staged_protein(
-                    data,
-                    donor_gene,
-                    donor_protein,
-                ):
-                    continue
-                fragment = None
-                if role in {"near", "intermediate", "far"}:
-                    cache_key = (donor, marker)
-                    if cache_key not in fragment_cache:
-                        donor_headers = {
-                            str(marker_rows[(donor, selected_marker)]["normalized_header"])
-                            for selected_marker in markers
-                            if (donor, selected_marker) in marker_rows
-                        }
-                        fragment_cache[cache_key] = _fragment_bounds(
-                            data["gene_calls"],
-                            str(donor_hit["normalized_header"]),
-                            donor_headers,
-                        )
-                    fragment = fragment_cache[cache_key]
-                    if fragment is None:
-                        continue
-                distance, rank, quantile = distance_ranks[recipient][donor]
-                candidates.append(
-                    (
-                        abs(quantile - target),
-                        _stable_key(
-                            "event",
-                            panel_id,
-                            role,
-                            recipient,
-                            donor,
-                            marker,
-                        ),
-                        recipient,
-                        donor,
-                        marker,
-                        distance,
-                        rank,
-                        quantile,
-                        fragment,
-                    )
-                )
+    marker_proteins = _stage_marker_proteins(search.data)
+    candidates = _rank_event_choices(search, role)
     if not candidates:
-        raise ValueError(f"No feasible event candidate for {panel_id} {role}")
+        raise ValueError(f"No feasible event candidate for {search.panel_id} {role}")
     (
         _distance_error,
         _tie_break,
@@ -706,29 +653,23 @@ def _event_candidate(
         fragment,
     ) = min(candidates)
 
-    recipient_hit = marker_rows[(recipient, marker)]
-    donor_hit = marker_rows[(donor, marker)]
-    recipient_gene = gene_rows[str(recipient_hit["normalized_header"])]
-    donor_gene = gene_rows[str(donor_hit["normalized_header"])]
-    native_protein = marker_proteins[
-        str(recipient_hit["normalized_header"])
-    ]
-    donor_protein = marker_proteins[
-        str(donor_hit["normalized_header"])
-    ]
+    recipient_hit = search.marker_rows[(recipient, marker)]
+    donor_hit = search.marker_rows[(donor, marker)]
+    recipient_gene = search.gene_rows[str(recipient_hit["normalized_header"])]
+    donor_gene = search.gene_rows[str(donor_hit["normalized_header"])]
+    native_protein = marker_proteins[str(recipient_hit["normalized_header"])]
+    donor_protein = marker_proteins[str(donor_hit["normalized_header"])]
     if not donor_protein:
-        raise ValueError(f"Empty translated donor target for {panel_id} {role}")
+        raise ValueError(f"Empty translated donor target for {search.panel_id} {role}")
 
-    event_id = f"{panel_id}_{role}"
+    event_id = f"{search.panel_id}_{role}"
     foreign_contig_id = sanitize_token(f"us010_{event_id}_foreign", event_id)
     expected_contig_id = (
-        str(recipient_gene["contig_id"])
-        if role == "sentinel"
-        else foreign_contig_id
+        str(recipient_gene["contig_id"]) if role == "sentinel" else foreign_contig_id
     )
     event = {
         "event_id": event_id,
-        "panel_id": panel_id,
+        "panel_id": search.panel_id,
         "role": role,
         "event_class": (
             "gene_rich_replacement"
@@ -746,7 +687,7 @@ def _event_candidate(
         "source_tree_distance": distance,
         "donor_distance_rank": rank,
         "donor_distance_quantile": quantile,
-        "donor_pool_size": len(distance_ranks[recipient]),
+        "donor_pool_size": len(search.distance_ranks[recipient]),
         "distance_target_quantile": target,
         "distance_tie_break": "blake2s(panel,event,recipient,donor,marker)",
         "native_record_id": str(recipient_hit["normalized_header"]),
@@ -762,7 +703,7 @@ def _event_candidate(
         "donor_translation_table": int(donor_gene["translation_table"]),
         "donor_cds_terminal_stop": True,
         "donor_terminal_stop_codon": _donor_gene_terminal_stop_codon(
-            data,
+            search.data,
             donor_gene,
         ),
         "native_protein_sha256": _sha256_bytes(native_protein.encode()),
@@ -773,10 +714,97 @@ def _event_candidate(
     }
     if fragment is not None:
         event.update(fragment)
-    used_recipients.add(recipient)
-    used_donors.add(donor)
-    used_markers.add(marker)
+    search.used_recipients.add(recipient)
+    search.used_donors.add(donor)
+    search.used_markers.add(marker)
     return event
+
+
+def _rank_event_choices(search: _EventSearch, role: str) -> list[tuple]:
+    candidates = []
+    recipients = [
+        genome
+        for genome in search.panel_genomes
+        if genome not in search.used_recipients
+    ]
+    markers = [marker for marker in search.markers if marker not in search.used_markers]
+    donors = [
+        genome for genome in search.donor_pool if genome not in search.used_donors
+    ]
+    for recipient in recipients:
+        for marker in markers:
+            recipient_hit = search.marker_rows.get((recipient, marker))
+            if recipient_hit is None:
+                continue
+            for donor in donors:
+                donor_hit = search.marker_rows.get((donor, marker))
+                if donor_hit is None:
+                    continue
+                if not _eligible_donor(search, role, recipient_hit, donor_hit):
+                    continue
+                fragment = None
+                if role in {"near", "intermediate", "far"}:
+                    cache_key = (donor, marker)
+                    if cache_key not in search.fragment_cache:
+                        donor_headers = {
+                            str(
+                                search.marker_rows[(donor, selected_marker)][
+                                    "normalized_header"
+                                ]
+                            )
+                            for selected_marker in search.markers
+                            if (donor, selected_marker) in search.marker_rows
+                        }
+                        search.fragment_cache[cache_key] = _fragment_bounds(
+                            search.data["gene_calls"],
+                            str(donor_hit["normalized_header"]),
+                            donor_headers,
+                        )
+                    fragment = search.fragment_cache[cache_key]
+                    if fragment is None:
+                        continue
+                distance, rank, quantile = search.distance_ranks[recipient][donor]
+                candidates.append(
+                    (
+                        abs(quantile - DISTANCE_TARGET[role]),
+                        _stable_key(
+                            "event",
+                            search.panel_id,
+                            role,
+                            recipient,
+                            donor,
+                            marker,
+                        ),
+                        recipient,
+                        donor,
+                        marker,
+                        distance,
+                        rank,
+                        quantile,
+                        fragment,
+                    )
+                )
+    return candidates
+
+
+def _eligible_donor(
+    search: _EventSearch, role: str, recipient_hit: dict, donor_hit: dict
+) -> bool:
+    marker_proteins = _stage_marker_proteins(search.data)
+    native_protein = marker_proteins[str(recipient_hit["normalized_header"])]
+    donor_protein = marker_proteins[str(donor_hit["normalized_header"])]
+    if native_protein == donor_protein:
+        return False
+    donor_gene = search.gene_rows[str(donor_hit["normalized_header"])]
+    if not _donor_gene_has_terminal_stop(search.data, donor_gene):
+        return False
+    if role == "solo" and _donor_gene_terminal_stop_codon(
+        search.data, donor_gene
+    ) not in {"TAA", "TAG"}:
+        return False
+    if role == "sentinel":
+        return _donor_cds_matches_staged_protein(search.data, donor_gene, donor_protein)
+    return True
 
 
 def _panel_contexts(panel_id: str, events: list[dict]) -> list[dict]:
@@ -801,14 +829,13 @@ def _panel_contexts(panel_id: str, events: list[dict]) -> list[dict]:
 def _freeze_panel(
     *,
     data: dict,
-    panel_index: int,
-    seed: int,
-    panel_genomes: list[str],
+    specification: _PanelSpec,
     all_observed_genomes: set[str],
     markers: list[str],
     marker_rows: dict[tuple[str, str], dict],
     gene_rows: dict[str, dict],
 ) -> dict:
+    panel_index, seed, panel_genomes = specification
     panel_id = f"{data['lineage']}_p{panel_index}_seed{seed}"
     donor_pool = sorted(set(data["genomes"]) - all_observed_genomes)
     distance_ranks = _distance_ranks(
@@ -820,24 +847,21 @@ def _freeze_panel(
     used_donors: set[str] = set()
     used_markers: set[str] = set()
     fragment_cache: dict[tuple[str, str], dict | None] = {}
-    events = [
-        _event_candidate(
-            data=data,
-            panel_id=panel_id,
-            role=role,
-            panel_genomes=panel_genomes,
-            donor_pool=donor_pool,
-            markers=markers,
-            marker_rows=marker_rows,
-            gene_rows=gene_rows,
-            distance_ranks=distance_ranks,
-            used_recipients=used_recipients,
-            used_donors=used_donors,
-            used_markers=used_markers,
-            fragment_cache=fragment_cache,
-        )
-        for role in EVENT_ORDER
-    ]
+    search = _EventSearch(
+        data=data,
+        panel_id=panel_id,
+        panel_genomes=panel_genomes,
+        donor_pool=donor_pool,
+        markers=markers,
+        marker_rows=marker_rows,
+        gene_rows=gene_rows,
+        distance_ranks=distance_ranks,
+        used_recipients=used_recipients,
+        used_donors=used_donors,
+        used_markers=used_markers,
+        fragment_cache=fragment_cache,
+    )
+    events = [_event_candidate(search, role) for role in EVENT_ORDER]
     return {
         "panel_id": panel_id,
         "lineage": data["lineage"],
@@ -865,23 +889,19 @@ def _flatten_manifest(manifest: dict) -> tuple[list[dict], list[dict]]:
     events = []
     contexts = []
     for panel in manifest["panels"]:
-        for event in panel["events"]:
-            events.append(
-                {
-                    "lineage": panel["lineage"],
-                    "seed": panel["seed"],
-                    **event,
-                }
-            )
-        for context in panel["contexts"]:
-            contexts.append(
-                {
-                    "lineage": panel["lineage"],
-                    "seed": panel["seed"],
-                    **context,
-                    "event_ids": ",".join(context["event_ids"]),
-                }
-            )
+        events.extend(
+            {"lineage": panel["lineage"], "seed": panel["seed"], **event}
+            for event in panel["events"]
+        )
+        contexts.extend(
+            {
+                "lineage": panel["lineage"],
+                "seed": panel["seed"],
+                **context,
+                "event_ids": ",".join(context["event_ids"]),
+            }
+            for context in panel["contexts"]
+        )
     return events, contexts
 
 
@@ -904,39 +924,8 @@ def _validate_frozen_manifest(manifest: dict) -> None:
     if dict(counts) != expected:
         raise ValueError(f"Unexpected event counts: {dict(counts)}")
     for panel in panels:
-        if len(panel["genomes"]) != PANEL_GENOME_COUNT:
-            raise ValueError(f"{panel['panel_id']} does not have 16 genomes")
-        if len(panel["markers"]) != MARKER_COUNT:
-            raise ValueError(f"{panel['panel_id']} does not have eight markers")
-        if [row["context"] for row in panel["contexts"]] != list(CONTEXT_ORDER):
-            raise ValueError(f"{panel['panel_id']} context order changed")
-        if panel.get("gunc_clean_control_genome") not in panel["genomes"]:
-            raise ValueError(f"{panel['panel_id']} has an invalid GUNC clean control")
-        for field in ("recipient_genome", "donor_genome", "marker"):
-            values = [event[field] for event in panel["events"]]
-            if len(values) != len(set(values)):
-                raise ValueError(f"{panel['panel_id']} reuses {field}")
-        if set(event["donor_genome"] for event in panel["events"]) & set(panel["genomes"]):
-            raise ValueError(f"{panel['panel_id']} uses an observed genome as donor")
-        if not all(event.get("donor_cds_terminal_stop") is True for event in panel["events"]):
-            raise ValueError(f"{panel['panel_id']} contains a partial donor marker")
-        if not all(
-            event.get("donor_terminal_stop_codon") in {"TAA", "TAG"}
-            for event in panel["events"]
-            if event["role"] == "solo"
-        ):
-            raise ValueError(
-                f"{panel['panel_id']} contains a code-sensitive solo donor stop"
-            )
-        if not all(
-            event.get("donor_protein_differs_from_native") is True
-            and event.get("donor_protein_sha256")
-            != event.get("native_protein_sha256")
-            for event in panel["events"]
-        ):
-            raise ValueError(
-                f"{panel['panel_id']} contains a sequence-identical replacement"
-            )
+        _validate_panel_shape(panel)
+        _validate_panel_events(panel)
     for lineage in LINEAGES:
         lineage_panels = [panel for panel in panels if panel["lineage"] == lineage]
         observed = [genome for panel in lineage_panels for genome in panel["genomes"]]
@@ -944,16 +933,57 @@ def _validate_frozen_manifest(manifest: dict) -> None:
             raise ValueError(f"{lineage} panels are not genome-disjoint")
 
 
+def _validate_panel_shape(panel: dict) -> None:
+    if len(panel["genomes"]) != PANEL_GENOME_COUNT:
+        raise ValueError(f"{panel['panel_id']} does not have 16 genomes")
+    if len(panel["markers"]) != MARKER_COUNT:
+        raise ValueError(f"{panel['panel_id']} does not have eight markers")
+    if [row["context"] for row in panel["contexts"]] != list(CONTEXT_ORDER):
+        raise ValueError(f"{panel['panel_id']} context order changed")
+    if panel.get("gunc_clean_control_genome") not in panel["genomes"]:
+        raise ValueError(f"{panel['panel_id']} has an invalid GUNC clean control")
+
+
+def _validate_panel_events(panel: dict) -> None:
+    for field in ("recipient_genome", "donor_genome", "marker"):
+        values = [event[field] for event in panel["events"]]
+        if len(values) != len(set(values)):
+            raise ValueError(f"{panel['panel_id']} reuses {field}")
+    if {event["donor_genome"] for event in panel["events"]} & set(panel["genomes"]):
+        raise ValueError(f"{panel['panel_id']} uses an observed genome as donor")
+    if not all(
+        event.get("donor_cds_terminal_stop") is True for event in panel["events"]
+    ):
+        raise ValueError(f"{panel['panel_id']} contains a partial donor marker")
+    if not all(
+        event.get("donor_terminal_stop_codon") in {"TAA", "TAG"}
+        for event in panel["events"]
+        if event["role"] == "solo"
+    ):
+        raise ValueError(
+            f"{panel['panel_id']} contains a code-sensitive solo donor stop"
+        )
+    if not all(
+        event.get("donor_protein_differs_from_native") is True
+        and event.get("donor_protein_sha256") != event.get("native_protein_sha256")
+        for event in panel["events"]
+    ):
+        raise ValueError(
+            f"{panel['panel_id']} contains a sequence-identical replacement"
+        )
+
+
 def freeze_manifest(
     outdir: Path,
     models_path: Path,
     gunc_db_path: Path,
 ) -> Path:
+    """Freeze the six-panel confirmation inputs and event assignments."""
     manifest_path = outdir / "frozen_manifest.json"
     if manifest_path.exists():
         raise FileExistsError(
             f"Frozen manifest already exists: {manifest_path}. "
-            "Use the existing manifest rather than silently changing the confirmation set."
+            "Use the existing manifest to preserve the confirmation set."
         )
     if not models_path.is_file():
         raise FileNotFoundError(models_path)
@@ -965,11 +995,7 @@ def freeze_manifest(
     for lineage in LINEAGES:
         data = _load_lineage(lineage)
         panel_specs = _select_panel_genomes(data)
-        all_observed = {
-            genome
-            for _seed, genomes in panel_specs
-            for genome in genomes
-        }
+        all_observed = {genome for _seed, genomes in panel_specs for genome in genomes}
         gene_rows = _gene_rows(data)
         lineage_panels = []
         for panel_index, (seed, genomes) in enumerate(panel_specs, start=1):
@@ -977,9 +1003,7 @@ def freeze_manifest(
             lineage_panels.append(
                 _freeze_panel(
                     data=data,
-                    panel_index=panel_index,
-                    seed=seed,
-                    panel_genomes=genomes,
+                    specification=_PanelSpec(panel_index, seed, genomes),
                     all_observed_genomes=all_observed,
                     markers=markers,
                     marker_rows=_marker_rows(data, markers),
@@ -1063,7 +1087,8 @@ def freeze_manifest(
         "wp1_selected_scorer": "loo",
         "wp1_decision": (
             "LOO and weighted CMTV tied under common gates; frozen simplicity "
-            "order selected LOO and attributes the method claim to the shared contig gate."
+            "order selected LOO and attributes the method claim "
+            "to the shared contig gate."
         ),
         "prior_validation_seeds_excluded": [607, 809],
         "models_path": _relative(models_path),
@@ -1201,6 +1226,7 @@ def _verify_inference_inputs(manifest: dict) -> None:
 
 def _mask_native(records: list[SeqRecord], event: dict) -> None:
     contig = _contig_by_normalized_id(records, str(event["native_contig_id"]))
+    assert contig.seq is not None
     start0 = int(event["native_begin"]) - 1
     end0 = int(event["native_end"])
     contig.seq = contig.seq[:start0] + Seq("N" * (end0 - start0)) + contig.seq[end0:]
@@ -1235,6 +1261,7 @@ def _apply_event_to_records(
             recipient_records,
             str(event["native_contig_id"]),
         )
+        assert contig.seq is not None
         start0 = int(event["native_begin"]) - 1
         end0 = int(event["native_end"])
         genomic_cds = (
@@ -1250,6 +1277,7 @@ def _apply_event_to_records(
         donor_records,
         str(event["donor_contig_id"]),
     )
+    assert donor_contig.seq is not None
     if role in {"near", "intermediate", "far"}:
         fragment = donor_contig.seq[
             int(event["fragment_start0"]) : int(event["fragment_end0"])
@@ -1276,7 +1304,9 @@ def _materialize_context(
     context: dict,
     outdir: Path,
 ) -> Path:
-    context_dir = outdir / "panels" / panel["panel_id"] / "contexts" / context["context"]
+    context_dir = (
+        outdir / "panels" / panel["panel_id"] / "contexts" / context["context"]
+    )
     inputs_dir = context_dir / "inputs"
     checksum_path = context_dir / "input_checksums.tsv"
     if checksum_path.is_file():
@@ -1287,7 +1317,9 @@ def _materialize_context(
                 raise ValueError(f"Existing materialized input failed checksum: {path}")
         return context_dir
     if inputs_dir.exists():
-        raise FileExistsError(f"Partial context input directory requires inspection: {inputs_dir}")
+        raise FileExistsError(
+            f"Partial context input directory requires inspection: {inputs_dir}"
+        )
 
     lineage = panel["lineage"]
     source_dir, _stage_dir = _lineage_paths(lineage)
@@ -1494,8 +1526,7 @@ def _truth_audit(
     run_dir = context_dir / "sgtree"
     table = _load_table(run_dir / "table_elim_dups")
     selected = table[
-        table["genome"].isin(panel["genomes"])
-        & table["marker"].isin(panel["markers"])
+        table["genome"].isin(panel["genomes"]) & table["marker"].isin(panel["markers"])
     ]
     counts = selected.groupby(["genome", "marker"]).size()
     bad_cells = []
@@ -1504,29 +1535,24 @@ def _truth_audit(
             observed = int(counts.get((genome, marker), 0))
             if observed != 1:
                 bad_cells.append(
-                    {"genome": genome, "marker": marker, "observed_copy_count": observed}
+                    {
+                        "genome": genome,
+                        "marker": marker,
+                        "observed_copy_count": observed,
+                    }
                 )
 
     proteomes = _read_normalized_proteomes(run_dir / "proteomes")
     selected_marker_record_ids = {
-        str(row["savedname"]).replace("/", "|")
-        for row in selected.to_dict("records")
+        str(row["savedname"]).replace("/", "|") for row in selected.to_dict("records")
     }
     event_lookup = _event_by_id(manifest)
     event_audits = []
     for event_id in context["event_ids"]:
         event = event_lookup[event_id]
-        rows = selected[
-            (selected["genome"] == event["recipient_genome"])
-            & (selected["marker"] == event["marker"])
-        ]
-        observed_contigs = sorted(rows["contig_id"].astype(str).tolist())
-        observed_hashes = []
-        for row in rows.to_dict("records"):
-            record_id = str(row["savedname"]).replace("/", "|")
-            observed_hashes.append(
-                _sha256_bytes(str(proteomes[event["recipient_genome"]][record_id].seq).encode())
-            )
+        rows, observed_contigs, observed_hashes = _observe_marker_copy(
+            selected, event, proteomes
+        )
         same_contig_markers = sorted(
             selected[
                 (selected["genome"] == event["recipient_genome"])
@@ -1541,8 +1567,7 @@ def _truth_audit(
         records_on_target_contig = {
             record_id
             for record_id in proteomes[event["recipient_genome"]]
-            if parse_sequence_id(record_id)[1]
-            == event["expected_observed_contig_id"]
+            if parse_sequence_id(record_id)[1] == event["expected_observed_contig_id"]
         }
         non_marker_gene_count = len(
             records_on_target_contig - selected_marker_record_ids
@@ -1583,21 +1608,9 @@ def _truth_audit(
     clean_native_audits = []
     if context["context"] == "clean":
         for event in panel["events"]:
-            rows = selected[
-                (selected["genome"] == event["recipient_genome"])
-                & (selected["marker"] == event["marker"])
-            ]
-            observed_contigs = sorted(rows["contig_id"].astype(str).tolist())
-            observed_hashes = []
-            for row in rows.to_dict("records"):
-                record_id = str(row["savedname"]).replace("/", "|")
-                observed_hashes.append(
-                    _sha256_bytes(
-                        str(
-                            proteomes[event["recipient_genome"]][record_id].seq
-                        ).encode()
-                    )
-                )
+            rows, observed_contigs, observed_hashes = _observe_marker_copy(
+                selected, event, proteomes
+            )
             clean_native_audits.append(
                 {
                     "event_id": event["event_id"],
@@ -1605,46 +1618,18 @@ def _truth_audit(
                     "observed_contigs": observed_contigs,
                     "expected_contig": event["native_contig_id"],
                     "observed_protein_sha256": observed_hashes,
-                    "expected_protein_sha256": event[
-                        "native_protein_sha256"
-                    ],
+                    "expected_protein_sha256": event["native_protein_sha256"],
                     "pass": (
                         len(rows) == 1
                         and observed_contigs == [event["native_contig_id"]]
-                        and observed_hashes
-                        == [event["native_protein_sha256"]]
+                        and observed_hashes == [event["native_protein_sha256"]]
                     ),
                 }
             )
 
     final_tree = Tree(str(run_dir / "tree_final.nwk"), format=1)
     final_taxa = sorted(str(leaf.name) for leaf in final_tree.iter_leaves())
-    report_only_tree_failures = []
-    no_singles_paths = {
-        _marker_name_from_tree_path(str(path)): path
-        for path in (run_dir / "protTrees/no_singles").glob("*")
-        if path.is_file()
-    }
-    for marker in panel["markers"]:
-        path = no_singles_paths.get(marker)
-        if path is None:
-            report_only_tree_failures.append(
-                {"marker": marker, "reason": "missing_no_singles_tree"}
-            )
-            continue
-        tree = Tree(str(path), format=1)
-        genomes = sorted(
-            str(leaf.name).split("|", 1)[0]
-            for leaf in tree.iter_leaves()
-        )
-        if genomes != sorted(panel["genomes"]):
-            report_only_tree_failures.append(
-                {
-                    "marker": marker,
-                    "reason": "report_only_tree_changed_genome_set",
-                    "observed_genomes": genomes,
-                }
-            )
+    report_only_tree_failures = _audit_report_only_trees(panel, run_dir)
     audit = {
         "panel_id": panel["panel_id"],
         "context": context["context"],
@@ -1671,6 +1656,52 @@ def _truth_audit(
     return audit
 
 
+def _observe_marker_copy(
+    selected: pd.DataFrame, event: dict, proteomes: dict[str, dict[str, SeqRecord]]
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    rows = selected[
+        (selected["genome"] == event["recipient_genome"])
+        & (selected["marker"] == event["marker"])
+    ]
+    observed_contigs = sorted(rows["contig_id"].astype(str).tolist())
+    observed_hashes = []
+    for row in rows.to_dict("records"):
+        record_id = str(row["savedname"]).replace("/", "|")
+        observed_hashes.append(
+            _sha256_bytes(
+                str(proteomes[event["recipient_genome"]][record_id].seq).encode()
+            )
+        )
+    return rows, observed_contigs, observed_hashes
+
+
+def _audit_report_only_trees(panel: dict, run_dir: Path) -> list[dict]:
+    report_only_tree_failures = []
+    no_singles_paths = {
+        _marker_name_from_tree_path(str(path)): path
+        for path in (run_dir / "protTrees/no_singles").glob("*")
+        if path.is_file()
+    }
+    for marker in panel["markers"]:
+        path = no_singles_paths.get(marker)
+        if path is None:
+            report_only_tree_failures.append(
+                {"marker": marker, "reason": "missing_no_singles_tree"}
+            )
+            continue
+        tree = Tree(str(path), format=1)
+        genomes = sorted(str(leaf.name).split("|", 1)[0] for leaf in tree.iter_leaves())
+        if genomes != sorted(panel["genomes"]):
+            report_only_tree_failures.append(
+                {
+                    "marker": marker,
+                    "reason": "report_only_tree_changed_genome_set",
+                    "observed_genomes": genomes,
+                }
+            )
+    return report_only_tree_failures
+
+
 def _target_contig_marker_layout_pass(
     event: dict,
     observed_markers: list[str],
@@ -1684,8 +1715,7 @@ def _proteome_sequences(path: Path) -> dict[str, dict[str, str]]:
     records = _read_normalized_proteomes(path)
     return {
         genome: {
-            record_id: str(record.seq)
-            for record_id, record in genome_records.items()
+            record_id: str(record.seq) for record_id, record in genome_records.items()
         }
         for genome, genome_records in records.items()
     }
@@ -1718,12 +1748,13 @@ def _evaluate_context(
     clean_proteomes: dict[str, dict[str, str]],
     clean_tree: Tree,
 ) -> tuple[list[dict], dict]:
-    context_dir = outdir / "panels" / panel["panel_id"] / "contexts" / context["context"]
+    context_dir = (
+        outdir / "panels" / panel["panel_id"] / "contexts" / context["context"]
+    )
     run_dir = context_dir / "sgtree"
     table = _load_table(run_dir / "table_elim_dups")
     selected = table[
-        table["genome"].isin(panel["genomes"])
-        & table["marker"].isin(panel["markers"])
+        table["genome"].isin(panel["genomes"]) & table["marker"].isin(panel["markers"])
     ].copy()
     candidates = pd.read_csv(
         run_dir / "singleton_candidates.tsv",
@@ -1737,74 +1768,29 @@ def _evaluate_context(
     current_proteomes = _proteome_sequences(run_dir / "proteomes")
     marker_paths = _marker_tree_paths(run_dir)
     marker_trees = {
-        marker: Tree(str(path), format=1)
-        for marker, path in marker_paths.items()
+        marker: Tree(str(path), format=1) for marker, path in marker_paths.items()
     }
     marker_record_ids = {
-        str(row["savedname"]).replace("/", "|")
-        for row in selected.to_dict("records")
+        str(row["savedname"]).replace("/", "|") for row in selected.to_dict("records")
     }
     active_events = {
         (event["recipient_genome"], event["marker"]): event
         for event in (
-            _event_by_id(manifest)[event_id]
-            for event_id in context["event_ids"]
+            _event_by_id(manifest)[event_id] for event_id in context["event_ids"]
         )
     }
 
-    raw_keys = {
-        key
-        for key, row in candidate_lookup.items()
-        if str(row.get("loo_class", "")) == "discordant_marker"
-    }
-    gate_audits: dict[tuple[str, str], dict] = {}
-    gated_proposals = []
-    for marker, leaf_name in sorted(raw_keys):
-        row = candidate_lookup[(marker, leaf_name)]
-        genome, contig_id, _gene_id = parse_sequence_id(leaf_name)
-        candidate_genes = {
-            record_id: sequence
-            for record_id, sequence in current_proteomes.get(genome, {}).items()
-            if parse_sequence_id(record_id)[1] == contig_id
-        }
-        attachment = _split_values(row.get("loo_attachment_taxa"))
-        marker_tree = marker_trees[marker]
-        background = {
-            str(leaf.name).split("|", 1)[0]
-            for leaf in marker_tree.iter_leaves()
-        } - {genome} - attachment
-        evidence = assign_contig_gene_split_votes(
-            candidate_genes,
-            clean_proteomes,
-            recipient_genome=genome,
-            candidate_contig_id=contig_id,
-            marker_record_ids=marker_record_ids,
-            attachment_taxa=attachment,
-            background_taxa=background,
-        )
-        gate = contig_gene_vote_gate(
-            evidence["votes"],
-            str(row.get("loo_attachment_clade", "")) or None,
-        )
-        gate_audits[(marker, leaf_name)] = {
-            "evidence": evidence,
-            "gate": gate,
-        }
-        if gate["contig_gate_pass"]:
-            gated_proposals.append(
-                {
-                    "marker_name": marker,
-                    "leaf_name": leaf_name,
-                    "genome": genome,
-                    "score": float(row.get("loo_score") or 0.0),
-                    "delta_rf": 0.0,
-                    "topoknn_score": 0.0,
-                }
-            )
+    raw_keys, gate_audits, gated_proposals = _confirmation_contig_gate(
+        candidate_lookup,
+        current_proteomes,
+        clean_proteomes,
+        marker_trees,
+        marker_record_ids,
+    )
 
     budgeted = select_singleton_proposals(
         gated_proposals,
-        genome_marker_counts={genome: MARKER_COUNT for genome in panel["genomes"]},
+        genome_marker_counts=dict.fromkeys(panel["genomes"], MARKER_COUNT),
         min_markers_per_genome=1,
         max_prunes_per_genome=1,
     )
@@ -1812,43 +1798,9 @@ def _evaluate_context(
         (str(proposal["marker_name"]), str(proposal["leaf_name"]))
         for proposal in budgeted
     }
-    proposals_by_marker: dict[str, list[str]] = defaultdict(list)
-    for marker, leaf_name in budget_keys:
-        proposals_by_marker[marker].append(leaf_name)
-
-    action_keys: set[tuple[str, str]] = set()
-    rf_decisions: dict[tuple[str, str], dict] = {}
-    species_tree_path = run_dir / "tree_final.nwk"
-    species_tree = Tree(str(species_tree_path), format=1)
-    for marker, leaf_names in sorted(proposals_by_marker.items()):
-        original = marker_trees[marker]
-        chosen, decision = build_singleton_output_tree(
-            marker_tree_path=str(marker_paths[marker]),
-            species_tree_path=str(species_tree_path),
-            accepted_leaf_names=sorted(leaf_names),
-            mode="loo_profile",
-        )
-        chosen_leaves = {str(leaf.name) for leaf in chosen.iter_leaves()}
-        remaining = [
-            str(leaf.name)
-            for leaf in original.iter_leaves()
-            if str(leaf.name) not in set(leaf_names)
-        ]
-        candidate = original.copy(method="deepcopy")
-        candidate.prune(remaining)
-        rf_before = _rf_distance_between(species_tree, original)
-        rf_after = _rf_distance_between(species_tree, candidate)
-        for leaf_name in leaf_names:
-            key = (marker, leaf_name)
-            removed = leaf_name not in chosen_leaves
-            if removed:
-                action_keys.add(key)
-            rf_decisions[key] = {
-                "rf_guard_decision": decision,
-                "rf_before": rf_before,
-                "rf_after": rf_after,
-                "guarded_action": removed,
-            }
+    action_keys, rf_decisions = _confirmation_rf_guard(
+        budget_keys, marker_paths, marker_trees, run_dir / "tree_final.nwk"
+    )
 
     rows = []
     for hit in selected.sort_values(["genome", "marker"]).to_dict("records"):
@@ -1919,28 +1871,100 @@ def _evaluate_context(
             }
         )
 
+    return rows, _confirmation_context_summary(
+        panel, context, outdir, run_dir, clean_tree, rows
+    )
+
+
+def _confirmation_contig_gate(
+    candidate_lookup: dict[tuple[str, str], dict],
+    current_proteomes: dict[str, dict[str, str]],
+    clean_proteomes: dict[str, dict[str, str]],
+    marker_trees: dict[str, Tree],
+    marker_record_ids: set[str],
+) -> tuple[set[tuple[str, str]], dict[tuple[str, str], dict], list[dict]]:
+    raw_keys = {
+        key
+        for key, row in candidate_lookup.items()
+        if str(row.get("loo_class", "")) == "discordant_marker"
+    }
+    gate_audits: dict[tuple[str, str], dict] = {}
+    gated_proposals = []
+    for marker, leaf_name in sorted(raw_keys):
+        row = candidate_lookup[(marker, leaf_name)]
+        genome, contig_id, _gene_id = parse_sequence_id(leaf_name)
+        candidate_genes = {
+            record_id: sequence
+            for record_id, sequence in current_proteomes.get(genome, {}).items()
+            if parse_sequence_id(record_id)[1] == contig_id
+        }
+        attachment = _split_values(row.get("loo_attachment_taxa"))
+        marker_tree = marker_trees[marker]
+        background = (
+            {str(leaf.name).split("|", 1)[0] for leaf in marker_tree.iter_leaves()}
+            - {genome}
+            - attachment
+        )
+        evidence = assign_contig_gene_split_votes(
+            candidate_genes,
+            clean_proteomes,
+            recipient_genome=genome,
+            candidate_contig_id=contig_id,
+            marker_record_ids=marker_record_ids,
+            attachment_taxa=attachment,
+            background_taxa=background,
+        )
+        gate = contig_gene_vote_gate(
+            evidence["votes"],
+            str(row.get("loo_attachment_clade", "")) or None,
+        )
+        gate_audits[(marker, leaf_name)] = {
+            "evidence": evidence,
+            "gate": gate,
+        }
+        if gate["contig_gate_pass"]:
+            gated_proposals.append(
+                {
+                    "marker_name": marker,
+                    "leaf_name": leaf_name,
+                    "genome": genome,
+                    "score": float(row.get("loo_score") or 0.0),
+                    "delta_rf": 0.0,
+                    "topoknn_score": 0.0,
+                }
+            )
+
+    return raw_keys, gate_audits, gated_proposals
+
+
+def _confirmation_context_summary(
+    panel: dict,
+    context: dict,
+    outdir: Path,
+    run_dir: Path,
+    clean_tree: Tree,
+    rows: list[dict],
+) -> dict:
     contaminated_tree = Tree(str(run_dir / "tree_final.nwk"), format=1)
     rf, maxrf, *_ = clean_tree.robinson_foulds(
         contaminated_tree,
         unrooted_trees=True,
     )
-    summary = {
+    return {
         "panel_id": panel["panel_id"],
         "lineage": panel["lineage"],
         "seed": panel["seed"],
         "context": context["context"],
-        "truth_positive_count": sum(row["truth_positive"] for row in rows),
+        "truth_positive_count": sum(bool(row["truth_positive"]) for row in rows),
         "raw_true_positive_count": sum(
-            row["truth_positive"] and row["raw_call"] for row in rows
+            bool(row["truth_positive"] and row["raw_call"]) for row in rows
         ),
         "guarded_true_positive_count": sum(
-            row["truth_positive"] and row["guarded_action"] for row in rows
+            bool(row["truth_positive"] and row["guarded_action"]) for row in rows
         ),
-        "guarded_action_count": sum(row["guarded_action"] for row in rows),
-        "false_action_count": sum(row["false_action"] for row in rows),
-        "abstention_count": sum(
-            bool(row["loo_abstention_reason"]) for row in rows
-        ),
+        "guarded_action_count": sum(bool(row["guarded_action"]) for row in rows),
+        "false_action_count": sum(bool(row["false_action"]) for row in rows),
+        "abstention_count": sum(bool(row["loo_abstention_reason"]) for row in rows),
         "normalized_rf_vs_clean": rf / maxrf if maxrf else 0.0,
         "normalized_patristic_error_vs_clean": _patristic_nrmse(
             outdir
@@ -1950,7 +1974,52 @@ def _evaluate_context(
             run_dir / "tree_final.nwk",
         ),
     }
-    return rows, summary
+
+
+def _confirmation_rf_guard(
+    budget_keys: set[tuple[str, str]],
+    marker_paths: dict[str, Path],
+    marker_trees: dict[str, Tree],
+    species_tree_path: Path,
+) -> tuple[set[tuple[str, str]], dict[tuple[str, str], dict]]:
+    proposals_by_marker: dict[str, list[str]] = defaultdict(list)
+    for marker, leaf_name in budget_keys:
+        proposals_by_marker[marker].append(leaf_name)
+
+    action_keys: set[tuple[str, str]] = set()
+    rf_decisions: dict[tuple[str, str], dict] = {}
+    species_tree = Tree(str(species_tree_path), format=1)
+    for marker, leaf_names in sorted(proposals_by_marker.items()):
+        original = marker_trees[marker]
+        chosen, decision = build_singleton_output_tree(
+            marker_tree_path=str(marker_paths[marker]),
+            species_tree_path=str(species_tree_path),
+            accepted_leaf_names=sorted(leaf_names),
+            mode="loo_profile",
+        )
+        chosen_leaves = {str(leaf.name) for leaf in chosen.iter_leaves()}
+        remaining = [
+            str(leaf.name)
+            for leaf in original.iter_leaves()
+            if str(leaf.name) not in set(leaf_names)
+        ]
+        candidate = original.copy(method="deepcopy")
+        candidate.prune(remaining)
+        rf_before = _rf_distance_between(species_tree, original)
+        rf_after = _rf_distance_between(species_tree, candidate)
+        for leaf_name in leaf_names:
+            key = (marker, leaf_name)
+            removed = leaf_name not in chosen_leaves
+            if removed:
+                action_keys.add(key)
+            rf_decisions[key] = {
+                "rf_guard_decision": decision,
+                "rf_before": rf_before,
+                "rf_after": rf_after,
+                "guarded_action": removed,
+            }
+
+    return action_keys, rf_decisions
 
 
 PER_CELL_FIELDS = [
@@ -2025,8 +2094,7 @@ def _evaluate_panel(manifest: dict, panel: dict, outdir: Path) -> dict:
         "false_action_count": false_actions,
         "control_guarded_action_count": sum(
             row["guarded_action"]
-            and row["event_class"]
-            in {"solo_marker_control", "native_contig_sentinel"}
+            and row["event_class"] in {"solo_marker_control", "native_contig_sentinel"}
             for row in rows
         ),
         "pass": false_actions == 0,
@@ -2041,6 +2109,7 @@ def run_confirmation(
     threads: int,
     pilot_only: bool,
 ) -> dict:
+    """Run and audit either the one-panel pilot or all frozen panels."""
     manifest = _load_manifest(outdir)
     _verify_inference_inputs(manifest)
     panels = manifest["panels"]
@@ -2048,7 +2117,9 @@ def run_confirmation(
     if not pilot_only:
         pilot_path = outdir / "pilot_status.json"
         if not pilot_path.is_file():
-            raise RuntimeError("Run and pass the one-panel pilot before the full benchmark")
+            raise RuntimeError(
+                "Run and pass the one-panel pilot before the full benchmark"
+            )
         pilot_status = json.loads(pilot_path.read_text())
         if pilot_status.get("pass") is not True:
             raise RuntimeError("The saved one-panel pilot did not pass")
@@ -2074,12 +2145,10 @@ def run_confirmation(
             {
                 **panel_audit,
                 "peak_rss_kb": max(
-                    int(audit.get("peak_rss_kb", 0))
-                    for audit in context_audits
+                    int(audit.get("peak_rss_kb", 0)) for audit in context_audits
                 ),
                 "wall_seconds": sum(
-                    float(audit.get("wall_seconds", 0.0))
-                    for audit in context_audits
+                    float(audit.get("wall_seconds", 0.0)) for audit in context_audits
                 ),
                 "marker_tree_cache_entries": max(
                     int(audit.get("marker_tree_cache_entries", 0))
@@ -2116,136 +2185,19 @@ def _gunc_summary_paths(gunc_dir: Path) -> list[Path]:
 
 
 def run_gunc(outdir: Path, *, threads: int) -> dict:
+    """Run GUNC once per unique confirmation assembly and preserve its evidence."""
     if not 1 <= threads <= MAX_THREADS:
         raise ValueError(f"threads must be between 1 and {MAX_THREADS}")
     manifest = _load_manifest(outdir)
     full_status = check_confirmation(outdir, require_full=True)
     if full_status["pass"] is not True:
         raise RuntimeError("The full SGTree confirmation must pass before GUNC")
-    database = _project_path(manifest["gunc_database"]["path"])
-    if not database.is_file():
-        raise FileNotFoundError(f"Frozen GUNC database is missing: {database}")
-    if database.stat().st_size != int(manifest["gunc_database"]["bytes"]):
-        raise ValueError("Frozen GUNC database size changed")
-    database_sha256 = _sha256_file(database)
-    if database_sha256 != manifest["gunc_database"]["sha256"]:
-        raise ValueError("Frozen GUNC database checksum changed")
+    database, database_sha256 = _frozen_gunc_database(manifest)
 
     gunc_dir = outdir / "gunc"
+    mapping_rows, unique_sources = _gunc_assembly_map(manifest, outdir)
+    _stage_gunc_inputs(gunc_dir, manifest, mapping_rows, unique_sources)
     unique_dir = gunc_dir / "unique_inputs"
-    unique_dir.mkdir(parents=True, exist_ok=True)
-    event_lookup = _event_by_id(manifest)
-    mapping_rows = []
-    unique_sources: dict[str, Path] = {}
-    for panel in manifest["panels"]:
-        for context in panel["contexts"]:
-            context_dir = (
-                outdir
-                / "panels"
-                / panel["panel_id"]
-                / "contexts"
-                / context["context"]
-            )
-            checksum_rows = pd.read_csv(
-                context_dir / "input_checksums.tsv",
-                sep="\t",
-            )
-            events = [event_lookup[event_id] for event_id in context["event_ids"]]
-            selected_genomes = (
-                {panel["gunc_clean_control_genome"]}
-                if context["context"] == "clean"
-                else {event["recipient_genome"] for event in events}
-            )
-            for row in checksum_rows.to_dict("records"):
-                source = context_dir / "inputs" / str(row["file"])
-                genome = Path(str(row["file"])).stem
-                if genome not in selected_genomes:
-                    continue
-                checksum = str(row["sha256"])
-                unique_sources.setdefault(checksum, source)
-                mapping_rows.append(
-                    {
-                        "panel_id": panel["panel_id"],
-                        "lineage": panel["lineage"],
-                        "seed": panel["seed"],
-                        "context": context["context"],
-                        "genome": genome,
-                        "assembly_sha256": checksum,
-                        "gunc_input_id": checksum,
-                        "event_ids": ",".join(
-                            event["event_id"]
-                            for event in events
-                            if event["recipient_genome"] == genome
-                        ),
-                    }
-                )
-    for checksum, source in sorted(unique_sources.items()):
-        target = unique_dir / f"{checksum}.fna"
-        if target.exists():
-            if _sha256_file(target) != checksum:
-                raise ValueError(f"Corrupt cached GUNC input: {target}")
-            continue
-        try:
-            os.link(source, target)
-        except OSError:
-            shutil.copy2(source, target)
-    expected_mapping_count = sum(
-        1
-        if context["context"] == "clean"
-        else len(context["event_ids"])
-        for panel in manifest["panels"]
-        for context in panel["contexts"]
-    )
-    expected_unique_count = sum(
-        1 + len(panel["events"])
-        for panel in manifest["panels"]
-    )
-    if len(mapping_rows) != expected_mapping_count:
-        raise ValueError(
-            f"Expected {expected_mapping_count} GUNC assembly mappings; "
-            f"found {len(mapping_rows)}"
-        )
-    if len(unique_sources) != expected_unique_count:
-        raise ValueError(
-            f"Expected {expected_unique_count} unique GUNC assemblies; "
-            f"found {len(unique_sources)}"
-        )
-    expected_input_names = {
-        f"{checksum}.fna" for checksum in unique_sources
-    }
-    observed_input_names = {
-        path.name for path in unique_dir.glob("*.fna") if path.is_file()
-    }
-    if observed_input_names != expected_input_names:
-        raise ValueError("GUNC unique-input directory contains stale or missing files")
-    _write_tsv(
-        gunc_dir / "assembly_map.tsv",
-        mapping_rows,
-        [
-            "panel_id",
-            "lineage",
-            "seed",
-            "context",
-            "genome",
-            "assembly_sha256",
-            "gunc_input_id",
-            "event_ids",
-        ],
-    )
-    _write_tsv(
-        gunc_dir / "unique_inputs.tsv",
-        [
-            {
-                "gunc_input_id": checksum,
-                "source_path": _relative(source),
-                "sha256": checksum,
-                "bytes": source.stat().st_size,
-            }
-            for checksum, source in sorted(unique_sources.items())
-        ],
-        ["gunc_input_id", "source_path", "sha256", "bytes"],
-    )
-
     output_dir = gunc_dir / "output"
     summary_paths = _gunc_summary_paths(gunc_dir)
     status_path = gunc_dir / "status.json"
@@ -2336,6 +2288,137 @@ def run_gunc(outdir: Path, *, threads: int) -> dict:
     return status
 
 
+def _frozen_gunc_database(manifest: dict) -> tuple[Path, str]:
+    database = _project_path(manifest["gunc_database"]["path"])
+    if not database.is_file():
+        raise FileNotFoundError(f"Frozen GUNC database is missing: {database}")
+    if database.stat().st_size != int(manifest["gunc_database"]["bytes"]):
+        raise ValueError("Frozen GUNC database size changed")
+    database_sha256 = _sha256_file(database)
+    if database_sha256 != manifest["gunc_database"]["sha256"]:
+        raise ValueError("Frozen GUNC database checksum changed")
+
+    return database, database_sha256
+
+
+def _gunc_assembly_map(
+    manifest: dict, outdir: Path
+) -> tuple[list[dict], dict[str, Path]]:
+    event_lookup = _event_by_id(manifest)
+    mapping_rows = []
+    unique_sources: dict[str, Path] = {}
+    for panel in manifest["panels"]:
+        for context in panel["contexts"]:
+            context_dir = (
+                outdir / "panels" / panel["panel_id"] / "contexts" / context["context"]
+            )
+            checksum_rows = pd.read_csv(
+                context_dir / "input_checksums.tsv",
+                sep="\t",
+            )
+            events = [event_lookup[event_id] for event_id in context["event_ids"]]
+            selected_genomes = (
+                {panel["gunc_clean_control_genome"]}
+                if context["context"] == "clean"
+                else {event["recipient_genome"] for event in events}
+            )
+            for row in checksum_rows.to_dict("records"):
+                source = context_dir / "inputs" / str(row["file"])
+                genome = Path(str(row["file"])).stem
+                if genome not in selected_genomes:
+                    continue
+                checksum = str(row["sha256"])
+                unique_sources.setdefault(checksum, source)
+                mapping_rows.append(
+                    {
+                        "panel_id": panel["panel_id"],
+                        "lineage": panel["lineage"],
+                        "seed": panel["seed"],
+                        "context": context["context"],
+                        "genome": genome,
+                        "assembly_sha256": checksum,
+                        "gunc_input_id": checksum,
+                        "event_ids": ",".join(
+                            event["event_id"]
+                            for event in events
+                            if event["recipient_genome"] == genome
+                        ),
+                    }
+                )
+    return mapping_rows, unique_sources
+
+
+def _stage_gunc_inputs(
+    gunc_dir: Path,
+    manifest: dict,
+    mapping_rows: list[dict],
+    unique_sources: dict[str, Path],
+) -> None:
+    unique_dir = gunc_dir / "unique_inputs"
+    unique_dir.mkdir(parents=True, exist_ok=True)
+    for checksum, source in sorted(unique_sources.items()):
+        target = unique_dir / f"{checksum}.fna"
+        if target.exists():
+            if _sha256_file(target) != checksum:
+                raise ValueError(f"Corrupt cached GUNC input: {target}")
+            continue
+        try:
+            os.link(source, target)
+        except OSError:
+            shutil.copy2(source, target)
+    expected_mapping_count = sum(
+        1 if context["context"] == "clean" else len(context["event_ids"])
+        for panel in manifest["panels"]
+        for context in panel["contexts"]
+    )
+    expected_unique_count = sum(
+        1 + len(panel["events"]) for panel in manifest["panels"]
+    )
+    if len(mapping_rows) != expected_mapping_count:
+        raise ValueError(
+            f"Expected {expected_mapping_count} GUNC assembly mappings; "
+            f"found {len(mapping_rows)}"
+        )
+    if len(unique_sources) != expected_unique_count:
+        raise ValueError(
+            f"Expected {expected_unique_count} unique GUNC assemblies; "
+            f"found {len(unique_sources)}"
+        )
+    expected_input_names = {f"{checksum}.fna" for checksum in unique_sources}
+    observed_input_names = {
+        path.name for path in unique_dir.glob("*.fna") if path.is_file()
+    }
+    if observed_input_names != expected_input_names:
+        raise ValueError("GUNC unique-input directory contains stale or missing files")
+    _write_tsv(
+        gunc_dir / "assembly_map.tsv",
+        mapping_rows,
+        [
+            "panel_id",
+            "lineage",
+            "seed",
+            "context",
+            "genome",
+            "assembly_sha256",
+            "gunc_input_id",
+            "event_ids",
+        ],
+    )
+    _write_tsv(
+        gunc_dir / "unique_inputs.tsv",
+        [
+            {
+                "gunc_input_id": checksum,
+                "source_path": _relative(source),
+                "sha256": checksum,
+                "bytes": source.stat().st_size,
+            }
+            for checksum, source in sorted(unique_sources.items())
+        ],
+        ["gunc_input_id", "source_path", "sha256", "bytes"],
+    )
+
+
 def _boolean_series(series: pd.Series) -> pd.Series:
     if series.dtype == bool:
         return series
@@ -2352,7 +2435,11 @@ def _cluster_ratio(
         frame.groupby("panel_id")[[numerator_column, denominator_column]]
         .sum()
         .reindex(
-            [f"{lineage}_p{index}_seed{seed}" for lineage in LINEAGES for index, seed in enumerate(PANEL_SEEDS, 1)],
+            [
+                f"{lineage}_p{index}_seed{seed}"
+                for lineage in LINEAGES
+                for index, seed in enumerate(PANEL_SEEDS, 1)
+            ],
             fill_value=0,
         )
     )
@@ -2367,9 +2454,7 @@ def _cluster_ratio(
         rows = grouped.to_dict("records")
         for _ in range(BOOTSTRAP_REPLICATES):
             sample = [rows[rng.randrange(len(rows))] for _index in rows]
-            sample_denominator = sum(
-                int(row[denominator_column]) for row in sample
-            )
+            sample_denominator = sum(int(row[denominator_column]) for row in sample)
             if sample_denominator:
                 values.append(
                     sum(int(row[numerator_column]) for row in sample)
@@ -2405,15 +2490,15 @@ def _load_gunc_results(outdir: Path) -> pd.DataFrame:
             raise ValueError(f"GUNC summary lacks genome column: {value}")
         frame = frame.copy()
         frame["gunc_input_id"] = (
-            frame["genome"]
-            .astype(str)
-            .map(lambda value: Path(value).stem)
+            frame["genome"].astype(str).map(lambda value: Path(value).stem)
         )
         summaries.append(frame)
     scores = pd.concat(summaries, ignore_index=True)
     if scores["gunc_input_id"].duplicated().any():
         raise ValueError("GUNC returned duplicate rows for a unique assembly")
-    mapping = pd.read_csv(gunc_dir / "assembly_map.tsv", sep="\t", keep_default_na=False)
+    mapping = pd.read_csv(
+        gunc_dir / "assembly_map.tsv", sep="\t", keep_default_na=False
+    )
     results = mapping.merge(
         scores.drop(columns=["genome"]),
         on="gunc_input_id",
@@ -2447,6 +2532,7 @@ def _metric_row(name: str, result: dict, unit: str = "fraction") -> dict:
 
 
 def analyze_confirmation(outdir: Path) -> dict:
+    """Summarize saved confirmation results with panel-level uncertainty."""
     manifest = _load_manifest(outdir)
     check_confirmation(outdir, require_full=True)
     frames = []
@@ -2511,6 +2597,110 @@ def analyze_confirmation(outdir: Path) -> dict:
     if "genome" in event_rows.columns:
         event_rows = event_rows.drop(columns=["genome"])
 
+    metrics = _confirmation_metrics(cells, event_rows, gunc)
+
+    panel_metrics = []
+    for panel_id, group in cells.groupby("panel_id"):
+        truth_group = group[group["truth_positive"]]
+        panel_metrics.append(
+            {
+                "panel_id": panel_id,
+                "lineage": str(group.iloc[0]["lineage"]),
+                "seed": int(group.iloc[0]["seed"]),
+                "gene_rich_truth_count": len(truth_group),
+                "gene_rich_raw_call_count": int(truth_group["raw_call"].sum()),
+                "gene_rich_guarded_action_count": int(
+                    truth_group["guarded_action"].sum()
+                ),
+                "guarded_action_count": int(group["guarded_action"].sum()),
+                "false_action_count": int(group["false_action"].sum()),
+                "any_false_action": bool(group["false_action"].any()),
+            }
+        )
+
+    results_dir = outdir / "results"
+    results_dir.mkdir(exist_ok=True)
+    _write_tsv(
+        results_dir / "per_cell_results.tsv",
+        cells.to_dict("records"),
+        list(cells.columns),
+    )
+    _write_tsv(
+        results_dir / "per_event_results.tsv",
+        event_rows.to_dict("records"),
+        list(event_rows.columns),
+    )
+    _write_tsv(
+        results_dir / "context_summary.tsv",
+        contexts.to_dict("records"),
+        list(contexts.columns),
+    )
+    _write_tsv(
+        results_dir / "panel_metrics.tsv",
+        panel_metrics,
+        list(panel_metrics[0]),
+    )
+    _write_tsv(
+        results_dir / "summary.tsv",
+        metrics,
+        list(metrics[0]),
+    )
+    status = json.loads((outdir / "run_status.json").read_text())
+    gunc_status = json.loads((outdir / "gunc/status.json").read_text())
+    summary = {
+        "story": "US-010",
+        "manifest_content_sha256": manifest["manifest_content_sha256"],
+        "independent_unit": "base_panel",
+        "base_panel_count": 6,
+        "context_count": 30,
+        "gene_rich_event_count": 18,
+        "solo_control_count": 6,
+        "native_contig_sentinel_count": 6,
+        "metrics": {row["metric"]: row for row in metrics},
+        "panels_with_any_false_action": sum(
+            bool(row["any_false_action"]) for row in panel_metrics
+        ),
+        "marker_tree_build_count": status["marker_tree_cache_entries"],
+        "sgtree_peak_rss_kb": status["peak_rss_kb"],
+        "sgtree_wall_seconds": status["wall_seconds"],
+        "gunc_unique_assembly_count": gunc_status["unique_assembly_count"],
+        "gunc_peak_rss_kb": gunc_status["peak_rss_kb"],
+        "gunc_wall_seconds": gunc_status["wall_seconds"],
+        "production_pruning": "disabled",
+        "gunc_endpoint_note": (
+            "GUNC genome/chimerism calls are reported separately from marker-level "
+            "LOO and guarded actions; no cross-tool F1 is calculated."
+        ),
+        "interval_method": (
+            "Deterministic percentile cluster bootstrap over six base panels "
+            f"({BOOTSTRAP_REPLICATES} resamples); contexts and events remain nested."
+        ),
+        "tree_change_by_context": {
+            context: {
+                "panel_count": len(group),
+                "normalized_rf_mean": float(
+                    pd.to_numeric(group["normalized_rf_vs_clean"]).mean()
+                ),
+                "normalized_rf_median": float(
+                    pd.to_numeric(group["normalized_rf_vs_clean"]).median()
+                ),
+                "normalized_patristic_error_mean": float(
+                    pd.to_numeric(group["normalized_patristic_error_vs_clean"]).mean()
+                ),
+                "normalized_patristic_error_median": float(
+                    pd.to_numeric(group["normalized_patristic_error_vs_clean"]).median()
+                ),
+            }
+            for context, group in contexts.groupby("context")
+        },
+    }
+    _write_json(results_dir / "summary.json", summary)
+    return summary
+
+
+def _confirmation_metrics(
+    cells: pd.DataFrame, event_rows: pd.DataFrame, gunc: pd.DataFrame
+) -> list[dict]:
     metrics = []
     truth = cells[cells["truth_positive"]].copy()
     truth["denominator"] = 1
@@ -2646,13 +2836,10 @@ def analyze_confirmation(outdir: Path) -> dict:
         )
     )
 
-    event_retention = (
-        event_rows.groupby(
-            ["panel_id", "event_id", "event_class"],
-            as_index=False,
-        )["guarded_action"]
-        .max()
-    )
+    event_retention = event_rows.groupby(
+        ["panel_id", "event_id", "event_class"],
+        as_index=False,
+    )["guarded_action"].max()
     for event_class, metric_name in (
         ("solo_marker_control", "solo_control_retention"),
         ("native_contig_sentinel", "native_contig_sentinel_retention"),
@@ -2691,9 +2878,7 @@ def analyze_confirmation(outdir: Path) -> dict:
         )
     )
     for stratum in ("near", "intermediate", "far"):
-        subset = gunc_truth[
-            gunc_truth["source_distance_stratum"] == stratum
-        ]
+        subset = gunc_truth[gunc_truth["source_distance_stratum"] == stratum]
         metrics.append(
             _metric_row(
                 f"gunc_{stratum}_genome_call_recall",
@@ -2704,13 +2889,10 @@ def analyze_confirmation(outdir: Path) -> dict:
                 ),
             )
         )
-    gunc_control_events = (
-        gunc_event_rows.groupby(
-            ["panel_id", "event_id", "event_class"],
-            as_index=False,
-        )["gunc_call"]
-        .max()
-    )
+    gunc_control_events = gunc_event_rows.groupby(
+        ["panel_id", "event_id", "event_class"],
+        as_index=False,
+    )["gunc_call"].max()
     for event_class, metric_name in (
         ("solo_marker_control", "gunc_solo_control_genome_call_rate"),
         (
@@ -2722,9 +2904,7 @@ def analyze_confirmation(outdir: Path) -> dict:
             gunc_control_events["event_class"] == event_class
         ].copy()
         subset["denominator"] = 1
-        subset["gunc_numerator"] = _boolean_series(
-            subset["gunc_call"]
-        ).astype(int)
+        subset["gunc_numerator"] = _boolean_series(subset["gunc_call"]).astype(int)
         metrics.append(
             _metric_row(
                 metric_name,
@@ -2736,110 +2916,11 @@ def analyze_confirmation(outdir: Path) -> dict:
             )
         )
 
-    panel_metrics = []
-    for panel_id, group in cells.groupby("panel_id"):
-        truth_group = group[group["truth_positive"]]
-        panel_metrics.append(
-            {
-                "panel_id": panel_id,
-                "lineage": str(group.iloc[0]["lineage"]),
-                "seed": int(group.iloc[0]["seed"]),
-                "gene_rich_truth_count": len(truth_group),
-                "gene_rich_raw_call_count": int(truth_group["raw_call"].sum()),
-                "gene_rich_guarded_action_count": int(
-                    truth_group["guarded_action"].sum()
-                ),
-                "guarded_action_count": int(group["guarded_action"].sum()),
-                "false_action_count": int(group["false_action"].sum()),
-                "any_false_action": bool(group["false_action"].any()),
-            }
-        )
-
-    results_dir = outdir / "results"
-    results_dir.mkdir(exist_ok=True)
-    _write_tsv(
-        results_dir / "per_cell_results.tsv",
-        cells.to_dict("records"),
-        list(cells.columns),
-    )
-    _write_tsv(
-        results_dir / "per_event_results.tsv",
-        event_rows.to_dict("records"),
-        list(event_rows.columns),
-    )
-    _write_tsv(
-        results_dir / "context_summary.tsv",
-        contexts.to_dict("records"),
-        list(contexts.columns),
-    )
-    _write_tsv(
-        results_dir / "panel_metrics.tsv",
-        panel_metrics,
-        list(panel_metrics[0]),
-    )
-    _write_tsv(
-        results_dir / "summary.tsv",
-        metrics,
-        list(metrics[0]),
-    )
-    status = json.loads((outdir / "run_status.json").read_text())
-    gunc_status = json.loads((outdir / "gunc/status.json").read_text())
-    summary = {
-        "story": "US-010",
-        "manifest_content_sha256": manifest["manifest_content_sha256"],
-        "independent_unit": "base_panel",
-        "base_panel_count": 6,
-        "context_count": 30,
-        "gene_rich_event_count": 18,
-        "solo_control_count": 6,
-        "native_contig_sentinel_count": 6,
-        "metrics": {row["metric"]: row for row in metrics},
-        "panels_with_any_false_action": sum(
-            row["any_false_action"] for row in panel_metrics
-        ),
-        "marker_tree_build_count": status["marker_tree_cache_entries"],
-        "sgtree_peak_rss_kb": status["peak_rss_kb"],
-        "sgtree_wall_seconds": status["wall_seconds"],
-        "gunc_unique_assembly_count": gunc_status["unique_assembly_count"],
-        "gunc_peak_rss_kb": gunc_status["peak_rss_kb"],
-        "gunc_wall_seconds": gunc_status["wall_seconds"],
-        "production_pruning": "disabled",
-        "gunc_endpoint_note": (
-            "GUNC genome/chimerism calls are reported separately from marker-level "
-            "LOO and guarded actions; no cross-tool F1 is calculated."
-        ),
-        "interval_method": (
-            "Deterministic percentile cluster bootstrap over six base panels "
-            f"({BOOTSTRAP_REPLICATES} resamples); contexts and events remain nested."
-        ),
-        "tree_change_by_context": {
-            context: {
-                "panel_count": len(group),
-                "normalized_rf_mean": float(
-                    pd.to_numeric(group["normalized_rf_vs_clean"]).mean()
-                ),
-                "normalized_rf_median": float(
-                    pd.to_numeric(group["normalized_rf_vs_clean"]).median()
-                ),
-                "normalized_patristic_error_mean": float(
-                    pd.to_numeric(
-                        group["normalized_patristic_error_vs_clean"]
-                    ).mean()
-                ),
-                "normalized_patristic_error_median": float(
-                    pd.to_numeric(
-                        group["normalized_patristic_error_vs_clean"]
-                    ).median()
-                ),
-            }
-            for context, group in contexts.groupby("context")
-        },
-    }
-    _write_json(results_dir / "summary.json", summary)
-    return summary
+    return metrics
 
 
 def package_confirmation(outdir: Path) -> dict:
+    """Package frozen inputs, saved results, and reproduction commands."""
     manifest = _load_manifest(outdir)
     check_confirmation(outdir, require_full=True)
     summary_path = outdir / "results/summary.json"
@@ -2871,8 +2952,10 @@ def package_confirmation(outdir: Path) -> dict:
             "# Run from the repository root with the archived Pixi files restored.",
             "mkdir -p resources/gunc_db",
             "pixi run gunc download_db resources/gunc_db -db progenomes_2.1",
-            f"{benchmark_command} freeze "
-            "--models resources/models/UNI56.hmm --gunc-db resources/gunc_db",
+            (
+                f"{benchmark_command} freeze "
+                "--models resources/models/UNI56.hmm --gunc-db resources/gunc_db"
+            ),
             f"{benchmark_command} pilot --threads 4",
             f"{benchmark_command} run --threads 4",
             f"{benchmark_command} gunc --threads 4",
@@ -2927,6 +3010,7 @@ def package_confirmation(outdir: Path) -> dict:
 
 
 def check_confirmation(outdir: Path, *, require_full: bool) -> dict:
+    """Check saved audit outcomes and resource limits for the frozen benchmark."""
     manifest = _load_manifest(outdir)
     status_path = outdir / ("run_status.json" if require_full else "pilot_status.json")
     if not status_path.is_file():
@@ -2966,10 +3050,7 @@ def check_confirmation(outdir: Path, *, require_full: bool) -> dict:
     if int(status.get("peak_rss_kb", 0)) > MAX_PEAK_RSS_KB:
         errors.append("peak RSS exceeds the frozen 8 GB cap")
     checked_panels = manifest["panels"][:expected_panels]
-    for panel in checked_panels:
-        audit_path = outdir / "panels" / panel["panel_id"] / "panel_audit.json"
-        if not audit_path.is_file() or json.loads(audit_path.read_text()).get("pass") is not True:
-            errors.append(f"missing or failing panel audit: {panel['panel_id']}")
+    errors.extend(_saved_panel_audit_errors(outdir, checked_panels))
     result = {
         "pass": not errors,
         "require_full": require_full,
@@ -2980,6 +3061,18 @@ def check_confirmation(outdir: Path, *, require_full: bool) -> dict:
     if errors:
         raise RuntimeError("; ".join(errors))
     return result
+
+
+def _saved_panel_audit_errors(outdir: Path, panels: list[dict]) -> list[str]:
+    errors = []
+    for panel in panels:
+        audit_path = outdir / "panels" / panel["panel_id"] / "panel_audit.json"
+        if (
+            not audit_path.is_file()
+            or json.loads(audit_path.read_text()).get("pass") is not True
+        ):
+            errors.append(f"missing or failing panel audit: {panel['panel_id']}")
+    return errors
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -3008,6 +3101,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Dispatch the confirmation benchmark command and report its outcome."""
     args = _parser().parse_args()
     outdir = args.outdir.resolve()
     if args.command == "freeze":

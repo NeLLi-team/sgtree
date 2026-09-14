@@ -12,7 +12,10 @@ class BenchmarkDatasetSelectionTests(unittest.TestCase):
     def test_default_plan_has_expected_shape(self):
         self.assertEqual(len(DEFAULT_BURKHOLDERIACEAE_SPECIES_PLAN), 20)
         self.assertEqual(
-            sum(int(row["target_count"]) for row in DEFAULT_BURKHOLDERIACEAE_SPECIES_PLAN),
+            sum(
+                int(row["target_count"])
+                for row in DEFAULT_BURKHOLDERIACEAE_SPECIES_PLAN
+            ),
             50,
         )
         self.assertEqual(
@@ -115,7 +118,9 @@ class BenchmarkDatasetSelectionTests(unittest.TestCase):
             },
         ]
 
-        selection = select_species_rows(candidates, species_plan=species_plan, prefix="TEST__")
+        selection = select_species_rows(
+            candidates, species_plan=species_plan, prefix="TEST__"
+        )
 
         self.assertEqual(len(selection), 3)
         self.assertEqual(

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 
 from gunc import external_tools
 from gunc.gunc import main as gunc_main
-
 
 DIAMOND_BLOCK_SIZE = "1.0"
 
@@ -71,7 +69,8 @@ def _diamond(
 
 
 def main() -> int:
-    external_tools.diamond = _diamond
+    """Run GUNC after replacing its DIAMOND call with the low-memory variant."""
+    external_tools.diamond = _diamond  # ty: ignore[invalid-assignment]  # GUNC 1.1.1 provides no annotations for this monkey-patch target.
     result = gunc_main()
     return int(result or 0)
 

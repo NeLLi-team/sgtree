@@ -4,8 +4,8 @@ import unittest
 from sgtree.benchmarks.sequence_evidence import (
     PHMMER_MAX_EVALUE,
     PHMMER_MAX_QUERY_COUNT,
-    PHMMER_MIN_QUERY_COVERAGE,
     PHMMER_MIN_QUERY_COUNT,
+    PHMMER_MIN_QUERY_COVERAGE,
     PHMMER_MIN_SCORE_MARGIN,
     assign_contig_gene_split_votes,
 )
@@ -24,7 +24,9 @@ class PhmmerSplitVoteTests(unittest.TestCase):
         alphabet = "ACDEFGHIKLMNPQRSTVWY"
         mutated = list(sequence)
         for index in range(0, len(mutated), every):
-            mutated[index] = alphabet[(alphabet.index(mutated[index]) + 7) % len(alphabet)]
+            mutated[index] = alphabet[
+                (alphabet.index(mutated[index]) + 7) % len(alphabet)
+            ]
         return "".join(mutated)
 
     def _queries(self) -> dict[str, str]:
@@ -34,7 +36,9 @@ class PhmmerSplitVoteTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _records(genome: str, sequences: list[str], suffix: str = "ref") -> dict[str, str]:
+    def _records(
+        genome: str, sequences: list[str], suffix: str = "ref"
+    ) -> dict[str, str]:
         return {
             f"{genome}|{suffix}|g{index}": sequence
             for index, sequence in enumerate(sequences, start=1)
@@ -57,7 +61,9 @@ class PhmmerSplitVoteTests(unittest.TestCase):
         panel = {
             "A": {
                 **self._records("A", sequences),
-                **self._records("A", [self._mutate(value, 5) for value in sequences], "paralog"),
+                **self._records(
+                    "A", [self._mutate(value, 5) for value in sequences], "paralog"
+                ),
             },
             "B": self._records("B", [self._mutate(value) for value in sequences]),
         }
@@ -72,10 +78,16 @@ class PhmmerSplitVoteTests(unittest.TestCase):
         self.assertEqual(report["informative_vote_count"], 3)
         self.assertEqual({vote["assigned_clade"] for vote in report["votes"]}, {"A"})
         self.assertTrue(
-            all(vote["score_margin"] >= PHMMER_MIN_SCORE_MARGIN for vote in report["votes"])
+            all(
+                vote["score_margin"] >= PHMMER_MIN_SCORE_MARGIN
+                for vote in report["votes"]
+            )
         )
         self.assertTrue(
-            all(vote["attachment_qualifying_genome_count"] == 1 for vote in report["votes"])
+            all(
+                vote["attachment_qualifying_genome_count"] == 1
+                for vote in report["votes"]
+            )
         )
         self.assertTrue(contig_gene_vote_gate(report["votes"], "A")["contig_gate_pass"])
 
@@ -95,7 +107,9 @@ class PhmmerSplitVoteTests(unittest.TestCase):
             {vote["assigned_clade"] for vote in report["votes"]},
             {"complement:B"},
         )
-        self.assertFalse(contig_gene_vote_gate(report["votes"], "A")["contig_gate_pass"])
+        self.assertFalse(
+            contig_gene_vote_gate(report["votes"], "A")["contig_gate_pass"]
+        )
 
     def test_near_ties_are_uninformative(self):
         queries = self._queries()
@@ -113,7 +127,10 @@ class PhmmerSplitVoteTests(unittest.TestCase):
             {"score_margin_below_threshold"},
         )
         self.assertTrue(
-            all(abs(vote["score_margin"]) < PHMMER_MIN_SCORE_MARGIN for vote in report["votes"])
+            all(
+                abs(vote["score_margin"]) < PHMMER_MIN_SCORE_MARGIN
+                for vote in report["votes"]
+            )
         )
 
     def test_invalid_or_missing_split_side_fails_closed(self):
@@ -122,8 +139,14 @@ class PhmmerSplitVoteTests(unittest.TestCase):
         cases = (
             ({"attachment_taxa": set()}, "invalid_attachment_taxa"),
             ({"background_taxa": set()}, "invalid_background_taxa"),
-            ({"attachment_taxa": {"A"}, "background_taxa": {"A"}}, "overlapping_split_taxa"),
-            ({"attachment_taxa": {"R"}, "background_taxa": {"B"}}, "recipient_in_split_taxa"),
+            (
+                {"attachment_taxa": {"A"}, "background_taxa": {"A"}},
+                "overlapping_split_taxa",
+            ),
+            (
+                {"attachment_taxa": {"R"}, "background_taxa": {"B"}},
+                "recipient_in_split_taxa",
+            ),
             ({}, "missing_split_reference_side"),
         )
         for overrides, expected in cases:
@@ -131,7 +154,9 @@ class PhmmerSplitVoteTests(unittest.TestCase):
                 report = self._score(queries, panel, **overrides)
                 self.assertEqual(report["input_status"], expected)
                 self.assertEqual(report["informative_vote_count"], 0)
-                self.assertTrue(all(not vote["informative"] for vote in report["votes"]))
+                self.assertTrue(
+                    all(not vote["informative"] for vote in report["votes"])
+                )
 
     def test_requires_at_least_three_non_marker_queries_and_caps_work(self):
         queries = self._queries()
